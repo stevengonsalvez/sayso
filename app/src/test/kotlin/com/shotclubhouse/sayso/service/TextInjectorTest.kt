@@ -54,7 +54,7 @@ class TextInjectorTest {
     }
 
     @Test
-    fun `text that was inserted never reaches the clipboard`() {
+    fun `text that was inserted does not trigger the clipboard fallback`() {
         var copied = false
 
         val method = deliveryOutcome(inserted = true) {
@@ -63,7 +63,23 @@ class TextInjectorTest {
         }
 
         assertEquals(OutputMethod.INSERTED, method)
-        assertFalse("a successful insertion must not leave the text on the clipboard", copied)
+        assertFalse("the fallback copy must not run once the text was inserted", copied)
+    }
+
+    @Test
+    fun `setting the text keeps the transcript off the clipboard`() {
+        assertFalse(needsClipboardBeforeAction(hasCustomPaste = false, isEditable = true))
+    }
+
+    @Test
+    fun `a paste needs the transcript on the clipboard first`() {
+        assertTrue(needsClipboardBeforeAction(hasCustomPaste = false, isEditable = false))
+        assertTrue(needsClipboardBeforeAction(hasCustomPaste = true, isEditable = false))
+    }
+
+    @Test
+    fun `a terminal pastes even when its node says it is editable`() {
+        assertTrue(needsClipboardBeforeAction(hasCustomPaste = true, isEditable = true))
     }
 
     @Test

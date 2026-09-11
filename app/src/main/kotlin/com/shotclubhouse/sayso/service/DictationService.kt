@@ -15,8 +15,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The whole dictation loop, driven by the floating bubble.
@@ -44,6 +48,9 @@ class DictationService : AccessibilityService() {
         AppGraph.init(this)
         capture?.stop()
         capture = null
+        // A dictation still in flight belongs to the previous connection: it would finish
+        // against components that are about to be replaced, so it is cancelled outright.
+        scope.coroutineContext.cancelChildren()
         sounds?.release()
         bubble?.hide()
 
@@ -75,7 +82,22 @@ class DictationService : AccessibilityService() {
      */
     fun reloadLocalModel() {
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { AppGraph.local.unload() } }
+            ignoringFailure { withContext(Dispatchers.IO) { AppGraph.local.unload() } }
+        }
+    }
+
+    /**
+     * Runs work whose failure must not sink the dictation, such as writing history. A
+     * cancellation is not a failure: it still has to travel, or a rebind leaves the run
+     * half alive.
+     */
+    private suspend fun ignoringFailure(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Deliberately silent: the message could quote the dictated text.
         }
     }
 
@@ -131,8 +153,12 @@ class DictationService : AccessibilityService() {
                 else -> dictate(result.clip)
             }
         } finally {
-            capture = null
-            enter(State.IDLE)
+            // A cancelled run belongs to a connection that has already been torn down and
+            // reset; resetting again here would undo whatever the fresh one set up.
+            if (currentCoroutineContext().isActive) {
+                capture = null
+                enter(State.IDLE)
+            }
         }
     }
 
@@ -161,7 +187,7 @@ class DictationService : AccessibilityService() {
 
         if (AppGraph.settings.historyEnabled) {
             withContext(Dispatchers.IO) {
-                runCatching { AppGraph.history.update(result.entry.copy(outputMethod = method)) }
+                ignoringFailure { AppGraph.history.update(result.entry.copy(outputMethod = method)) }
             }
         }
     }

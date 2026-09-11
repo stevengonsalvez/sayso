@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
+import android.os.Build
 import android.os.Bundle
 import android.os.PersistableBundle
 import android.util.Log
@@ -40,6 +41,19 @@ internal fun matchesPasteByLabel(className: String?): Boolean =
     className?.contains(TERMINAL_CLASS) == true
 
 /**
+ * Whether the transcript has to be on the clipboard before the chosen action runs.
+ *
+ * A paste action, custom or standard, can only deliver what is already on the clipboard:
+ * firing one without copying first pastes whatever the user copied last and still reports
+ * success. Setting the text carries the transcript itself, so that path stays clipboard
+ * free, which matters because dictation is often a password or a private message.
+ *
+ * Mirrors the order [TextInjector] tries the actions in: a custom paste wins over editing.
+ */
+internal fun needsClipboardBeforeAction(hasCustomPaste: Boolean, isEditable: Boolean): Boolean =
+    hasCustomPaste || !isEditable
+
+/**
  * Decides how the text reached the user, and copies only when it did not.
  *
  * [copyToClipboard] is a fallback, not a belt and braces: dictated text is often a
@@ -57,8 +71,9 @@ internal inline fun deliveryOutcome(inserted: Boolean, copyToClipboard: () -> Bo
  *
  * The most promising editable node in the active windows is asked to take the text,
  * preferring a terminal's own paste action, then a direct text edit, then the generic
- * paste action. Only if none of them takes it does the text go to the clipboard, so it
- * is one long-press away rather than lost.
+ * paste action. A paste can only deliver what the clipboard holds, so those two paths put
+ * the text there first; editing the text directly does not. If no node takes it at all the
+ * text goes to the clipboard anyway, one long-press away rather than lost.
  */
 class TextInjector(private val service: AccessibilityService) {
 
@@ -72,8 +87,11 @@ class TextInjector(private val service: AccessibilityService) {
         val clipboard = service.getSystemService(ClipboardManager::class.java) ?: return false
         val clip = ClipData.newPlainText(CLIP_LABEL, text).apply {
             // Keeps the dictated text out of the clipboard preview the system shows on paste.
-            description.extras = PersistableBundle().apply {
-                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            // The flag landed in Android 13; older releases simply show the preview.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
             }
         }
         return runCatching { clipboard.setPrimaryClip(clip) }
@@ -124,7 +142,7 @@ class TextInjector(private val service: AccessibilityService) {
         val className = node.className?.toString().orEmpty()
         var score = 0
         if (acceptsPaste(node) || customPasteAction(node) != null) score += 100
-        if (className.contains(TERMINAL_CLASS)) score += 80
+        if (matchesPasteByLabel(className)) score += 80
         if (node.isEditable) score += 60
         if (node.isFocused) score += 40
         if (className.contains(EDIT_TEXT_CLASS)) score += 20
@@ -144,11 +162,20 @@ class TextInjector(private val service: AccessibilityService) {
     private fun insertInto(node: AccessibilityNodeInfo, text: String): Boolean {
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
-        customPasteAction(node)?.let { action ->
-            return node.performAction(action.id).also { Log.d(TAG, "Custom paste returned $it") }
+        val customPaste = customPasteAction(node)
+        val editable = node.isEditable
+        if (needsClipboardBeforeAction(hasCustomPaste = customPaste != null, isEditable = editable) &&
+            !copyToClipboard(text)
+        ) {
+            Log.d(TAG, "Not pasting: the transcript never reached the clipboard")
+            return false
         }
 
-        if (node.isEditable) {
+        if (customPaste != null) {
+            return node.performAction(customPaste.id).also { Log.d(TAG, "Custom paste returned $it") }
+        }
+
+        if (editable) {
             val merged = spliceAtSelection(
                 existing = node.text?.toString().orEmpty(),
                 insert = text,

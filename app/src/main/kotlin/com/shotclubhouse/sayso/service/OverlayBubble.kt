@@ -118,9 +118,6 @@ class OverlayBubble(
 
     init {
         bubbleBackground.setColor(COLOUR_IDLE.toInt())
-        // A window drawn over the bubble could otherwise talk the user into starting a
-        // recording they cannot see; a covered bubble takes no touches at all.
-        root.filterTouchesWhenObscured = true
         // Taps go through performClick so screen readers can activate the bubble too.
         root.setOnClickListener { onTap() }
         root.setOnTouchListener(DragListener())
