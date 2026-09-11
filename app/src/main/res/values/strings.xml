@@ -71,6 +71,7 @@
     <string name="api_key_label">%1$s API key</string>
     <string name="api_key_saved">Key saved</string>
     <string name="api_key_none">No key saved</string>
+    <string name="api_key_save_failed">Could not save key</string>
     <string name="api_key_show">Show key</string>
     <string name="api_key_hide">Hide key</string>
     <string name="api_key_get">Get a key</string>

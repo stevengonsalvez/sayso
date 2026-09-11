@@ -36,13 +36,22 @@ class DictationService : AccessibilityService() {
     private var capture: AudioCapture? = null
     private var state = State.IDLE
 
+    /**
+     * Called again every time the system rebinds the service, so whatever the previous
+     * connection left running is torn down before a fresh set is built.
+     */
     override fun onServiceConnected() {
         AppGraph.init(this)
+        capture?.stop()
+        capture = null
+        sounds?.release()
+        bubble?.hide()
+
         injector = TextInjector(this)
         sounds = SoundCues(AppGraph.settings)
-        bubble?.hide()
         bubble = OverlayBubble(this, AppGraph.settings, ::onTap).apply { show() }
         instance = this
+        enter(State.IDLE)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit

@@ -1,6 +1,9 @@
 package com.shotclubhouse.sayso.service
 
+import com.shotclubhouse.sayso.core.OutputMethod
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TextInjectorTest {
@@ -48,5 +51,38 @@ class TextInjectorTest {
     @Test
     fun `clamps a selection past the end of the text`() {
         assertEquals("Hello there", spliceAtSelection("Hello", "there", 40, 40))
+    }
+
+    @Test
+    fun `text that was inserted never reaches the clipboard`() {
+        var copied = false
+
+        val method = deliveryOutcome(inserted = true) {
+            copied = true
+            true
+        }
+
+        assertEquals(OutputMethod.INSERTED, method)
+        assertFalse("a successful insertion must not leave the text on the clipboard", copied)
+    }
+
+    @Test
+    fun `text that could not be inserted falls back to the clipboard`() {
+        assertEquals(OutputMethod.CLIPBOARD, deliveryOutcome(inserted = false) { true })
+    }
+
+    @Test
+    fun `a refused clipboard write is reported as no delivery`() {
+        assertEquals(OutputMethod.NONE, deliveryOutcome(inserted = false) { false })
+    }
+
+    @Test
+    fun `only a terminal has its paste action matched by label`() {
+        assertTrue(matchesPasteByLabel("com.termux.view.TerminalView"))
+        assertTrue(matchesPasteByLabel("dev.example.TerminalViewLite"))
+
+        assertFalse(matchesPasteByLabel("android.widget.TextView"))
+        assertFalse(matchesPasteByLabel("android.webkit.WebView"))
+        assertFalse(matchesPasteByLabel(null))
     }
 }

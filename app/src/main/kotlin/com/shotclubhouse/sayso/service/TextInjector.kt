@@ -2,11 +2,16 @@ package com.shotclubhouse.sayso.service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.shotclubhouse.sayso.core.OutputMethod
+
+/** Class name fragment of the terminal emulators that expose paste only by label. */
+private const val TERMINAL_CLASS = "TerminalView"
 
 /**
  * Splices [insert] into [existing] at the selection, mimicking what typing would do.
@@ -27,29 +32,51 @@ fun spliceAtSelection(existing: String, insert: String, selectionStart: Int, sel
 }
 
 /**
+ * Only a terminal emulator gets its paste action picked out by label. Anywhere else that
+ * would sooner or later fire whatever unrelated action happens to be called "paste", in
+ * whatever language the app is in.
+ */
+internal fun matchesPasteByLabel(className: String?): Boolean =
+    className?.contains(TERMINAL_CLASS) == true
+
+/**
+ * Decides how the text reached the user, and copies only when it did not.
+ *
+ * [copyToClipboard] is a fallback, not a belt and braces: dictated text is often a
+ * password or a message, and pushing every successful dictation onto a clipboard that
+ * every foreground app can read gives it away for nothing.
+ */
+internal inline fun deliveryOutcome(inserted: Boolean, copyToClipboard: () -> Boolean): OutputMethod = when {
+    inserted -> OutputMethod.INSERTED
+    copyToClipboard() -> OutputMethod.CLIPBOARD
+    else -> OutputMethod.NONE
+}
+
+/**
  * Puts dictated text where the user is typing.
  *
- * The clipboard is always filled first, so even a total failure leaves the text one
- * long-press away. Then the most promising editable node in the active windows is
- * asked to take the text, preferring a terminal's own paste action, then a direct
- * text edit, then the generic paste action.
+ * The most promising editable node in the active windows is asked to take the text,
+ * preferring a terminal's own paste action, then a direct text edit, then the generic
+ * paste action. Only if none of them takes it does the text go to the clipboard, so it
+ * is one long-press away rather than lost.
  */
 class TextInjector(private val service: AccessibilityService) {
 
     /** Returns how the text reached the user. */
     fun inject(text: String): OutputMethod {
-        val copied = copyToClipboard(text)
         val inserted = candidates().sortedByDescending(::score).any { insertInto(it, text) }
-        return when {
-            inserted -> OutputMethod.INSERTED
-            copied -> OutputMethod.CLIPBOARD
-            else -> OutputMethod.NONE
-        }
+        return deliveryOutcome(inserted) { copyToClipboard(text) }
     }
 
     private fun copyToClipboard(text: String): Boolean {
         val clipboard = service.getSystemService(ClipboardManager::class.java) ?: return false
-        return runCatching { clipboard.setPrimaryClip(ClipData.newPlainText(CLIP_LABEL, text)) }
+        val clip = ClipData.newPlainText(CLIP_LABEL, text).apply {
+            // Keeps the dictated text out of the clipboard preview the system shows on paste.
+            description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        return runCatching { clipboard.setPrimaryClip(clip) }
             .onFailure { Log.d(TAG, "Clipboard write refused", it) }
             .isSuccess
     }
@@ -108,15 +135,9 @@ class TextInjector(private val service: AccessibilityService) {
     private fun acceptsPaste(node: AccessibilityNodeInfo): Boolean =
         node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_PASTE }
 
-    /**
-     * Terminal emulators expose paste only as a custom action carrying a "paste" label, so the
-     * label is matched there. An ordinary text field is edited directly instead: matching by
-     * label on one would sooner or later fire whatever unrelated action happens to be named
-     * that, in whatever language the app is in.
-     */
+    /** Terminal emulators expose paste only as a custom action carrying a "paste" label. */
     private fun customPasteAction(node: AccessibilityNodeInfo): AccessibilityNodeInfo.AccessibilityAction? {
-        val terminal = node.className?.contains(TERMINAL_CLASS) == true
-        if (node.isEditable && !terminal) return null
+        if (!matchesPasteByLabel(node.className?.toString())) return null
         return node.actionList.firstOrNull { it.label?.contains(PASTE_LABEL, ignoreCase = true) == true }
     }
 
@@ -149,7 +170,6 @@ class TextInjector(private val service: AccessibilityService) {
         const val TAG = "SaysoInjector"
         const val CLIP_LABEL = "Sayso"
         const val PASTE_LABEL = "paste"
-        const val TERMINAL_CLASS = "TerminalView"
         const val EDIT_TEXT_CLASS = "EditText"
 
         /** Bounds a walk to roughly 200 ms of binder traffic on a busy screen. */
