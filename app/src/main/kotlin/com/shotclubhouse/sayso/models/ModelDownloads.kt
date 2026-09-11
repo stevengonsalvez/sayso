@@ -3,6 +3,8 @@ package com.shotclubhouse.sayso.models
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.shotclubhouse.sayso.core.SettingsStore
+import com.shotclubhouse.sayso.settings.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,8 +40,24 @@ class ModelDownloads(private val scope: CoroutineScope) {
     fun isInstalled(model: LocalModel, modelsDir: File): Boolean =
         downloader.isInstalled(model, modelsDir)
 
+    /**
+     * Removes a model and repoints the transcription setting when it named that model, then
+     * calls [onDone] on the main thread. Runs on the long-lived scope rather than the
+     * caller's: a delete abandoned half way through would leave the setting pointing at
+     * files that are gone, and every dictation failing until the user noticed.
+     */
+    fun deleteAndReset(model: LocalModel, modelsDir: File, settings: SettingsStore, onDone: () -> Unit) {
+        scope.launch {
+            delete(model, modelsDir)
+            if (settings.sttModelId == "local/${model.dirName}") {
+                settings.sttModelId = Settings.DEFAULT_STT_MODEL_ID
+            }
+            onDone()
+        }
+    }
+
     /** Suspending because removing half a gigabyte of weights is not a main-thread job. */
-    suspend fun delete(model: LocalModel, modelsDir: File) {
+    private suspend fun delete(model: LocalModel, modelsDir: File) {
         withContext(Dispatchers.IO) { downloader.delete(model, modelsDir) }
         if (activeDirName == model.dirName) {
             activeDirName = null

@@ -75,7 +75,10 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
 
     // Naming the transcription model walks the on-device models directory, which is a
     // disk read, so it happens off the main thread rather than during composition.
+    // Tick 0 is skipped: the first resume always follows composition, so running here too
+    // would read the directory twice at startup.
     LaunchedEffect(resumeTick) {
+        if (resumeTick == 0) return@LaunchedEffect
         val summaries = withContext(Dispatchers.IO) { sttSummary() to cleanupSummary() }
         sttSummary = summaries.first
         cleanupSummary = summaries.second

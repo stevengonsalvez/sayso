@@ -34,6 +34,7 @@ import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.service.DictationService
+import com.shotclubhouse.sayso.settings.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -54,8 +55,6 @@ private val LANGUAGES: List<Pair<String?, Int>> = listOf(
     "zh" to R.string.lang_zh,
 )
 
-private const val MIN_RECORDING_SECONDS = 30f
-private const val MAX_RECORDING_SECONDS = 300f
 private const val RECORDING_STEP_SECONDS = 30
 
 /** Which engine turns speech into text, and the knobs that shape a recording. */
@@ -165,8 +164,8 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 value = maxSeconds,
                 onValueChange = { maxSeconds = it },
                 onValueChangeFinished = { settings.maxRecordingSeconds = maxSeconds.roundToInt() },
-                valueRange = MIN_RECORDING_SECONDS..MAX_RECORDING_SECONDS,
-                steps = ((MAX_RECORDING_SECONDS - MIN_RECORDING_SECONDS) / RECORDING_STEP_SECONDS).toInt() - 1,
+                valueRange = Settings.MIN_RECORDING_SECONDS.toFloat()..Settings.MAX_RECORDING_SECONDS.toFloat(),
+                steps = (Settings.MAX_RECORDING_SECONDS - Settings.MIN_RECORDING_SECONDS) / RECORDING_STEP_SECONDS - 1,
             )
         }
 

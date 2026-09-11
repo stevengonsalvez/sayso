@@ -97,9 +97,20 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
     } catch (e: KeyPermanentlyInvalidatedException) {
         Log.w(TAG, "Keystore key was invalidated; generating a new one")
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(KEY_ALIAS)
+        // Every other stored value was sealed with the retired key, so none of them will ever
+        // decrypt again. Keeping them would only hand back nulls for keys the user believes
+        // are saved, with no prompt to enter them once more.
+        prefs.edit().clear().apply()
         block()
     }
 
+    /**
+     * The store's AES key, generated on first use and reused afterwards.
+     *
+     * `setUnlockedDeviceRequired` is a property of the key, not of the store, so it only
+     * covers keys generated from this version onwards. An alias already in the Keystore keeps
+     * whatever flags it was created with until it is invalidated and made again.
+     */
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }

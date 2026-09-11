@@ -135,7 +135,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         const val DEFAULT_POLISH_MODEL_ID = "rules/basic"
         const val MIN_RECORDING_SECONDS = 30
         const val MAX_RECORDING_SECONDS = 300
-        const val DEFAULT_MAX_RECORDING_SECONDS = 300
+
+        /** New installs record for as long as the app allows. */
+        const val DEFAULT_MAX_RECORDING_SECONDS = MAX_RECORDING_SECONDS
         const val DEFAULT_BUBBLE_POSITION = -1
 
         fun open(context: Context): Settings =

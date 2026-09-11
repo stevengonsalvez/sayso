@@ -26,7 +26,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,9 +38,7 @@ import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.models.DownloadState
 import com.shotclubhouse.sayso.models.LocalModelCatalog
 import com.shotclubhouse.sayso.service.DictationService
-import com.shotclubhouse.sayso.settings.Settings
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -52,7 +49,6 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
     val settings = AppGraph.settings
     val downloads = AppGraph.downloads
     val modelsDir = AppGraph.localModelsDir
-    val scope = rememberCoroutineScope()
     var refreshToken by remember { mutableIntStateOf(0) }
     var selectedModel by remember { mutableStateOf(settings.sttModelId) }
     // The directory name rather than the model, so the confirmation survives a rotation.
@@ -144,14 +140,10 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
                 TextButton(
                     onClick = {
                         pendingDeleteDirName = null
-                        scope.launch {
-                            downloads.delete(doomed, modelsDir)
-                            // Leaving the setting pointing at files that are gone would make
-                            // every dictation fail until the user noticed and picked another.
-                            if (settings.sttModelId == "local/${doomed.dirName}") {
-                                settings.sttModelId = Settings.DEFAULT_STT_MODEL_ID
-                                selectedModel = Settings.DEFAULT_STT_MODEL_ID
-                            }
+                        // Deliberately not this screen's scope: navigating away mid-delete
+                        // would otherwise skip the setting reset and the service reload.
+                        downloads.deleteAndReset(doomed, modelsDir, settings) {
+                            selectedModel = settings.sttModelId
                             refreshToken++
                             DictationService.instance?.reloadLocalModel()
                         }
