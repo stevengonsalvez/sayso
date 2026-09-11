@@ -47,7 +47,10 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         set(value) = putString(KEY_LEXICON, Lexicon.encode(value))
 
     override var maxRecordingSeconds: Int
+        // Clamped on read so a value left by an older build cannot ask for a clip the app
+        // will not hold in memory.
         get() = prefs.getInt(KEY_MAX_RECORDING_SECONDS, DEFAULT_MAX_RECORDING_SECONDS)
+            .coerceIn(MIN_RECORDING_SECONDS, MAX_RECORDING_SECONDS)
         set(value) = prefs.edit().putInt(KEY_MAX_RECORDING_SECONDS, value).apply()
 
     override var soundsEnabled: Boolean
@@ -127,6 +130,8 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         const val DEFAULT_STT_MODEL_ID = "local/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"
         const val DEFAULT_POLISH_MODEL_ID = "rules/basic"
+        const val MIN_RECORDING_SECONDS = 30
+        const val MAX_RECORDING_SECONDS = 300
         const val DEFAULT_MAX_RECORDING_SECONDS = 300
         const val DEFAULT_BUBBLE_POSITION = -1
 

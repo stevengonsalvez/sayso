@@ -101,4 +101,16 @@ class SettingsTest {
 
         assertEquals(listOf("keep"), Settings(prefs).hints)
     }
+
+    @Test
+    fun `a recording length left by an older build is clamped to what the app will hold`() {
+        settings.maxRecordingSeconds = 600
+        assertEquals(300, Settings(prefs).maxRecordingSeconds)
+
+        settings.maxRecordingSeconds = 5
+        assertEquals(30, Settings(prefs).maxRecordingSeconds)
+
+        settings.maxRecordingSeconds = 120
+        assertEquals(120, Settings(prefs).maxRecordingSeconds)
+    }
 }

@@ -3,6 +3,7 @@ package com.shotclubhouse.sayso.settings
 import android.content.Context
 import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.Log
 import com.shotclubhouse.sayso.core.SecretStore
@@ -32,16 +33,7 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
         return try {
             val blob = Base64.getDecoder().decode(stored)
             if (blob.size <= IV_BYTES) return null
-            val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-                init(
-                    Cipher.DECRYPT_MODE,
-                    secretKey(),
-                    GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES),
-                )
-                // Binds the blob to its slot: a value copied between providers will not decrypt.
-                updateAAD(providerId.toByteArray(Charsets.UTF_8))
-            }
-            String(cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES), Charsets.UTF_8)
+            retryingOnInvalidatedKey { decrypt(providerId, blob) }
         } catch (e: GeneralSecurityException) {
             Log.w(TAG, "Could not decrypt secret for $providerId", e)
             null
@@ -56,12 +48,7 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
 
     override fun set(providerId: String, value: String) {
         val encrypted = try {
-            val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-                init(Cipher.ENCRYPT_MODE, secretKey())
-                updateAAD(providerId.toByteArray(Charsets.UTF_8))
-            }
-            val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-            Base64.getEncoder().encodeToString(cipher.iv + ciphertext)
+            retryingOnInvalidatedKey { encrypt(providerId, value) }
         } catch (e: GeneralSecurityException) {
             Log.e(TAG, "Could not encrypt secret for $providerId", e)
             null
@@ -78,6 +65,36 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
 
     override fun remove(providerId: String) {
         prefs.edit().remove(providerId).apply()
+    }
+
+    private fun decrypt(providerId: String, blob: ByteArray): String {
+        val cipher = Cipher.getInstance(TRANSFORMATION).apply {
+            init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(TAG_BITS, blob, 0, IV_BYTES))
+            // Binds the blob to its slot: a value copied between providers will not decrypt.
+            updateAAD(providerId.toByteArray(Charsets.UTF_8))
+        }
+        return String(cipher.doFinal(blob, IV_BYTES, blob.size - IV_BYTES), Charsets.UTF_8)
+    }
+
+    private fun encrypt(providerId: String, value: String): String {
+        val cipher = Cipher.getInstance(TRANSFORMATION).apply {
+            init(Cipher.ENCRYPT_MODE, secretKey())
+            updateAAD(providerId.toByteArray(Charsets.UTF_8))
+        }
+        return Base64.getEncoder().encodeToString(cipher.iv + cipher.doFinal(value.toByteArray(Charsets.UTF_8)))
+    }
+
+    /**
+     * A lock screen change or a biometric re-enrolment retires the key for good. Nothing
+     * encrypted with it is recoverable, so the alias is dropped and made again; the retry then
+     * lets a fresh write succeed instead of the store staying broken until a reinstall.
+     */
+    private fun <T> retryingOnInvalidatedKey(block: () -> T): T = try {
+        block()
+    } catch (e: KeyPermanentlyInvalidatedException) {
+        Log.w(TAG, "Keystore key was invalidated; generating a new one")
+        KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }.deleteEntry(KEY_ALIAS)
+        block()
     }
 
     private fun secretKey(): SecretKey {

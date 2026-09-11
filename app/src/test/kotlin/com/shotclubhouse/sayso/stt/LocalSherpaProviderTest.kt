@@ -1,5 +1,7 @@
 package com.shotclubhouse.sayso.stt
 
+import com.shotclubhouse.sayso.core.TranscriptionResult
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -100,6 +102,18 @@ class LocalSherpaProviderTest {
         assertTrue(config.modelConfig.senseVoice.model.endsWith("model.int8.onnx"))
         assertTrue(config.modelConfig.senseVoice.useInverseTextNormalization)
         assertTrue(config.modelConfig.nemo.model.isEmpty())
+    }
+
+    @Test
+    fun `a model name that is a path is refused before anything is loaded`() = runTest {
+        val provider = LocalSherpaProvider(File(temp.root, "models").apply { mkdirs() })
+
+        listOf("../../etc/passwd", "nested/model", "back\\slash", "..", "  ").forEach { name ->
+            val result = provider.transcribe(testRequest(name), apiKey = null)
+
+            assertTrue(name, result is TranscriptionResult.Failure)
+            assertTrue(name, (result as TranscriptionResult.Failure).message.contains("not a valid model name"))
+        }
     }
 
     @Test

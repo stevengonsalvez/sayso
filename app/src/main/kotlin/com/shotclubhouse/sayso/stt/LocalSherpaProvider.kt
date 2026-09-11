@@ -75,6 +75,11 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
 
     private fun transcribeLocked(modelName: String, clip: AudioClip): TranscriptionResult {
         if (clip.isEmpty) return TranscriptionResult.Failure("No audio recorded")
+        // The name comes from a stored setting and is joined onto a path, so it stays one
+        // directory name: no separators, no walking up out of the models directory.
+        if (modelName.isBlank() || modelName.any { it in PATH_SEPARATORS } || modelName.contains("..")) {
+            return TranscriptionResult.Failure("\"$modelName\" is not a valid model name")
+        }
         val active = recognizerFor(modelName)
             ?: return TranscriptionResult.Failure("Model \"$modelName\" is not installed")
 
@@ -108,6 +113,10 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
         recognizer?.release()
         recognizer = null
         loadedModel = null
+    }
+
+    private companion object {
+        val PATH_SEPARATORS = charArrayOf('/', '\\')
     }
 
     private fun installedDirs(): List<File> = modelsDir.listFiles()
