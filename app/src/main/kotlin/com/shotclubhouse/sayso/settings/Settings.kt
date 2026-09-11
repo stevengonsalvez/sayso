@@ -1,0 +1,136 @@
+package com.shotclubhouse.sayso.settings
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.shotclubhouse.sayso.core.LexiconRule
+import com.shotclubhouse.sayso.core.SettingsStore
+import com.shotclubhouse.sayso.polish.Lexicon
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+
+/** Typed view over the app's SharedPreferences file. */
+class Settings(private val prefs: SharedPreferences) : SettingsStore {
+
+    override var sttModelId: String
+        get() = prefs.getString(KEY_STT_MODEL_ID, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_STT_MODEL_ID
+        set(value) = putString(KEY_STT_MODEL_ID, value)
+
+    override var language: String?
+        get() = optionalString(KEY_LANGUAGE)
+        set(value) = putString(KEY_LANGUAGE, value)
+
+    override var hints: List<String>
+        get() = decodeStrings(prefs.getString(KEY_HINTS, null))
+        set(value) = putString(KEY_HINTS, encodeStrings(value))
+
+    override var polishEnabled: Boolean
+        get() = prefs.getBoolean(KEY_POLISH_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_POLISH_ENABLED, value).apply()
+
+    override var polishModelId: String
+        get() = prefs.getString(KEY_POLISH_MODEL_ID, null)?.takeIf { it.isNotBlank() } ?: DEFAULT_POLISH_MODEL_ID
+        set(value) = putString(KEY_POLISH_MODEL_ID, value)
+
+    override var customPrompt: String?
+        get() = optionalString(KEY_CUSTOM_PROMPT)
+        set(value) = putString(KEY_CUSTOM_PROMPT, value)
+
+    override var outputLanguage: String?
+        get() = optionalString(KEY_OUTPUT_LANGUAGE)
+        set(value) = putString(KEY_OUTPUT_LANGUAGE, value)
+
+    override var lexicon: List<LexiconRule>
+        get() = Lexicon.decode(prefs.getString(KEY_LEXICON, null).orEmpty())
+        set(value) = putString(KEY_LEXICON, Lexicon.encode(value))
+
+    override var maxRecordingSeconds: Int
+        get() = prefs.getInt(KEY_MAX_RECORDING_SECONDS, DEFAULT_MAX_RECORDING_SECONDS)
+        set(value) = prefs.edit().putInt(KEY_MAX_RECORDING_SECONDS, value).apply()
+
+    override var soundsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SOUNDS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_SOUNDS_ENABLED, value).apply()
+
+    override var historyEnabled: Boolean
+        get() = prefs.getBoolean(KEY_HISTORY_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_HISTORY_ENABLED, value).apply()
+
+    override var bubbleX: Int
+        get() = prefs.getInt(KEY_BUBBLE_X, DEFAULT_BUBBLE_POSITION)
+        set(value) = prefs.edit().putInt(KEY_BUBBLE_X, value).apply()
+
+    override var bubbleY: Int
+        get() = prefs.getInt(KEY_BUBBLE_Y, DEFAULT_BUBBLE_POSITION)
+        set(value) = prefs.edit().putInt(KEY_BUBBLE_Y, value).apply()
+
+    private fun optionalString(key: String): String? =
+        prefs.getString(key, null)?.takeIf { it.isNotBlank() }
+
+    private fun putString(key: String, value: String?) {
+        val editor = prefs.edit()
+        if (value.isNullOrBlank()) editor.remove(key) else editor.putString(key, value)
+        editor.apply()
+    }
+
+    private fun encodeStrings(values: List<String>): String =
+        buildJsonArray { values.filter { it.isNotBlank() }.forEach { add(it) } }.toString()
+
+    private fun decodeStrings(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        val array = runCatching { Json.parseToJsonElement(raw) as? JsonArray }.getOrNull() ?: return emptyList()
+        return array.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content }
+    }
+
+    companion object {
+        /** SharedPreferences file name. */
+        const val PREFS_NAME = "sayso"
+
+        /** "<provider>/<model>" id of the speech-to-text model. */
+        const val KEY_STT_MODEL_ID = "stt_model_id"
+
+        /** ISO-639-1 spoken language, or absent for provider auto-detect. */
+        const val KEY_LANGUAGE = "language"
+
+        /** JSON array of recognition bias phrases. */
+        const val KEY_HINTS = "hints"
+
+        /** Whether transcripts are passed through a cleanup model. */
+        const val KEY_POLISH_ENABLED = "polish_enabled"
+
+        /** "<provider>/<model>" id of the cleanup model. */
+        const val KEY_POLISH_MODEL_ID = "polish_model_id"
+
+        /** User-edited system prompt replacing the built-in cleanup prompt. */
+        const val KEY_CUSTOM_PROMPT = "custom_prompt"
+
+        /** Language whose spelling conventions the cleanup output should follow. */
+        const val KEY_OUTPUT_LANGUAGE = "output_language"
+
+        /** JSON array of lexicon rules, see [Lexicon.encode]. */
+        const val KEY_LEXICON = "lexicon"
+
+        /** Hard cap on a single recording. */
+        const val KEY_MAX_RECORDING_SECONDS = "max_recording_seconds"
+
+        /** Whether start/stop tones are played. */
+        const val KEY_SOUNDS_ENABLED = "sounds_enabled"
+
+        /** Whether transcripts and audio are kept on device. */
+        const val KEY_HISTORY_ENABLED = "history_enabled"
+
+        /** Last bubble position in pixels; [DEFAULT_BUBBLE_POSITION] means "not placed yet". */
+        const val KEY_BUBBLE_X = "bubble_x"
+        const val KEY_BUBBLE_Y = "bubble_y"
+
+        const val DEFAULT_STT_MODEL_ID = "local/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"
+        const val DEFAULT_POLISH_MODEL_ID = "rules/basic"
+        const val DEFAULT_MAX_RECORDING_SECONDS = 300
+        const val DEFAULT_BUBBLE_POSITION = -1
+
+        fun open(context: Context): Settings =
+            Settings(context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE))
+    }
+}
