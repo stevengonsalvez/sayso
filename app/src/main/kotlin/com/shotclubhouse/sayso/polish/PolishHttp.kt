@@ -27,6 +27,9 @@ internal object PolishHttp {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .callTimeout(90, TimeUnit.SECONDS)
+            // An API key rides in a header; a redirect would hand it to another host.
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
     }
 

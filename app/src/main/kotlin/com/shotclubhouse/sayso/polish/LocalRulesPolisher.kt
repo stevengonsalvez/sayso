@@ -41,7 +41,7 @@ object LocalRulesPolisher : PolishProvider {
         return cleaned
     }
 
-    /** Leaves "iPhone" and "npm" alone: a word that shapes its own casing keeps it. */
+    /** Leaves "iPhone" alone: a first word that already carries a capital keeps its own casing. */
     private fun firstWordIsPlain(text: String): Boolean =
         text.substringBefore(' ').drop(1).none { it.isUpperCase() }
 

@@ -33,7 +33,9 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
         return try {
             val blob = Base64.getDecoder().decode(stored)
             if (blob.size <= IV_BYTES) return null
-            retryingOnInvalidatedKey { decrypt(providerId, blob) }
+            // No regeneration here: an unreadable value is reported as "no key saved", and
+            // dropping the alias on a read would take every other provider's key with it.
+            decrypt(providerId, blob)
         } catch (e: GeneralSecurityException) {
             Log.w(TAG, "Could not decrypt secret for $providerId", e)
             null
@@ -86,8 +88,9 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
 
     /**
      * A lock screen change or a biometric re-enrolment retires the key for good. Nothing
-     * encrypted with it is recoverable, so the alias is dropped and made again; the retry then
-     * lets a fresh write succeed instead of the store staying broken until a reinstall.
+     * encrypted with it is recoverable, so on a write the alias is dropped and made again;
+     * the retry then lets the new key be stored instead of the store staying broken until a
+     * reinstall. Only writes do this, because only a write has a value to save afterwards.
      */
     private fun <T> retryingOnInvalidatedKey(block: () -> T): T = try {
         block()
@@ -110,6 +113,9 @@ class KeystoreSecretStore(private val prefs: SharedPreferences) : SecretStore {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(KEY_BITS)
+                // API 28 and up, and minSdk is 30: keys are unusable while the device is
+                // locked, so a stolen handset cannot be made to decrypt them.
+                .setUnlockedDeviceRequired(true)
                 .build(),
         )
         return generator.generateKey()

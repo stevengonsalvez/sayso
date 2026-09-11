@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.shotclubhouse.sayso.core.LexiconRule
 import com.shotclubhouse.sayso.core.SettingsStore
+import com.shotclubhouse.sayso.models.LocalModelCatalog
 import com.shotclubhouse.sayso.polish.Lexicon
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -128,7 +129,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         const val KEY_BUBBLE_X = "bubble_x"
         const val KEY_BUBBLE_Y = "bubble_y"
 
-        const val DEFAULT_STT_MODEL_ID = "local/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"
+        /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
+        val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"
+
         const val DEFAULT_POLISH_MODEL_ID = "rules/basic"
         const val MIN_RECORDING_SECONDS = 30
         const val MAX_RECORDING_SECONDS = 300

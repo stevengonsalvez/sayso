@@ -249,6 +249,39 @@ class DefaultDictationPipelineTest {
         assertNull(result.error)
         assertNull(result.entry.polishModelId)
         assertEquals(0, polisher.calls)
+        assertEquals("Cleanup skipped: no API key for fake-polish", result.notice)
+    }
+
+    @Test
+    fun `a cleanup model that is no longer offered says so instead of going quiet`() = runTest {
+        val settings = InMemorySettings(
+            sttModelId = "local/model",
+            polishEnabled = true,
+            polishModelId = "gone/model",
+        )
+
+        val result = pipeline(settings, polish = FakePolishCatalog(emptyList())).run(clip)
+
+        assertEquals("local text", result.text)
+        assertNull(result.error)
+        assertEquals("Cleanup skipped: unknown cleanup model", result.notice)
+    }
+
+    @Test
+    fun `a fallback and a skipped cleanup are both reported`() = runTest {
+        val secrets = InMemorySecretStore()
+        val settings = InMemorySettings(
+            sttModelId = "cloud/model",
+            polishEnabled = true,
+            polishModelId = "fake-polish/model",
+        )
+
+        val result = pipeline(settings, secrets, polish = FakePolishCatalog(listOf(FakePolishProvider()))).run(clip)
+
+        assertEquals(
+            "No API key for cloud, used local model. Cleanup skipped: no API key for fake-polish",
+            result.notice,
+        )
     }
 
     @Test

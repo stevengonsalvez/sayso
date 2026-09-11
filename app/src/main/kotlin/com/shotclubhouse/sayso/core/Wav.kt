@@ -44,7 +44,11 @@ object Wav {
             if (size < 0) return null
             val body = offset + 8
             when (id) {
-                "fmt " -> if (body + 8 <= bytes.size) sampleRate = readInt32(bytes, body + 4)
+                "fmt " -> if (body + 8 <= bytes.size) {
+                    sampleRate = readInt32(bytes, body + 4)
+                    // Every later calculation divides by this, and no real file declares it.
+                    if (sampleRate <= 0) return null
+                }
                 "data" -> {
                     val end = minOf(body + size, bytes.size)
                     if (end <= body) return null

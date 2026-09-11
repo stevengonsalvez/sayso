@@ -1,6 +1,7 @@
 package com.shotclubhouse.sayso.settings
 
 import com.shotclubhouse.sayso.core.LexiconRule
+import com.shotclubhouse.sayso.models.LocalModelCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -12,6 +13,11 @@ class SettingsTest {
 
     private val prefs = FakeSharedPreferences()
     private val settings = Settings(prefs)
+
+    @Test
+    fun `the default transcription model is the recommended on-device one`() {
+        assertEquals("local/${LocalModelCatalog.default.dirName}", Settings.DEFAULT_STT_MODEL_ID)
+    }
 
     @Test
     fun `an empty store yields the shipping defaults`() {

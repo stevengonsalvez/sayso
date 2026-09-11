@@ -8,7 +8,9 @@ package com.shotclubhouse.sayso.core
 
 /** A recorded clip: 16-bit little-endian PCM, mono. */
 class AudioClip(val pcm16: ByteArray, val sampleRate: Int = DEFAULT_SAMPLE_RATE) {
-    val durationMs: Long get() = pcm16.size * 1000L / (sampleRate * 2)
+    // A clip decoded from a malformed header could otherwise divide by zero here, which
+    // would take down a dictation on the way to reporting the real problem.
+    val durationMs: Long get() = pcm16.size * 1000L / (sampleRate.coerceAtLeast(1) * 2)
     val isEmpty: Boolean get() = pcm16.isEmpty()
 
     companion object {

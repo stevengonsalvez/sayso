@@ -65,4 +65,19 @@ class WavTest {
         assertEquals(0f, samples[1], 1e-6f)
         assertEquals(1f, samples[2], 1e-4f)
     }
+
+    @Test
+    fun `decode rejects a header that declares an impossible sample rate`() {
+        val wav = Wav.encode(AudioClip(pcm, 16_000))
+        // Sample rate lives at offset 24 of the fmt chunk this encoder writes.
+        for (i in 0 until 4) wav[24 + i] = 0
+
+        assertNull(Wav.decode(wav))
+    }
+
+    @Test
+    fun `a clip with a nonsense sample rate reports a duration rather than dividing by zero`() {
+        assertEquals(pcm.size * 1000L / 2, AudioClip(pcm, 0).durationMs)
+        assertEquals(pcm.size * 1000L / 2, AudioClip(pcm, -44_100).durationMs)
+    }
 }

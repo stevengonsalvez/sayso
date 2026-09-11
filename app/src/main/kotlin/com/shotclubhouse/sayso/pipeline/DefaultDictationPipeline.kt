@@ -106,7 +106,7 @@ class DefaultDictationPipeline(
             rawText = raw,
             polishedText = cleanup.text,
             polishModelId = cleanup.modelId,
-            notice = notice,
+            notice = listOfNotNull(notice, cleanup.notice).joinToString(". ").ifEmpty { null },
         )
     }
 
@@ -139,15 +139,33 @@ class DefaultDictationPipeline(
         return Resolved(provider, model, key(provider.id), notice)
     }
 
-    private class Cleanup(val text: String?, val modelId: String?, val error: String?) {
+    private class Cleanup(
+        val text: String?,
+        val modelId: String?,
+        val error: String?,
+        /** Why cleanup did not run, when the user asked for it and it was skipped anyway. */
+        val notice: String? = null,
+    ) {
         companion object {
             val SKIPPED = Cleanup(null, null, null)
+
+            fun skipped(why: String) = Cleanup(null, null, null, "Cleanup skipped: $why")
         }
     }
 
+    /**
+     * Cleanup is optional, so a missing key or a model that is no longer offered keeps the raw
+     * transcript rather than failing the dictation. It is not silent though: without a word the
+     * user just sees cleanup quietly stop working.
+     */
     private suspend fun applyPolish(raw: String): Cleanup {
-        val (provider, model) = polish.find(settings.polishModelId) ?: return Cleanup.SKIPPED
-        val apiKey = if (provider.needsApiKey) key(provider.id) ?: return Cleanup.SKIPPED else null
+        val (provider, model) = polish.find(settings.polishModelId)
+            ?: return Cleanup.skipped("unknown cleanup model")
+        val apiKey = if (provider.needsApiKey) {
+            key(provider.id) ?: return Cleanup.skipped("no API key for ${provider.displayName}")
+        } else {
+            null
+        }
 
         val base = settings.customPrompt
             ?.takeIf { it.isNotBlank() && provider.supportsCustomPrompt }
