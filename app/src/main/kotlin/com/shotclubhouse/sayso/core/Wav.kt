@@ -51,8 +51,11 @@ object Wav {
                     return AudioClip(bytes.copyOfRange(body, end), sampleRate)
                 }
             }
-            // Chunk bodies are padded to an even length.
-            offset = body + size + (size and 1)
+            // Chunk bodies are padded to an even length. A size large enough to overflow the
+            // offset would otherwise walk backwards through the file for ever.
+            val next = body + size + (size and 1)
+            if (next <= offset) return null
+            offset = next
         }
         return null
     }

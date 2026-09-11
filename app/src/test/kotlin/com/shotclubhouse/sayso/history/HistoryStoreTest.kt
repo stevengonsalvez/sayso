@@ -9,6 +9,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -146,4 +147,45 @@ class HistoryStoreTest {
         val store = HistoryStore(dir)
         assertEquals(null, store.loadAudio(File(dir, "nope.wav").absolutePath))
     }
+
+    /** A chunk size that reads back negative used to leave the parser walking on the spot. */
+    @Test(timeout = 5_000)
+    fun loadAudio_chunkSizeThatOverflows_returnsNull() = runTest {
+        val store = HistoryStore(dir)
+        val header = "RIFF".toByteArray() + intLe(120) + "WAVE".toByteArray() +
+            "fmt ".toByteArray() + intLe(0xFFFFFFF8.toInt()) + ByteArray(16)
+        val file = File(dir, "hostile.wav").apply { writeBytes(header) }
+
+        assertNull(store.loadAudio(file.absolutePath))
+    }
+
+    @Test(timeout = 5_000)
+    fun loadAudio_truncatedAfterTheHeader_returnsNull() = runTest {
+        val store = HistoryStore(dir)
+        val full = File(dir, "full.wav")
+        val path = store.saveAudio("full", AudioClip(ByteArray(4_000) { it.toByte() }))
+        // Keeps the 44-byte header, which still claims 4,000 bytes of samples follow.
+        full.writeBytes(File(path).readBytes().copyOfRange(0, 44))
+
+        assertNull(store.loadAudio(full.absolutePath))
+    }
+
+    @Test
+    fun rewrite_leavesNoTemporaryFileBehind() = runTest {
+        val store = HistoryStore(dir)
+        store.add(entry("1", createdAt = 100))
+        store.add(entry("2", createdAt = 200))
+
+        store.delete("1")
+        store.update(entry("2", createdAt = 200, durationMs = 7_777))
+
+        // Names nothing: any staging file left behind at all is the failure.
+        assertEquals(listOf("history.jsonl"), dir.listFiles().orEmpty().map { it.name }.sorted())
+        assertEquals(listOf("2"), store.all().map { it.id })
+        assertEquals(7_777L, store.all().first().durationMs)
+        // The reload path has to see the same thing the cache does.
+        assertEquals(listOf("2"), HistoryStore(dir).all().map { it.id })
+    }
+
+    private fun intLe(value: Int) = ByteArray(4) { (value ushr (8 * it)).toByte() }
 }

@@ -4,6 +4,7 @@ import com.shotclubhouse.sayso.core.AudioClip
 import com.shotclubhouse.sayso.core.HistoryEntry
 import com.shotclubhouse.sayso.core.HistoryRepository
 import com.shotclubhouse.sayso.core.OutputMethod
+import com.shotclubhouse.sayso.core.Wav
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -11,8 +12,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * JSON mirror of [HistoryEntry] for kotlinx.serialization: the contract type itself is not
@@ -89,9 +91,29 @@ class HistoryStore(private val dir: File, private val maxEntries: Int = 500) : H
         return entries
     }
 
+    /**
+     * Writes the whole file again. A crash part way through a direct write would lose every
+     * entry, so the new content is staged beside it and swapped in with one rename.
+     */
     private suspend fun rewrite(entries: List<HistoryEntry>) = withContext(Dispatchers.IO) {
         dir.mkdirs()
-        historyFile.writeText(entries.joinToString(separator = "") { line(it) })
+        val staged = File(dir, historyFile.name + ".tmp")
+        staged.writeText(entries.joinToString(separator = "") { line(it) })
+        try {
+            Files.move(
+                staged.toPath(),
+                historyFile.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (e: IOException) {
+            // Not every filesystem Android mounts supports an atomic move.
+            if (!staged.renameTo(historyFile)) {
+                historyFile.delete()
+                staged.renameTo(historyFile)
+            }
+        }
+        Unit
     }
 
     private suspend fun appendLine(entry: HistoryEntry) = withContext(Dispatchers.IO) {
@@ -154,87 +176,14 @@ class HistoryStore(private val dir: File, private val maxEntries: Int = 500) : H
     override suspend fun saveAudio(id: String, clip: AudioClip): String = withContext(Dispatchers.IO) {
         audioDir.mkdirs()
         val file = File(audioDir, "$id.wav")
-        writeWav(file, clip)
+        file.writeBytes(Wav.encode(clip))
         file.absolutePath
     }
 
     override suspend fun loadAudio(path: String): AudioClip? = withContext(Dispatchers.IO) {
-        readWav(File(path))
+        val file = File(path)
+        if (!file.isFile) return@withContext null
+        Wav.decode(file.readBytes())
     }
 }
 
-// --- Tiny WAV encoder/decoder: PCM16 mono only, 44-byte canonical header. ---
-
-private fun writeWav(file: File, clip: AudioClip) {
-    val data = clip.pcm16
-    val byteRate = clip.sampleRate * 2 // mono * 16-bit
-    val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
-        put("RIFF".toByteArray(Charsets.US_ASCII))
-        putInt(36 + data.size)
-        put("WAVE".toByteArray(Charsets.US_ASCII))
-        put("fmt ".toByteArray(Charsets.US_ASCII))
-        putInt(16) // fmt chunk size
-        putShort(1.toShort()) // PCM
-        putShort(1.toShort()) // mono
-        putInt(clip.sampleRate)
-        putInt(byteRate)
-        putShort(2.toShort()) // block align
-        putShort(16.toShort()) // bits per sample
-        put("data".toByteArray(Charsets.US_ASCII))
-        putInt(data.size)
-    }.array()
-    file.outputStream().use { out ->
-        out.write(header)
-        out.write(data)
-    }
-}
-
-private fun readWav(file: File): AudioClip? {
-    if (!file.exists()) return null
-    val bytes = file.readBytes()
-    if (bytes.size < 12 ||
-        String(bytes, 0, 4, Charsets.US_ASCII) != "RIFF" ||
-        String(bytes, 8, 4, Charsets.US_ASCII) != "WAVE"
-    ) return null
-
-    var offset = 12
-    var audioFormat = 0
-    var channels = 0
-    var sampleRate = 0
-    var bitsPerSample = 0
-    var dataStart = -1
-    var dataSize = 0
-
-    while (offset + 8 <= bytes.size) {
-        val chunkId = String(bytes, offset, 4, Charsets.US_ASCII)
-        val chunkSize = readIntLe(bytes, offset + 4)
-        val body = offset + 8
-        when (chunkId) {
-            "fmt " -> {
-                audioFormat = readShortLe(bytes, body)
-                channels = readShortLe(bytes, body + 2)
-                sampleRate = readIntLe(bytes, body + 4)
-                bitsPerSample = readShortLe(bytes, body + 14)
-            }
-            "data" -> {
-                dataStart = body
-                dataSize = chunkSize
-            }
-        }
-        offset = body + chunkSize + (chunkSize and 1) // chunks are word-aligned
-    }
-
-    if (dataStart < 0 || audioFormat != 1 || channels != 1 || bitsPerSample != 16) return null
-    val end = minOf(dataStart + dataSize, bytes.size)
-    if (end <= dataStart) return AudioClip(ByteArray(0), sampleRate)
-    return AudioClip(bytes.copyOfRange(dataStart, end), sampleRate)
-}
-
-private fun readIntLe(b: ByteArray, off: Int): Int =
-    (b[off].toInt() and 0xFF) or
-        ((b[off + 1].toInt() and 0xFF) shl 8) or
-        ((b[off + 2].toInt() and 0xFF) shl 16) or
-        ((b[off + 3].toInt() and 0xFF) shl 24)
-
-private fun readShortLe(b: ByteArray, off: Int): Int =
-    (b[off].toInt() and 0xFF) or ((b[off + 1].toInt() and 0xFF) shl 8)
