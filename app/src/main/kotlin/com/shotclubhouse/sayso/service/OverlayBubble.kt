@@ -7,6 +7,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -125,8 +126,11 @@ class OverlayBubble(
     fun show() {
         if (shown) return
         placeInitially()
-        windowManager.addView(root, params)
-        shown = true
+        // The window manager refuses an overlay while the service is being torn down or the
+        // display is going away. A refused add must not leave the bubble thinking it is up.
+        runCatching { windowManager.addView(root, params) }
+            .onSuccess { shown = true }
+            .onFailure { Log.w(TAG, "The window manager refused the bubble overlay") }
     }
 
     fun hide() {
@@ -167,8 +171,11 @@ class OverlayBubble(
         if (pillShown) {
             windowManager.updateViewLayout(pill, pillParams)
         } else {
-            windowManager.addView(pill, pillParams)
-            pillShown = true
+            // Logged without the exception: its message can quote the view, and the pill holds
+            // the dictated text.
+            runCatching { windowManager.addView(pill, pillParams) }
+                .onSuccess { pillShown = true }
+                .onFailure { Log.w(TAG, "The window manager refused the feedback pill") }
         }
         handler.postDelayed(::hidePill, FEEDBACK_MS)
     }
@@ -261,6 +268,7 @@ class OverlayBubble(
     }
 
     private companion object {
+        const val TAG = "SaysoBubble"
         const val COLOUR_IDLE = 0xDD1E2A44
         const val COLOUR_RECORDING = 0xDDE5484D
         const val COLOUR_BUSY = 0xDD6B6B6B

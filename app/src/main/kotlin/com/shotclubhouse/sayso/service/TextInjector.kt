@@ -89,27 +89,41 @@ class TextInjector(private val service: AccessibilityService) {
     private fun isTextTarget(node: AccessibilityNodeInfo): Boolean =
         node.isEditable ||
             node.isFocused ||
-            node.className?.contains("EditText") == true ||
-            pasteAction(node) != null
+            node.className?.contains(EDIT_TEXT_CLASS) == true ||
+            acceptsPaste(node) ||
+            customPasteAction(node) != null
 
     private fun score(node: AccessibilityNodeInfo): Int {
         val className = node.className?.toString().orEmpty()
         var score = 0
-        if (pasteAction(node) != null) score += 100
-        if (className.contains("TerminalView")) score += 80
+        if (acceptsPaste(node) || customPasteAction(node) != null) score += 100
+        if (className.contains(TERMINAL_CLASS)) score += 80
         if (node.isEditable) score += 60
         if (node.isFocused) score += 40
-        if (className.contains("EditText")) score += 20
+        if (className.contains(EDIT_TEXT_CLASS)) score += 20
         return score
     }
 
-    private fun pasteAction(node: AccessibilityNodeInfo): AccessibilityNodeInfo.AccessibilityAction? =
-        node.actionList.firstOrNull { it.label?.contains(PASTE_LABEL, ignoreCase = true) == true }
+    /** The standard paste, identified by its action id rather than by what it is called. */
+    private fun acceptsPaste(node: AccessibilityNodeInfo): Boolean =
+        node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_PASTE }
+
+    /**
+     * Terminal emulators expose paste only as a custom action carrying a "paste" label, so the
+     * label is matched there. An ordinary text field is edited directly instead: matching by
+     * label on one would sooner or later fire whatever unrelated action happens to be named
+     * that, in whatever language the app is in.
+     */
+    private fun customPasteAction(node: AccessibilityNodeInfo): AccessibilityNodeInfo.AccessibilityAction? {
+        val terminal = node.className?.contains(TERMINAL_CLASS) == true
+        if (node.isEditable && !terminal) return null
+        return node.actionList.firstOrNull { it.label?.contains(PASTE_LABEL, ignoreCase = true) == true }
+    }
 
     private fun insertInto(node: AccessibilityNodeInfo, text: String): Boolean {
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
 
-        pasteAction(node)?.let { action ->
+        customPasteAction(node)?.let { action ->
             return node.performAction(action.id).also { Log.d(TAG, "Custom paste returned $it") }
         }
 
@@ -135,6 +149,8 @@ class TextInjector(private val service: AccessibilityService) {
         const val TAG = "SaysoInjector"
         const val CLIP_LABEL = "Sayso"
         const val PASTE_LABEL = "paste"
+        const val TERMINAL_CLASS = "TerminalView"
+        const val EDIT_TEXT_CLASS = "EditText"
 
         /** Bounds a walk to roughly 200 ms of binder traffic on a busy screen. */
         const val MAX_NODES = 400
