@@ -44,6 +44,8 @@ val fetchSherpaOnnx by tasks.registering {
 }
 tasks.named("preBuild") { dependsOn(fetchSherpaOnnx) }
 
+val releaseKeystore: String? = System.getenv("SAYSO_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "com.shotclubhouse.sayso"
     compileSdk = 36
@@ -57,9 +59,29 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    signingConfigs {
+        // Release signing material comes from the environment, never from the repository.
+        // With SAYSO_KEYSTORE_PATH unset there is simply no config, so a local
+        // assembleRelease still builds and just produces an unsigned APK.
+        releaseKeystore?.let { keystore ->
+            create("release") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("SAYSO_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SAYSO_KEY_ALIAS")
+                keyPassword = System.getenv("SAYSO_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -73,8 +95,6 @@ android {
     packaging {
         jniLibs.useLegacyPackaging = false
     }
-
-    testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
 kotlin {
