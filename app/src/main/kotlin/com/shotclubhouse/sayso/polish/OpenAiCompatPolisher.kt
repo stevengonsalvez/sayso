@@ -1,5 +1,6 @@
 package com.shotclubhouse.sayso.polish
 
+import com.shotclubhouse.sayso.core.ApiKeys
 import com.shotclubhouse.sayso.core.PolishModel
 import com.shotclubhouse.sayso.core.PolishProvider
 import com.shotclubhouse.sayso.core.PolishResult
@@ -30,8 +31,8 @@ class OpenAiCompatPolisher(
         modelName: String,
         apiKey: String?,
     ): PolishResult {
-        if (apiKey.isNullOrBlank()) return missingKey(displayName)
-        if (!isSendableKey(apiKey)) return unsendableKey(displayName)
+        if (apiKey.isNullOrBlank()) return PolishResult.Failure(ApiKeys.missing(displayName))
+        if (!ApiKeys.isSendable(apiKey)) return PolishResult.Failure(ApiKeys.UNSUPPORTED)
 
         val payload = buildJsonObject {
             put("model", modelName)

@@ -88,19 +88,3 @@ internal object PolishHttp {
         else -> null
     }
 }
-
-/** Uniform "you have not saved a key yet" failure, checked before any socket is opened. */
-internal fun missingKey(displayName: String): PolishResult =
-    PolishResult.Failure("$displayName API key is missing")
-
-/**
- * OkHttp rejects a header value holding anything outside printable ASCII, and embeds the
- * offending value in the exception message for every header it does not treat as sensitive.
- * That message would be persisted into history, so unusable keys are caught here instead.
- * A pasted key picking up a non-breaking space is the realistic case.
- */
-internal fun isSendableKey(apiKey: String): Boolean =
-    apiKey.all { it.code in 0x20..0x7e }
-
-internal fun unsendableKey(displayName: String): PolishResult =
-    PolishResult.Failure("$displayName API key contains characters that cannot be sent; re-enter it")

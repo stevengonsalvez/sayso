@@ -1,5 +1,6 @@
 package com.shotclubhouse.sayso.stt
 
+import com.shotclubhouse.sayso.core.ApiKeys
 import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.core.TranscriptionProvider
 import com.shotclubhouse.sayso.core.TranscriptionRequest
@@ -23,7 +24,8 @@ class ElevenLabsProvider(
     )
 
     override suspend fun transcribe(request: TranscriptionRequest, apiKey: String?): TranscriptionResult {
-        if (apiKey.isNullOrBlank()) return TranscriptionResult.Failure("Missing $displayName API key")
+        if (apiKey.isNullOrBlank()) return TranscriptionResult.Failure(ApiKeys.missing(displayName))
+        if (!ApiKeys.isSendable(apiKey)) return TranscriptionResult.Failure(ApiKeys.UNSUPPORTED)
 
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("model_id", request.modelName)

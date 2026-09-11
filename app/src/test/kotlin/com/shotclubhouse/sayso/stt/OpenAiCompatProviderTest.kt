@@ -97,7 +97,7 @@ class OpenAiCompatProviderTest {
     fun `refuses to call out without a key`() = runTest {
         val result = provider().transcribe(testRequest("whisper-1"), apiKey = " ")
 
-        assertEquals(TranscriptionResult.Failure("Missing OpenAI API key"), result)
+        assertEquals(TranscriptionResult.Failure("OpenAI API key is missing"), result)
         assertEquals(0, server.requestCount)
     }
 

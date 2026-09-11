@@ -211,7 +211,7 @@ class HttpPolisherTest {
         providers.forEach { provider ->
             val result = polish(provider, "any-model", apiKey = "sk-te\u00a0st")
             assertTrue(provider.id, result is PolishResult.Failure)
-            assertTrue(provider.id, (result as PolishResult.Failure).message.contains("cannot be sent"))
+            assertTrue(provider.id, (result as PolishResult.Failure).message.contains("unsupported characters"))
             assertFalse(provider.id, result.message.contains("sk-te"))
         }
         assertEquals(0, server.requestCount)
