@@ -124,7 +124,13 @@ interface HistoryRepository {
     suspend fun loadAudio(path: String): AudioClip?
 }
 
-data class PipelineResult(val text: String, val entry: HistoryEntry, val error: String?)
+data class PipelineResult(
+    val text: String,
+    val entry: HistoryEntry,
+    val error: String?,
+    /** Something the run did differently that the user should know about, such as a fallback. */
+    val notice: String? = null,
+)
 
 interface DictationPipeline {
     /** Transcribe, apply lexicon, polish. Never throws; errors land in [PipelineResult.error]. */

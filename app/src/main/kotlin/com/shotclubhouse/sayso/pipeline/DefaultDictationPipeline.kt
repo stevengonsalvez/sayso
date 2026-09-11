@@ -17,6 +17,8 @@ import com.shotclubhouse.sayso.core.TranscriptionRequest
 import com.shotclubhouse.sayso.core.TranscriptionResult
 import com.shotclubhouse.sayso.polish.CleanupPolicy
 import com.shotclubhouse.sayso.polish.Lexicon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -46,13 +48,18 @@ class DefaultDictationPipeline(
     private val history: HistoryRepository? = null,
 ) : DictationPipeline {
 
-    override suspend fun run(clip: AudioClip): PipelineResult = process(clip, previous = null)
+    // The pipeline owns its dispatcher. Every step blocks (sockets, on-device inference, the
+    // history file), so callers on the main thread, the service and the history screen, hand
+    // the whole run over rather than each wrapping it themselves.
+    override suspend fun run(clip: AudioClip): PipelineResult = withContext(Dispatchers.IO) {
+        process(clip, previous = null)
+    }
 
-    override suspend fun reprocess(entry: HistoryEntry): PipelineResult? {
-        val repository = history ?: return null
-        val path = entry.audioPath ?: return null
-        val clip = ignoringFailure { repository.loadAudio(path) } ?: return null
-        return process(clip, previous = entry)
+    override suspend fun reprocess(entry: HistoryEntry): PipelineResult? = withContext(Dispatchers.IO) {
+        val repository = history ?: return@withContext null
+        val path = entry.audioPath ?: return@withContext null
+        val clip = ignoringFailure { repository.loadAudio(path) } ?: return@withContext null
+        process(clip, previous = entry)
     }
 
     private suspend fun process(clip: AudioClip, previous: HistoryEntry?): PipelineResult {
@@ -60,6 +67,8 @@ class DefaultDictationPipeline(
 
         val model = resolveStt()
             ?: return finish(clip, previous, error = "No transcription model is set up")
+
+        val notice = model.notice
 
         val transcription = try {
             model.provider.transcribe(
@@ -78,12 +87,12 @@ class DefaultDictationPipeline(
         }
 
         if (transcription is TranscriptionResult.Failure) {
-            return finish(clip, previous, error = transcription.message, sttModelId = model.model.id)
+            return finish(clip, previous, transcription.message, model.model.id, notice = notice)
         }
 
         val transcript = (transcription as TranscriptionResult.Success).text.trim()
         if (transcript.isBlank()) {
-            return finish(clip, previous, error = "No speech detected", sttModelId = model.model.id)
+            return finish(clip, previous, "No speech detected", model.model.id, notice = notice)
         }
 
         val raw = Lexicon.apply(transcript, settings.lexicon)
@@ -97,6 +106,7 @@ class DefaultDictationPipeline(
             rawText = raw,
             polishedText = cleanup.text,
             polishModelId = cleanup.modelId,
+            notice = notice,
         )
     }
 
@@ -104,23 +114,29 @@ class DefaultDictationPipeline(
         val provider: TranscriptionProvider,
         val model: SttModel,
         val apiKey: String?,
+        /** Set when this is not the model the user chose. */
+        val notice: String? = null,
     )
 
     /**
      * Uses the configured model when possible. An unknown id, or a cloud provider with no
-     * saved key, silently falls back to the installed local model.
+     * saved key, falls back to the installed local model; a missing key is the case the user
+     * can act on, so that one carries a notice.
      */
     private fun resolveStt(): Resolved? {
+        var keyless: TranscriptionProvider? = null
         val configured = stt.find(settings.sttModelId)
         if (configured != null) {
             val (provider, model) = configured
             if (!provider.needsApiKey) return Resolved(provider, model, null)
             key(provider.id)?.let { return Resolved(provider, model, it) }
+            keyless = provider
         }
         val fallbackId = stt.localFallbackModelId ?: return null
         val (provider, model) = stt.find(fallbackId) ?: return null
         if (provider.needsApiKey && key(provider.id) == null) return null
-        return Resolved(provider, model, key(provider.id))
+        val notice = keyless?.let { "No API key for ${it.displayName}, used ${model.displayName}" }
+        return Resolved(provider, model, key(provider.id), notice)
     }
 
     private class Cleanup(val text: String?, val modelId: String?, val error: String?) {
@@ -167,6 +183,7 @@ class DefaultDictationPipeline(
         rawText: String = previous?.rawText ?: "",
         polishedText: String? = previous?.polishedText,
         polishModelId: String? = previous?.polishModelId,
+        notice: String? = null,
     ): PipelineResult {
         var entry = HistoryEntry(
             id = previous?.id ?: UUID.randomUUID().toString(),
@@ -192,7 +209,7 @@ class DefaultDictationPipeline(
             }
         }
 
-        return PipelineResult(text = entry.finalText, entry = entry, error = error)
+        return PipelineResult(text = entry.finalText, entry = entry, error = error, notice = notice)
     }
 
     /** History is a convenience, not the dictation itself: a storage failure must not sink a run. */

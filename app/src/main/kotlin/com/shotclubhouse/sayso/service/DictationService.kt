@@ -128,7 +128,8 @@ class DictationService : AccessibilityService() {
     }
 
     private suspend fun dictate(clip: AudioClip) {
-        val result = withContext(Dispatchers.IO) { AppGraph.pipeline.run(clip) }
+        // The pipeline moves itself off the main thread.
+        val result = AppGraph.pipeline.run(clip)
         if (result.text.isBlank()) {
             fail(result.error ?: getString(R.string.feedback_no_speech))
             return
@@ -141,9 +142,11 @@ class DictationService : AccessibilityService() {
             val delivered = getString(
                 if (method == OutputMethod.INSERTED) R.string.feedback_inserted else R.string.feedback_clipboard,
             )
-            feedback(
+            val outcome =
                 if (result.error == null) delivered
-                else getString(R.string.feedback_with_warning, delivered, getString(R.string.feedback_cleanup_failed)),
+                else getString(R.string.feedback_with_warning, delivered, getString(R.string.feedback_cleanup_failed))
+            feedback(
+                result.notice?.let { getString(R.string.feedback_with_warning, outcome, it) } ?: outcome,
             )
         }
 

@@ -5,11 +5,14 @@ import com.shotclubhouse.sayso.core.HistoryEntry
 import com.shotclubhouse.sayso.core.LexiconRule
 import com.shotclubhouse.sayso.core.OutputMethod
 import com.shotclubhouse.sayso.core.PolishResult
+import com.shotclubhouse.sayso.core.TranscriptionProvider
+import com.shotclubhouse.sayso.core.TranscriptionRequest
 import com.shotclubhouse.sayso.core.TranscriptionResult
 import com.shotclubhouse.sayso.settings.InMemorySecretStore
 import com.shotclubhouse.sayso.settings.InMemorySettings
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,7 +88,7 @@ class DefaultDictationPipelineTest {
     }
 
     @Test
-    fun `a cloud provider without a key silently falls back to the local model`() = runTest {
+    fun `a cloud provider without a key falls back to the local model and says so`() = runTest {
         val settings = InMemorySettings(sttModelId = "cloud/model")
 
         val result = pipeline(settings).run(clip)
@@ -93,8 +96,19 @@ class DefaultDictationPipelineTest {
         assertEquals("local text", result.text)
         assertEquals("local/model", result.entry.sttModelId)
         assertNull(result.entry.error)
+        assertEquals("No API key for cloud, used local model", result.notice)
         assertEquals(0, cloud.calls)
         assertEquals(1, local.calls)
+    }
+
+    @Test
+    fun `the run that uses the model the user chose carries no notice`() = runTest {
+        val settings = InMemorySettings(sttModelId = "cloud/model")
+
+        val result = pipeline(settings, secrets = InMemorySecretStore(mapOf("cloud" to "sk-cloud"))).run(clip)
+
+        assertEquals("cloud text", result.text)
+        assertNull(result.notice)
     }
 
     @Test
@@ -105,6 +119,48 @@ class DefaultDictationPipelineTest {
 
         assertEquals("local/model", result.entry.sttModelId)
         assertEquals("local text", result.text)
+        // Nothing the user can act on: the chosen model is simply gone.
+        assertNull(result.notice)
+    }
+
+    @Test
+    fun `the fallback notice survives a failure from the local model`() = runTest {
+        val stt = FakeSttCatalog(
+            listOf(
+                cloud,
+                FakeSttProvider("local", needsApiKey = false, result = TranscriptionResult.Failure("model missing")),
+            ),
+            localFallbackModelId = "local/model",
+        )
+
+        val result = pipeline(InMemorySettings(sttModelId = "cloud/model"), stt = stt).run(clip)
+
+        assertEquals("model missing", result.error)
+        assertEquals("No API key for cloud, used local model", result.notice)
+    }
+
+    @Test
+    fun `the run leaves the caller's thread rather than blocking it`() = runTest {
+        val caller = Thread.currentThread()
+        var ranOn: Thread? = null
+        val stt = FakeSttCatalog(
+            listOf(
+                object : TranscriptionProvider by local {
+                    override suspend fun transcribe(
+                        request: TranscriptionRequest,
+                        apiKey: String?,
+                    ): TranscriptionResult {
+                        ranOn = Thread.currentThread()
+                        return TranscriptionResult.Success("local text")
+                    }
+                },
+            ),
+        )
+
+        pipeline(InMemorySettings(sttModelId = "local/model"), stt = stt).run(clip)
+
+        assertNotNull(ranOn)
+        assertTrue("the pipeline ran on the caller's thread", ranOn !== caller)
     }
 
     @Test
