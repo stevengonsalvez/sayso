@@ -20,8 +20,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -58,10 +56,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SaysoApp() {
     var screen by rememberSaveable { mutableStateOf(Screen.Home) }
-    // Scoped to the whole app rather than to Local models, so navigating away
-    // does not cancel a download that is half way through 500 MB.
-    val appScope = rememberCoroutineScope()
-    val downloads = remember(appScope) { ModelDownloads(appScope) }
 
     BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
 
@@ -86,7 +80,7 @@ fun SaysoApp() {
             when (screen) {
                 Screen.Home -> HomeScreen(onNavigate = { screen = it })
                 Screen.Transcription -> TranscriptionScreen(onOpenLocalModels = { screen = Screen.LocalModels })
-                Screen.LocalModels -> LocalModelsScreen(downloads)
+                Screen.LocalModels -> LocalModelsScreen()
                 Screen.Cleanup -> CleanupScreen()
                 Screen.Vocabulary -> VocabularyScreen()
                 Screen.History -> HistoryScreen()

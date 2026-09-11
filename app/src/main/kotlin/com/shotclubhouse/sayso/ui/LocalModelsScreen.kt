@@ -21,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,60 +37,29 @@ import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.models.DownloadState
 import com.shotclubhouse.sayso.models.LocalModel
 import com.shotclubhouse.sayso.models.LocalModelCatalog
-import com.shotclubhouse.sayso.models.LocalModelDownloader
 import com.shotclubhouse.sayso.service.DictationService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
-import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
-
-/**
- * Owns the one download that may be in flight. Held above the screens so that
- * leaving Local models mid-download does not cancel it, and so a second tap
- * cannot start a parallel 500 MB transfer.
- */
-class ModelDownloads(private val scope: CoroutineScope) {
-    private val downloader = LocalModelDownloader()
-
-    var activeDirName by mutableStateOf<String?>(null)
-        private set
-    var state by mutableStateOf<DownloadState?>(null)
-        private set
-
-    val busy: Boolean
-        get() = state is DownloadState.Downloading || state is DownloadState.Extracting
-
-    fun start(model: LocalModel, modelsDir: File, cacheDir: File, onFinished: () -> Unit) {
-        if (busy) return
-        activeDirName = model.dirName
-        state = DownloadState.Downloading(0f)
-        scope.launch {
-            downloader.download(model, modelsDir, cacheDir).collect { state = it }
-            onFinished()
-        }
-    }
-
-    fun isInstalled(model: LocalModel, modelsDir: File): Boolean =
-        downloader.isInstalled(model, modelsDir)
-
-    fun delete(model: LocalModel, modelsDir: File) {
-        downloader.delete(model, modelsDir)
-        if (activeDirName == model.dirName) {
-            activeDirName = null
-            state = null
-        }
-    }
-}
 
 /** The catalog of on-device models: download, pick, or remove. */
 @Composable
-fun LocalModelsScreen(downloads: ModelDownloads, modifier: Modifier = Modifier) {
+fun LocalModelsScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val settings = AppGraph.settings
+    val downloads = AppGraph.downloads
     val modelsDir = AppGraph.localModelsDir
     var refreshToken by remember { mutableIntStateOf(0) }
     var selectedModel by remember { mutableStateOf(settings.sttModelId) }
     var pendingDelete by remember { mutableStateOf<LocalModel?>(null) }
+    var installedDirNames by remember { mutableStateOf(emptySet<String>()) }
+
+    // Whether a model is on disk is a directory listing, which composition must not do.
+    LaunchedEffect(refreshToken) {
+        installedDirNames = withContext(Dispatchers.IO) {
+            LocalModelCatalog.all.filter { downloads.isInstalled(it, modelsDir) }.map { it.dirName }.toSet()
+        }
+    }
 
     LazyColumn(modifier.fillMaxSize()) {
         item {
@@ -101,9 +71,7 @@ fun LocalModelsScreen(downloads: ModelDownloads, modifier: Modifier = Modifier) 
             )
         }
         items(LocalModelCatalog.all, key = { it.dirName }) { model ->
-            val installed = remember(model.dirName, refreshToken) {
-                downloads.isInstalled(model, modelsDir)
-            }
+            val installed = model.dirName in installedDirNames
             val modelId = "local/${model.dirName}"
             val active = downloads.activeDirName == model.dirName
 

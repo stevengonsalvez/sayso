@@ -37,22 +37,30 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
     fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> = flow {
         val archive = File(cacheDir, "${model.dirName}.tar.bz2")
         val target = File(modelsDir, model.dirName)
+        // Unpacked beside the installed copy, never over it: a download that fails, or that the
+        // user walks away from, leaves the model they already had working.
+        val staging = File(modelsDir, "${model.dirName}.tmp")
         try {
             cacheDir.mkdirs()
             modelsDir.mkdirs()
-            target.deleteRecursively()
+            staging.deleteRecursively()
 
             fetch(model, archive) { emit(DownloadState.Downloading(it)) }
 
             emit(DownloadState.Extracting)
-            extract(archive, modelsDir)
-            if (!isInstalled(model, modelsDir)) throw IOException("Archive did not contain ${model.dirName}")
+            extract(archive, staging)
+            val unpacked = File(staging, model.dirName)
+            if (!isInstalled(model, staging)) throw IOException("Archive did not contain ${model.dirName}")
+
+            target.deleteRecursively()
+            if (!unpacked.renameTo(target)) throw IOException("Could not install ${model.dirName}")
 
             emit(DownloadState.Done)
         } catch (e: IOException) {
-            target.deleteRecursively()
             emit(DownloadState.Error(e.message ?: "Download failed"))
         } finally {
+            // Also the cancellation path: a cancelled collector unwinds through here.
+            staging.deleteRecursively()
             archive.delete()
         }
     }.flowOn(Dispatchers.IO)
@@ -99,7 +107,7 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
  * build, so every resolved path is checked to stay inside the destination and
  * links are refused outright.
  */
-internal fun extract(archive: File, destDir: File) {
+internal suspend fun extract(archive: File, destDir: File) {
     val root = destDir.canonicalFile
     root.mkdirs()
     val prefix = root.path + File.separator
@@ -107,6 +115,8 @@ internal fun extract(archive: File, destDir: File) {
     TarArchiveInputStream(BZip2CompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
         var entry = tar.nextEntry
         while (entry != null) {
+            // Half a gigabyte of entries: without this, a cancelled download keeps unpacking.
+            currentCoroutineContext().ensureActive()
             if (entry.isSymbolicLink || entry.isLink) {
                 throw IOException("Refusing link entry ${entry.name}")
             }

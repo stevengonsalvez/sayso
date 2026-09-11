@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -28,7 +29,10 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
+import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.service.DictationService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 /** Spoken languages offered to providers that accept a hint; null means auto-detect. */
@@ -48,7 +52,7 @@ private val LANGUAGES: List<Pair<String?, Int>> = listOf(
 )
 
 private const val MIN_RECORDING_SECONDS = 30f
-private const val MAX_RECORDING_SECONDS = 600f
+private const val MAX_RECORDING_SECONDS = 300f
 private const val RECORDING_STEP_SECONDS = 30
 
 /** Which engine turns speech into text, and the knobs that shape a recording. */
@@ -61,6 +65,15 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var maxSeconds by remember { mutableFloatStateOf(settings.maxRecordingSeconds.toFloat()) }
     var sounds by remember { mutableStateOf(settings.soundsEnabled) }
     var history by remember { mutableStateOf(settings.historyEnabled) }
+    var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
+
+    // The on-device provider lists its models by walking the models directory, so the whole
+    // catalogue is read once off the main thread instead of on every recomposition.
+    LaunchedEffect(Unit) {
+        modelsByProvider = withContext(Dispatchers.IO) {
+            AppGraph.stt.providers.associate { it.id to it.models }
+        }
+    }
 
     Column(
         modifier
@@ -77,8 +90,8 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                         apiKeyUrl = provider.apiKeyUrl,
                     )
                 }
-                val models = provider.models
-                if (models.isEmpty() && provider.id == "local") {
+                val models = modelsByProvider[provider.id].orEmpty()
+                if (models.isEmpty() && provider.id == "local" && modelsByProvider.isNotEmpty()) {
                     Text(
                         stringResource(R.string.transcription_local_empty),
                         style = MaterialTheme.typography.bodyMedium,

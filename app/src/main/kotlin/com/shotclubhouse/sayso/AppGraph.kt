@@ -8,6 +8,7 @@ import com.shotclubhouse.sayso.core.SecretStore
 import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.core.TranscriptionProvider
 import com.shotclubhouse.sayso.history.HistoryStore
+import com.shotclubhouse.sayso.models.ModelDownloads
 import com.shotclubhouse.sayso.pipeline.DefaultDictationPipeline
 import com.shotclubhouse.sayso.pipeline.PolishCatalog
 import com.shotclubhouse.sayso.pipeline.SttCatalog
@@ -16,6 +17,9 @@ import com.shotclubhouse.sayso.settings.KeystoreSecretStore
 import com.shotclubhouse.sayso.settings.Settings
 import com.shotclubhouse.sayso.stt.LocalSherpaProvider
 import com.shotclubhouse.sayso.stt.SttRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.io.File
 
 /**
@@ -32,6 +36,9 @@ object AppGraph {
     lateinit var polish: PolishRegistry private set
     lateinit var history: HistoryStore private set
     lateinit var pipeline: DictationPipeline private set
+
+    /** Model downloads outlive any one screen, so the in-flight one lives here. */
+    lateinit var downloads: ModelDownloads private set
 
     @Volatile private var initialised = false
 
@@ -59,6 +66,7 @@ object AppGraph {
             },
             history = history,
         )
+        downloads = ModelDownloads(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
         initialised = true
     }
 }

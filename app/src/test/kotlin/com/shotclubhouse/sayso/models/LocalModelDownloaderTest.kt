@@ -1,5 +1,6 @@
 package com.shotclubhouse.sayso.models
 
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -18,6 +19,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 class LocalModelDownloaderTest {
 
@@ -37,7 +39,7 @@ class LocalModelDownloaderTest {
         return bytes.toByteArray()
     }
 
-    private fun extractInto(dest: File, bytes: ByteArray) {
+    private fun extractInto(dest: File, bytes: ByteArray) = runBlocking {
         val archive = File(temp.root, "model.tar.bz2").apply { writeBytes(bytes) }
         extract(archive, dest)
     }
@@ -190,4 +192,62 @@ class LocalModelDownloaderTest {
 
         server.shutdown()
     }
+
+    @Test
+    fun `a failed download leaves the model that was already installed alone`() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
+        val client = redirectingClient(server)
+
+        val model = LocalModelCatalog.default
+        val models = File(temp.root, "models")
+        val installed = File(models, model.dirName).apply { mkdirs() }
+        File(installed, "model.int8.onnx").writeText("the weights I already had")
+        File(installed, "tokens.txt").writeText("a b c")
+
+        val states = LocalModelDownloader(client)
+            .download(model, models, File(temp.root, "cache"))
+            .toList()
+
+        assertTrue(states.last() is DownloadState.Error)
+        assertTrue(LocalModelDownloader().isInstalled(model, models))
+        assertEquals("the weights I already had", File(installed, "model.int8.onnx").readText())
+        assertFalse(File(models, "${model.dirName}.tmp").exists())
+
+        server.shutdown()
+    }
+
+    @Test
+    fun `a cancelled download leaves the installed model untouched`() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        val model = LocalModelCatalog.default
+        server.enqueue(
+            MockResponse()
+                .setBody(Buffer().write(tarBz2(model.dirName + "/model.onnx" to "w".repeat(200_000))))
+                .throttleBody(2_048, 50, TimeUnit.MILLISECONDS),
+        )
+        val client = redirectingClient(server)
+
+        val models = File(temp.root, "models")
+        val installed = File(models, model.dirName).apply { mkdirs() }
+        File(installed, "model.int8.onnx").writeText("the weights I already had")
+
+        // Takes one progress update, then walks away part way through the transfer.
+        val state = LocalModelDownloader(client)
+            .download(model, models, File(temp.root, "cache"))
+            .first()
+
+        assertTrue(state is DownloadState.Downloading)
+        assertTrue("the installed model was removed", LocalModelDownloader().isInstalled(model, models))
+        assertEquals("the weights I already had", File(installed, "model.int8.onnx").readText())
+
+        server.shutdown()
+    }
+
+    private fun redirectingClient(server: MockWebServer) = OkHttpClient.Builder().addInterceptor { chain ->
+        val to = server.url("/" + chain.request().url.pathSegments.last())
+        chain.proceed(chain.request().newBuilder().url(to).build())
+    }.build()
 }
