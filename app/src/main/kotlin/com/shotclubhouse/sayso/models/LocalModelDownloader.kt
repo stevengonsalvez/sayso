@@ -52,18 +52,20 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
         // user walks away from, leaves the model they already had working.
         val staging = File(modelsDir, "${model.dirName}.tmp")
         try {
+            // The pinned digest is all that stands between the phone and whatever the release
+            // host serves, so an entry without one is a packaging bug, not a fast path.
+            if (model.sha256.isBlank()) throw IOException("Model has no checksum")
             cacheDir.mkdirs()
             modelsDir.mkdirs()
             staging.deleteRecursively()
 
             val digest = fetch(model, archive) { emit(DownloadState.Downloading(it)) }
-            if (model.sha256.isNotBlank() && !digest.equals(model.sha256, ignoreCase = true)) {
+            if (!digest.equals(model.sha256, ignoreCase = true)) {
                 throw IOException("Downloaded archive did not match its checksum")
             }
 
             emit(DownloadState.Extracting)
-            // bzip2 on int8 weights gains little, so three times the archive is generous.
-            extract(archive, staging, maxBytes = model.sizeMb * 3L * 1_000_000)
+            extract(archive, staging)
             val unpacked = File(staging, model.dirName)
             if (!isInstalled(model, staging)) throw IOException("Archive did not contain ${model.dirName}")
 
@@ -96,6 +98,9 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
             if (!response.isSuccessful) throw IOException("Download failed with HTTP ${response.code}")
             val body = response.body ?: throw IOException("Empty response body")
             val total = body.contentLength().takeIf { it > 0 } ?: (model.sizeMb * 1_000_000L)
+            // The digest fixes the content but says nothing about length, so a host that
+            // streams without end would fill the phone before anything could be checked.
+            val maxBytes = model.sizeMb * 2L * 1_000_000
 
             val source = body.byteStream()
             archive.outputStream().use { sink ->
@@ -108,6 +113,7 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
                     sink.write(buffer, 0, read)
                     sha.update(buffer, 0, read)
                     written += read
+                    if (written > maxBytes) throw IOException("Download exceeded the expected size")
                     val step = (written * PROGRESS_STEPS / total).toInt()
                     if (step != lastStep) {
                         lastStep = step
@@ -122,16 +128,15 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
 }
 
 /**
- * Unpacks a tar.bz2 under [destDir]. Entry names come from an archive we did not
- * build, so every resolved path is checked to stay inside the destination, links are
- * refused outright, and no more than [maxBytes] is ever written: a small archive that
- * expands without end fills the phone otherwise.
+ * Unpacks a tar.bz2 under [destDir]. Entry names come from an archive we did not build,
+ * so every resolved path is checked to stay inside the destination and links are refused
+ * outright. The archive itself is already pinned by digest before it gets here, so its
+ * unpacked size needs no separate bound.
  */
-internal suspend fun extract(archive: File, destDir: File, maxBytes: Long = Long.MAX_VALUE) {
+internal suspend fun extract(archive: File, destDir: File) {
     val root = destDir.canonicalFile
     root.mkdirs()
     val prefix = root.path + File.separator
-    var budget = maxBytes
 
     TarArchiveInputStream(BZip2CompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
         var entry = tar.nextEntry
@@ -155,8 +160,6 @@ internal suspend fun extract(archive: File, destDir: File, maxBytes: Long = Long
                     val buffer = ByteArray(BUFFER_BYTES)
                     var read = tar.read(buffer)
                     while (read >= 0) {
-                        budget -= read
-                        if (budget < 0) throw IOException("Archive is larger than expected for this model")
                         sink.write(buffer, 0, read)
                         read = tar.read(buffer)
                     }

@@ -42,7 +42,7 @@ internal suspend fun transcribeCall(
 ): TranscriptionResult = withContext(Dispatchers.IO) {
     try {
         httpClient.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val body = response.peekBody(MAX_BODY_BYTES).string()
             if (response.isSuccessful) parse(body)
             else TranscriptionResult.Failure(errorMessage(response.code, body))
         }
@@ -67,6 +67,9 @@ internal fun errorMessage(code: Int, body: String): String {
 
 /** Server-controlled text ends up in the history file, so it does not get to be long. */
 private const val MAX_MESSAGE_CHARS = 200
+
+/** A transcript of a five-minute clip is a few kB; past this it is a broken endpoint, not an answer. */
+private const val MAX_BODY_BYTES = 512L * 1024
 
 internal fun parseJsonObject(raw: String): JsonObject? =
     runCatching { lenientJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()

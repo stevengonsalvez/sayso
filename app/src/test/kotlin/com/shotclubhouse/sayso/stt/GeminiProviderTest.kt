@@ -113,6 +113,35 @@ class GeminiProviderTest {
     }
 
     @Test
+    fun `an empty part alongside a block reason still names the block`() = runTest {
+        server.enqueue(
+            mockResponse(
+                200,
+                """{"candidates":[{"content":{"parts":[{"text":""}],"role":"model"},"finishReason":"SAFETY"}],
+                    "promptFeedback":{"blockReason":"SAFETY"}}""",
+            ),
+        )
+
+        val result = provider().transcribe(testRequest("gemini-2.5-flash"), apiKey = "AIza-test")
+
+        assertEquals(TranscriptionResult.Failure("Gemini stopped: SAFETY"), result)
+    }
+
+    @Test
+    fun `a cut off generation still hands back what was transcribed`() = runTest {
+        server.enqueue(
+            mockResponse(
+                200,
+                """{"candidates":[{"content":{"parts":[{"text":"half a sentence"}]},"finishReason":"MAX_TOKENS"}]}""",
+            ),
+        )
+
+        val result = provider().transcribe(testRequest("gemini-2.5-flash"), apiKey = "AIza-test")
+
+        assertEquals(TranscriptionResult.Success("half a sentence"), result)
+    }
+
+    @Test
     fun `a truncated generation names what cut it short`() = runTest {
         server.enqueue(mockResponse(200, """{"candidates":[{"content":{"role":"model"},"finishReason":"MAX_TOKENS"}]}"""))
 

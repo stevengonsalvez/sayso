@@ -75,9 +75,9 @@ class GeminiProvider(
     }
 
     /**
-     * A blocked or truncated generation comes back with no `parts` at all. Reporting that as
-     * "no speech detected" would send the user looking at their microphone, so the reason
-     * Gemini gives is passed through instead.
+     * A blocked or truncated generation comes back with no `parts`, or with an empty one.
+     * Reporting either as "no speech detected" would send the user looking at their
+     * microphone, so the reason Gemini gives is passed through instead.
      */
     internal fun parseResponse(json: String): TranscriptionResult {
         val root = parseJsonObject(json)
@@ -86,15 +86,16 @@ class GeminiProvider(
             ?.child("content")
             ?.child("parts")?.at(0)
             ?.string("text")
-        if (text != null) return transcriptOrFailure(text)
 
-        val stopped = candidate?.string("finishReason")
+        // A block can arrive as an empty part rather than a missing one, so the reason is
+        // read before the blank text is judged. Text that did come back still wins: a
+        // MAX_TOKENS cut leaves a usable partial transcript.
+        val stopped = candidate?.string("finishReason")?.takeIf { it != FINISH_REASON_OK }
             ?: root?.child("promptFeedback")?.string("blockReason")
-        return if (stopped != null && stopped != FINISH_REASON_OK) {
-            TranscriptionResult.Failure("Gemini stopped: $stopped")
-        } else {
-            transcriptOrFailure(text)
+        if (stopped != null && text.isNullOrBlank()) {
+            return TranscriptionResult.Failure("Gemini stopped: $stopped")
         }
+        return transcriptOrFailure(text)
     }
 
     private fun instruction(request: TranscriptionRequest): String = buildString {

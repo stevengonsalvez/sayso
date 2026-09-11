@@ -30,6 +30,8 @@ class LocalModelCatalogTest {
             assertTrue(it.displayName.isNotBlank())
             assertTrue(it.note.isNotBlank())
             assertTrue("${it.dirName} has an implausible size", it.sizeMb in 50..1000)
+            // A blank digest now fails the download outright, so every entry has to carry one.
+            assertTrue("${it.dirName} has no pinned checksum", it.sha256.matches(Regex("[0-9a-f]{64}")))
         }
     }
 

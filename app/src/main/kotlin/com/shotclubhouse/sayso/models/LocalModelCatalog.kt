@@ -12,7 +12,7 @@ data class LocalModel(
     val displayName: String,
     val sizeMb: Int,
     val note: String,
-    /** SHA-256 of the release archive; blank skips the check. */
+    /** SHA-256 of the release archive; required, a blank one fails the download. */
     val sha256: String,
     val recommended: Boolean = false,
 ) {
