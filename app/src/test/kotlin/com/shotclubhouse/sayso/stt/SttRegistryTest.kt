@@ -1,6 +1,5 @@
 package com.shotclubhouse.sayso.stt
 
-import com.shotclubhouse.sayso.models.LocalModelCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -44,11 +43,6 @@ class SttRegistryTest {
     fun `find returns null for an unknown provider or model`() {
         assertNull(registry().find("nosuch/model"))
         assertNull(registry().find("openai/not-a-model"))
-    }
-
-    @Test
-    fun `the default model is the recommended local one`() {
-        assertEquals("local/${LocalModelCatalog.default.dirName}", registry().defaultModelId)
     }
 
     @Test

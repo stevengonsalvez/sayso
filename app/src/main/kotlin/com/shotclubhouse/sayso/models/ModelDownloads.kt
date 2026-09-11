@@ -4,7 +4,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -36,8 +38,9 @@ class ModelDownloads(private val scope: CoroutineScope) {
     fun isInstalled(model: LocalModel, modelsDir: File): Boolean =
         downloader.isInstalled(model, modelsDir)
 
-    fun delete(model: LocalModel, modelsDir: File) {
-        downloader.delete(model, modelsDir)
+    /** Suspending because removing half a gigabyte of weights is not a main-thread job. */
+    suspend fun delete(model: LocalModel, modelsDir: File) {
+        withContext(Dispatchers.IO) { downloader.delete(model, modelsDir) }
         if (activeDirName == model.dirName) {
             activeDirName = null
             state = null

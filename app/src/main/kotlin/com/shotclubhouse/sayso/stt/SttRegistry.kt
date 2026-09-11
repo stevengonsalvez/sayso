@@ -2,7 +2,6 @@ package com.shotclubhouse.sayso.stt
 
 import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.core.TranscriptionProvider
-import com.shotclubhouse.sayso.models.LocalModelCatalog
 
 /** The set of speech-to-text backends the app offers, and lookup by model id. */
 class SttRegistry(local: LocalSherpaProvider) {
@@ -15,11 +14,7 @@ class SttRegistry(local: LocalSherpaProvider) {
         GeminiProvider(),
     )
 
-    val defaultModelId: String = "local/${LocalModelCatalog.default.dirName}"
-
     fun provider(id: String): TranscriptionProvider? = providers.firstOrNull { it.id == id }
-
-    fun allModels(): List<SttModel> = providers.flatMap { it.models }
 
     fun find(modelId: String): Pair<TranscriptionProvider, SttModel>? {
         val provider = provider(modelId.substringBefore('/')) ?: return null

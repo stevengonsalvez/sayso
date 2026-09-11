@@ -96,4 +96,37 @@ class GeminiProviderTest {
 
         assertEquals(TranscriptionResult.Failure("No speech detected"), result)
     }
+
+    @Test
+    fun `a safety block is reported as the reason gemini gave`() = runTest {
+        server.enqueue(
+            mockResponse(
+                200,
+                """{"candidates":[{"finishReason":"SAFETY","index":0}],
+                    "promptFeedback":{"blockReason":"SAFETY"}}""",
+            ),
+        )
+
+        val result = provider().transcribe(testRequest("gemini-2.5-flash"), apiKey = "AIza-test")
+
+        assertEquals(TranscriptionResult.Failure("Gemini stopped: SAFETY"), result)
+    }
+
+    @Test
+    fun `a truncated generation names what cut it short`() = runTest {
+        server.enqueue(mockResponse(200, """{"candidates":[{"content":{"role":"model"},"finishReason":"MAX_TOKENS"}]}"""))
+
+        val result = provider().transcribe(testRequest("gemini-2.5-flash"), apiKey = "AIza-test")
+
+        assertEquals(TranscriptionResult.Failure("Gemini stopped: MAX_TOKENS"), result)
+    }
+
+    @Test
+    fun `a clean stop with nothing said is still no speech detected`() = runTest {
+        server.enqueue(mockResponse(200, """{"candidates":[{"content":{"role":"model"},"finishReason":"STOP"}]}"""))
+
+        val result = provider().transcribe(testRequest("gemini-2.5-flash"), apiKey = "AIza-test")
+
+        assertEquals(TranscriptionResult.Failure("No speech detected"), result)
+    }
 }

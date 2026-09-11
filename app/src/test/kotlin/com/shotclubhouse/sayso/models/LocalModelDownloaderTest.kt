@@ -19,6 +19,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 class LocalModelDownloaderTest {
@@ -45,9 +46,15 @@ class LocalModelDownloaderTest {
         return bytes.toByteArray()
     }
 
-    private fun extractInto(dest: File, bytes: ByteArray) = runBlocking {
+    /** The catalog entries carry the real release checksums, which a fixture archive cannot match. */
+    private val unchecked = LocalModelCatalog.default.copy(sha256 = "")
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    private fun extractInto(dest: File, bytes: ByteArray, maxBytes: Long = 1L shl 30) = runBlocking {
         val archive = File(temp.root, "model.tar.bz2").apply { writeBytes(bytes) }
-        extract(archive, dest)
+        extract(archive, dest, maxBytes)
     }
 
     @Test
@@ -157,7 +164,7 @@ class LocalModelDownloaderTest {
 
         val models = File(temp.root, "models")
         val states = LocalModelDownloader(client)
-            .download(LocalModelCatalog.default, models, File(temp.root, "cache"))
+            .download(unchecked, models, File(temp.root, "cache"))
             .toList()
 
         assertTrue(states.first() is DownloadState.Downloading)
@@ -187,7 +194,7 @@ class LocalModelDownloaderTest {
 
         val models = File(temp.root, "models")
         val states = LocalModelDownloader(client)
-            .download(LocalModelCatalog.default, models, File(temp.root, "cache"))
+            .download(unchecked, models, File(temp.root, "cache"))
             .toList()
 
         val error = states.last()
@@ -206,7 +213,7 @@ class LocalModelDownloaderTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
         val client = redirectingClient(server)
 
-        val model = LocalModelCatalog.default
+        val model = unchecked
         val models = File(temp.root, "models")
         val installed = File(models, model.dirName).apply { mkdirs() }
         File(installed, "model.int8.onnx").writeText("the weights I already had")
@@ -228,7 +235,7 @@ class LocalModelDownloaderTest {
     fun `a cancelled download leaves the installed model untouched`() = runBlocking {
         val server = MockWebServer()
         server.start()
-        val model = LocalModelCatalog.default
+        val model = unchecked
         server.enqueue(
             MockResponse()
                 .setBody(Buffer().write(tarBz2(model.dirName + "/model.onnx" to incompressible(300_000))))
@@ -250,6 +257,84 @@ class LocalModelDownloaderTest {
         assertEquals("the weights I already had", File(installed, "model.int8.onnx").readText())
 
         server.shutdown()
+    }
+
+    @Test
+    fun `an archive whose checksum does not match is thrown away`() = runBlocking {
+        val dir = LocalModelCatalog.default.dirName
+        val server = MockWebServer()
+        server.start()
+        server.enqueue(
+            MockResponse().setBody(Buffer().write(tarBz2("./$dir/model.int8.onnx" to "tampered weights"))),
+        )
+
+        val model = LocalModelCatalog.default.copy(sha256 = "0".repeat(64))
+        val models = File(temp.root, "models")
+        val states = LocalModelDownloader(redirectingClient(server))
+            .download(model, models, File(temp.root, "cache"))
+            .toList()
+
+        val error = states.last()
+        assertTrue(error is DownloadState.Error)
+        assertEquals("Downloaded archive did not match its checksum", (error as DownloadState.Error).message)
+        assertFalse(LocalModelDownloader().isInstalled(model, models))
+        assertFalse(File(models, model.dirName).exists())
+        assertFalse(File(models, "${model.dirName}.tmp").exists())
+
+        server.shutdown()
+    }
+
+    @Test
+    fun `an archive with the expected checksum installs`() = runBlocking {
+        val dir = LocalModelCatalog.default.dirName
+        val archive = tarBz2("./$dir/model.int8.onnx" to "weights", "./$dir/tokens.txt" to "a b c")
+        val server = MockWebServer()
+        server.start()
+        server.enqueue(MockResponse().setBody(Buffer().write(archive)))
+
+        val model = LocalModelCatalog.default.copy(sha256 = sha256(archive))
+        val models = File(temp.root, "models")
+        val states = LocalModelDownloader(redirectingClient(server))
+            .download(model, models, File(temp.root, "cache"))
+            .toList()
+
+        assertEquals(DownloadState.Done, states.last())
+        assertTrue(LocalModelDownloader().isInstalled(model, models))
+
+        server.shutdown()
+    }
+
+    @Test
+    fun `unpacking stops once the archive writes more than it claimed to hold`() {
+        val dest = File(temp.root, "models").apply { mkdirs() }
+
+        val failure = try {
+            extractInto(dest, tarBz2("sherpa-onnx-demo/model.onnx" to "x".repeat(5_000)), maxBytes = 1_000)
+            null
+        } catch (e: IOException) {
+            e
+        }
+
+        assertTrue("expected the oversized archive to be rejected", failure != null)
+        assertTrue(failure!!.message!!.contains("larger than expected"))
+    }
+
+    @Test
+    fun `unpacking stops before a single entry exceeds the size bound`() {
+        val dest = File(temp.root, "models").apply { mkdirs() }
+        val name = "sherpa-onnx-demo/model.onnx"
+
+        val failure = try {
+            extractInto(dest, tarBz2(name to "x".repeat(50_000)), maxBytes = 10_000)
+            null
+        } catch (e: IOException) {
+            e
+        }
+
+        assertTrue("expected the oversized entry to be rejected", failure != null)
+        assertTrue(failure!!.message!!.contains("larger than expected"))
+        val written = File(dest, name)
+        assertFalse("the destination should not hold a complete file", written.exists() && written.length() == 50_000L)
     }
 
     private fun redirectingClient(server: MockWebServer) = OkHttpClient.Builder().addInterceptor { chain ->

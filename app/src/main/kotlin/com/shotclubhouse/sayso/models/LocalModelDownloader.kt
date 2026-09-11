@@ -1,6 +1,5 @@
 package com.shotclubhouse.sayso.models
 
-import com.shotclubhouse.sayso.stt.httpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -14,11 +13,23 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 private const val BUFFER_BYTES = 64 * 1024
 
 /** Half a percent, so a 487 MB archive reports 200 times rather than 60,000. */
 private const val PROGRESS_STEPS = 200
+
+/**
+ * Model archives are served from a release URL that redirects to object storage, so this
+ * client follows redirects, unlike the provider client that carries API keys. A 500 MB
+ * transfer has no useful overall deadline, only a per-read one.
+ */
+private val downloadClient: OkHttpClient = OkHttpClient.Builder()
+    .connectTimeout(15, TimeUnit.SECONDS)
+    .readTimeout(120, TimeUnit.SECONDS)
+    .build()
 
 sealed class DownloadState {
     data class Downloading(val progress: Float) : DownloadState()
@@ -32,7 +43,7 @@ sealed class DownloadState {
  * lands in the cache first so a failure part way through never leaves a usable
  * looking but incomplete model folder behind.
  */
-class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
+class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
 
     fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> = flow {
         val archive = File(cacheDir, "${model.dirName}.tar.bz2")
@@ -45,10 +56,14 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
             modelsDir.mkdirs()
             staging.deleteRecursively()
 
-            fetch(model, archive) { emit(DownloadState.Downloading(it)) }
+            val digest = fetch(model, archive) { emit(DownloadState.Downloading(it)) }
+            if (model.sha256.isNotBlank() && !digest.equals(model.sha256, ignoreCase = true)) {
+                throw IOException("Downloaded archive did not match its checksum")
+            }
 
             emit(DownloadState.Extracting)
-            extract(archive, staging)
+            // bzip2 on int8 weights gains little, so three times the archive is generous.
+            extract(archive, staging, maxBytes = model.sizeMb * 3L * 1_000_000)
             val unpacked = File(staging, model.dirName)
             if (!isInstalled(model, staging)) throw IOException("Archive did not contain ${model.dirName}")
 
@@ -73,7 +88,9 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
     fun delete(model: LocalModel, modelsDir: File): Boolean =
         File(modelsDir, model.dirName).deleteRecursively()
 
-    private suspend inline fun fetch(model: LocalModel, archive: File, onProgress: (Float) -> Unit) {
+    /** Streams the archive to disk and returns its SHA-256, hashed as it goes. */
+    private suspend inline fun fetch(model: LocalModel, archive: File, onProgress: (Float) -> Unit): String {
+        val sha = MessageDigest.getInstance("SHA-256")
         val request = Request.Builder().url(model.url).build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("Download failed with HTTP ${response.code}")
@@ -89,6 +106,7 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
                 while (read >= 0) {
                     currentCoroutineContext().ensureActive()
                     sink.write(buffer, 0, read)
+                    sha.update(buffer, 0, read)
                     written += read
                     val step = (written * PROGRESS_STEPS / total).toInt()
                     if (step != lastStep) {
@@ -99,18 +117,21 @@ class LocalModelDownloader(private val client: OkHttpClient = httpClient) {
                 }
             }
         }
+        return sha.digest().joinToString("") { "%02x".format(it) }
     }
 }
 
 /**
  * Unpacks a tar.bz2 under [destDir]. Entry names come from an archive we did not
- * build, so every resolved path is checked to stay inside the destination and
- * links are refused outright.
+ * build, so every resolved path is checked to stay inside the destination, links are
+ * refused outright, and no more than [maxBytes] is ever written: a small archive that
+ * expands without end fills the phone otherwise.
  */
-internal suspend fun extract(archive: File, destDir: File) {
+internal suspend fun extract(archive: File, destDir: File, maxBytes: Long = Long.MAX_VALUE) {
     val root = destDir.canonicalFile
     root.mkdirs()
     val prefix = root.path + File.separator
+    var budget = maxBytes
 
     TarArchiveInputStream(BZip2CompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
         var entry = tar.nextEntry
@@ -130,7 +151,16 @@ internal suspend fun extract(archive: File, destDir: File) {
                 out.mkdirs()
             } else {
                 out.parentFile?.mkdirs()
-                out.outputStream().use { sink -> tar.copyTo(sink, BUFFER_BYTES) }
+                out.outputStream().use { sink ->
+                    val buffer = ByteArray(BUFFER_BYTES)
+                    var read = tar.read(buffer)
+                    while (read >= 0) {
+                        budget -= read
+                        if (budget < 0) throw IOException("Archive is larger than expected for this model")
+                        sink.write(buffer, 0, read)
+                        read = tar.read(buffer)
+                    }
+                }
             }
             entry = tar.nextEntry
         }

@@ -20,6 +20,9 @@ private const val BASE_INSTRUCTION =
     "Transcribe this audio verbatim. Output only the spoken words as plain text, " +
         "with punctuation. If the audio contains no speech, output nothing."
 
+/** The one finish reason that means the model simply had nothing more to say. */
+private const val FINISH_REASON_OK = "STOP"
+
 /**
  * Gemini is a general model, so the clip travels as inline base64 next to an
  * instruction. Inline data is capped at 20 MB, which a five-minute clip fits
@@ -71,13 +74,27 @@ class GeminiProvider(
         return transcribeCall(http, ::parseResponse)
     }
 
+    /**
+     * A blocked or truncated generation comes back with no `parts` at all. Reporting that as
+     * "no speech detected" would send the user looking at their microphone, so the reason
+     * Gemini gives is passed through instead.
+     */
     internal fun parseResponse(json: String): TranscriptionResult {
-        val text = parseJsonObject(json)
-            ?.child("candidates")?.at(0)
+        val root = parseJsonObject(json)
+        val candidate = root?.child("candidates")?.at(0)
+        val text = candidate
             ?.child("content")
             ?.child("parts")?.at(0)
             ?.string("text")
-        return transcriptOrFailure(text)
+        if (text != null) return transcriptOrFailure(text)
+
+        val stopped = candidate?.string("finishReason")
+            ?: root?.child("promptFeedback")?.string("blockReason")
+        return if (stopped != null && stopped != FINISH_REASON_OK) {
+            TranscriptionResult.Failure("Gemini stopped: $stopped")
+        } else {
+            transcriptOrFailure(text)
+        }
     }
 
     private fun instruction(request: TranscriptionRequest): String = buildString {

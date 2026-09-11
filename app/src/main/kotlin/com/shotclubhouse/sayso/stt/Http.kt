@@ -15,11 +15,19 @@ import java.util.concurrent.TimeUnit
 
 /**
  * One client for every provider so connections, the thread pool and the dispatcher
- * are shared. The read timeout covers a five-minute clip on a slow uplink.
+ * are shared. The timeouts cover a five-minute clip on a slow uplink, and the call
+ * timeout bounds the whole exchange so a stalled upload cannot hang a dictation.
+ *
+ * Redirects are refused: an API key travels in a header, and a redirect would carry
+ * it to whatever host the response names.
  */
 internal val httpClient: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS)
+    .writeTimeout(60, TimeUnit.SECONDS)
     .readTimeout(120, TimeUnit.SECONDS)
+    .callTimeout(180, TimeUnit.SECONDS)
+    .followRedirects(false)
+    .followSslRedirects(false)
     .build()
 
 internal val lenientJson = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -53,8 +61,12 @@ internal fun errorMessage(code: Int, body: String): String {
         else -> null
     }
     val message = fromError ?: root.string("message") ?: root.string("detail")
-    return message?.takeIf { it.isNotBlank() } ?: "HTTP $code"
+    // Server-controlled text is shown to the user and stored in history, so it is capped.
+    return message?.takeIf { it.isNotBlank() }?.take(MAX_MESSAGE_CHARS) ?: "HTTP $code"
 }
+
+/** Server-controlled text ends up in the history file, so it does not get to be long. */
+private const val MAX_MESSAGE_CHARS = 200
 
 internal fun parseJsonObject(raw: String): JsonObject? =
     runCatching { lenientJson.parseToJsonElement(raw) as? JsonObject }.getOrNull()
