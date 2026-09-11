@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Sayso</string>
+    <string name="accessibility_service_description">Sayso shows a floating microphone button. When you tap it, Sayso records your voice, turns it into text, and types that text into the field you are editing. It only acts when you tap the button.</string>
+
+    <string name="bubble_content_description">Sayso dictation button</string>
+    <string name="feedback_busy">Still working</string>
+    <string name="feedback_grant_microphone">Grant microphone access in Sayso</string>
+    <string name="feedback_microphone_unavailable">Microphone unavailable</string>
+    <string name="feedback_max_length">Maximum length reached</string>
+    <string name="feedback_no_audio">No audio captured</string>
+    <string name="feedback_no_speech">No speech detected</string>
+    <string name="feedback_inserted">Inserted</string>
+    <string name="feedback_clipboard">Copied to clipboard</string>
+    <string name="feedback_not_delivered">Could not insert the text</string>
+    <string name="feedback_cleanup_failed">Cleanup failed, raw text used</string>
+    <string name="feedback_with_warning">%1$s. %2$s</string>
+
+    <!-- Navigation and shared -->
+    <string name="screen_home">Sayso</string>
+    <string name="screen_transcription">Transcription</string>
+    <string name="screen_local_models">Local models</string>
+    <string name="screen_cleanup">Cleanup</string>
+    <string name="screen_vocabulary">Vocabulary</string>
+    <string name="screen_history">History</string>
+    <string name="screen_insights">Insights</string>
+    <string name="screen_about">About</string>
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_copy">Copy</string>
+    <string name="status_done">Done</string>
+    <string name="status_todo">Not set up</string>
+
+    <!-- Home -->
+    <string name="home_ready_title">Ready to dictate</string>
+    <string name="home_ready_body">Tap the floating microphone, speak, then tap it again. Sayso types the text into whatever you are editing.</string>
+    <string name="home_setup_title">Finish setting up</string>
+    <string name="home_setup_body">Two steps left before the microphone bubble can appear.</string>
+    <string name="home_section_setup">Setup</string>
+    <string name="home_section_settings">Settings</string>
+    <string name="home_mic_title">Microphone permission</string>
+    <string name="home_mic_granted">Granted</string>
+    <string name="home_mic_missing">Tap to allow recording</string>
+    <string name="home_accessibility_title">Accessibility service</string>
+    <string name="home_accessibility_on">Running</string>
+    <string name="home_accessibility_off">Tap to turn Sayso on in Android settings</string>
+    <string name="home_disclosure_title">Why Sayso needs the accessibility service</string>
+    <string name="home_stt_title">Transcription model</string>
+    <string name="home_cleanup_title">Cleanup</string>
+    <string name="home_cleanup_off">Off</string>
+
+    <!-- Transcription -->
+    <string name="transcription_section_recognition">Recognition</string>
+    <string name="transcription_section_recording">Recording</string>
+    <string name="transcription_local_empty">No models installed yet. Download one from Local models.</string>
+    <string name="transcription_local_open">Open local models</string>
+    <string name="transcription_language">Spoken language</string>
+    <string name="transcription_hints">Hints</string>
+    <string name="transcription_hints_help">Names and jargon to bias recognition towards, separated by commas.</string>
+    <string name="transcription_max_seconds">Maximum recording length</string>
+    <string name="transcription_max_seconds_value">%1$d seconds</string>
+    <string name="transcription_sounds">Start and stop tones</string>
+    <string name="transcription_sounds_help">Play a short tone when recording starts and stops.</string>
+    <string name="transcription_history">Keep history</string>
+    <string name="transcription_history_help">Store transcripts and audio on this device so you can reprocess them.</string>
+
+    <!-- API keys -->
+    <string name="api_key_label">%1$s API key</string>
+    <string name="api_key_saved">Key saved</string>
+    <string name="api_key_none">No key saved</string>
+    <string name="api_key_show">Show key</string>
+    <string name="api_key_hide">Hide key</string>
+    <string name="api_key_get">Get a key</string>
+
+    <!-- Local models -->
+    <string name="local_models_intro">On-device models run without a network connection and never send audio anywhere.</string>
+    <string name="local_models_recommended">Recommended</string>
+    <string name="local_models_size">%1$d MB</string>
+    <string name="local_models_download">Download</string>
+    <string name="local_models_downloading">Downloading %1$d%%</string>
+    <string name="local_models_extracting">Extracting</string>
+    <string name="local_models_delete_title">Delete %1$s?</string>
+    <string name="local_models_delete_body">The model files are removed from this device. You can download it again later.</string>
+
+    <!-- Cleanup -->
+    <string name="cleanup_enabled">Clean up transcripts</string>
+    <string name="cleanup_enabled_help">Pass the transcript through a model that fixes punctuation, casing, and obvious errors.</string>
+    <string name="cleanup_section_prompt">Instructions</string>
+    <string name="cleanup_preset_custom">Custom</string>
+    <string name="cleanup_custom_prompt">Custom instructions</string>
+    <string name="cleanup_output_language">Output language</string>
+    <string name="cleanup_output_language_help">Spelling conventions to follow, for example British English. Leave empty to match the speaker.</string>
+    <string name="cleanup_preview">Preview prompt</string>
+    <string name="cleanup_preview_hide">Hide prompt</string>
+
+    <!-- Vocabulary -->
+    <string name="vocabulary_intro">Rewrite what the recogniser hears into the spelling you want. Useful for names, products, and jargon.</string>
+    <string name="vocabulary_empty">No words yet. Add one to get started.</string>
+    <string name="vocabulary_add">Add word</string>
+    <string name="vocabulary_edit">Edit word</string>
+    <string name="vocabulary_canonical">Correct spelling</string>
+    <string name="vocabulary_aliases">Heard as</string>
+    <string name="vocabulary_aliases_help">What the recogniser gets wrong, separated by commas.</string>
+    <string name="vocabulary_aliases_summary">Heard as %1$s</string>
+
+    <!-- History -->
+    <string name="history_empty">Nothing dictated yet.</string>
+    <string name="history_clear_all">Clear all</string>
+    <string name="history_clear_title">Clear all history?</string>
+    <string name="history_clear_body">Every transcript and saved recording is deleted from this device. This cannot be undone.</string>
+    <string name="history_reprocess">Reprocess</string>
+    <string name="history_copied">Copied</string>
+    <string name="history_no_audio">No saved audio to reprocess</string>
+    <string name="history_working">Working…</string>
+    <string name="output_inserted">Typed in</string>
+    <string name="output_clipboard">Copied</string>
+    <string name="output_none">Not delivered</string>
+
+    <!-- Insights -->
+    <string name="insights_empty">Dictate something and your speaking stats will show up here.</string>
+    <string name="insights_sessions">Sessions</string>
+    <string name="insights_total_words">Words spoken</string>
+    <string name="insights_average_wpm">Average pace</string>
+    <string name="insights_wpm_unit">%1$d wpm</string>
+    <string name="insights_filler_rate">Filler words</string>
+    <string name="insights_filler_unit">%1$s per 1,000</string>
+    <string name="insights_longest">Longest session</string>
+    <string name="insights_top_words">Most used words</string>
+
+    <!-- About -->
+    <string name="about_version">Version %1$s</string>
+    <string name="about_body">Sayso is a push-to-talk dictation app. Tap the floating microphone, speak, and Sayso types the text into whatever you are editing. Transcription runs on your device by default, or through a cloud provider you supply a key for. Nothing is sent anywhere you have not configured.</string>
+    <string name="about_privacy">Privacy policy</string>
+    <string name="about_source">Source code</string>
+
+    <!-- Languages -->
+    <string name="lang_auto">Detect automatically</string>
+    <string name="lang_en">English</string>
+    <string name="lang_es">Spanish</string>
+    <string name="lang_fr">French</string>
+    <string name="lang_de">German</string>
+    <string name="lang_it">Italian</string>
+    <string name="lang_pt">Portuguese</string>
+    <string name="lang_nl">Dutch</string>
+    <string name="lang_hi">Hindi</string>
+    <string name="lang_ja">Japanese</string>
+    <string name="lang_ko">Korean</string>
+    <string name="lang_zh">Chinese</string>
+
+    <!-- Navigation and shared -->
+
+    <!-- Home -->
+
+    <!-- Transcription -->
+
+    <!-- API keys -->
+
+    <!-- Local models -->
+
+    <!-- Cleanup -->
+
+    <!-- Vocabulary -->
+
+    <!-- History -->
+
+    <!-- Insights -->
+
+    <!-- About -->
+
+    <!-- Languages -->
+</resources>
