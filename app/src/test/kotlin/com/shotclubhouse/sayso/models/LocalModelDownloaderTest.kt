@@ -25,6 +25,12 @@ class LocalModelDownloaderTest {
 
     @get:Rule val temp = TemporaryFolder()
 
+    /** bzip2 squeezes repeated text to nothing, which would let the transfer finish before throttling bites. */
+    private fun incompressible(length: Int): String {
+        val random = java.util.Random(7)
+        return String(CharArray(length) { (32 + random.nextInt(95)).toChar() })
+    }
+
     private fun tarBz2(vararg entries: Pair<String, String>): ByteArray {
         val bytes = ByteArrayOutputStream()
         TarArchiveOutputStream(BZip2CompressorOutputStream(bytes)).use { tar ->
@@ -225,7 +231,7 @@ class LocalModelDownloaderTest {
         val model = LocalModelCatalog.default
         server.enqueue(
             MockResponse()
-                .setBody(Buffer().write(tarBz2(model.dirName + "/model.onnx" to "w".repeat(200_000))))
+                .setBody(Buffer().write(tarBz2(model.dirName + "/model.onnx" to incompressible(300_000))))
                 .throttleBody(2_048, 50, TimeUnit.MILLISECONDS),
         )
         val client = redirectingClient(server)
