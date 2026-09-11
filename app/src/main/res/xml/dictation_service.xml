@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    flagRetrieveInteractiveWindows is what lets the service read the window list, which
+    text insertion needs to find the field the user is editing. flagIncludeNotImportantViews
+    reaches editors that mark themselves unimportant for accessibility, such as terminals.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewFocused"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="false"
+    android:notificationTimeout="100"
+    android:description="@string/accessibility_service_description" />
