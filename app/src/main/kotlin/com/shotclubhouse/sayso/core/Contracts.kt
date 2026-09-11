@@ -1,0 +1,134 @@
+package com.shotclubhouse.sayso.core
+
+/**
+ * Shared contracts for the dictation pipeline. Every module codes against these
+ * types so that providers, the pipeline, the service and the UI can be built
+ * independently.
+ */
+
+/** A recorded clip: 16-bit little-endian PCM, mono. */
+class AudioClip(val pcm16: ByteArray, val sampleRate: Int = DEFAULT_SAMPLE_RATE) {
+    val durationMs: Long get() = pcm16.size * 1000L / (sampleRate * 2)
+    val isEmpty: Boolean get() = pcm16.isEmpty()
+
+    companion object {
+        const val DEFAULT_SAMPLE_RATE = 16_000
+    }
+}
+
+/** Identifies a speech-to-text model. `id` is "<providerId>/<modelName>". */
+data class SttModel(val id: String, val displayName: String, val note: String = "") {
+    val providerId: String get() = id.substringBefore('/')
+    val modelName: String get() = id.substringAfter('/')
+}
+
+data class TranscriptionRequest(
+    val clip: AudioClip,
+    val modelName: String,
+    /** ISO-639-1 code such as "en"; null means provider auto-detect. */
+    val language: String? = null,
+    /** Words or phrases to bias recognition towards (names, jargon). */
+    val hints: List<String> = emptyList(),
+)
+
+sealed class TranscriptionResult {
+    data class Success(val text: String) : TranscriptionResult()
+    data class Failure(val message: String) : TranscriptionResult()
+}
+
+interface TranscriptionProvider {
+    val id: String
+    val displayName: String
+    val needsApiKey: Boolean
+    /** Where the user can obtain a key; null for local providers. */
+    val apiKeyUrl: String?
+    val models: List<SttModel>
+    suspend fun transcribe(request: TranscriptionRequest, apiKey: String?): TranscriptionResult
+}
+
+/** Identifies a text-cleanup model. `id` is "<providerId>/<modelName>". */
+data class PolishModel(val id: String, val displayName: String) {
+    val providerId: String get() = id.substringBefore('/')
+    val modelName: String get() = id.substringAfter('/')
+}
+
+sealed class PolishResult {
+    data class Success(val text: String) : PolishResult()
+    data class Failure(val message: String) : PolishResult()
+}
+
+interface PolishProvider {
+    val id: String
+    val displayName: String
+    val needsApiKey: Boolean
+    val apiKeyUrl: String?
+    val models: List<PolishModel>
+    /** Whether a caller-supplied system prompt is honoured (false for rule-based cleaners). */
+    val supportsCustomPrompt: Boolean
+    suspend fun polish(systemPrompt: String, userMessage: String, modelName: String, apiKey: String?): PolishResult
+}
+
+/** A personal-vocabulary rule: any alias is rewritten to the canonical spelling. */
+data class LexiconRule(val canonical: String, val aliases: List<String>)
+
+/** Secret storage keyed by provider id. */
+interface SecretStore {
+    fun get(providerId: String): String?
+    fun set(providerId: String, value: String)
+    fun remove(providerId: String)
+}
+
+enum class OutputMethod { INSERTED, CLIPBOARD, NONE }
+
+/** Read/write app settings. Implemented over SharedPreferences; fakeable in tests. */
+interface SettingsStore {
+    var sttModelId: String
+    var language: String?
+    var hints: List<String>
+    var polishEnabled: Boolean
+    var polishModelId: String
+    var customPrompt: String?
+    var outputLanguage: String?
+    var lexicon: List<LexiconRule>
+    var maxRecordingSeconds: Int
+    var soundsEnabled: Boolean
+    var historyEnabled: Boolean
+    var bubbleX: Int
+    var bubbleY: Int
+}
+
+data class HistoryEntry(
+    val id: String,
+    val createdAt: Long,
+    val durationMs: Long,
+    val rawText: String,
+    val polishedText: String?,
+    val sttModelId: String,
+    val polishModelId: String?,
+    val outputMethod: OutputMethod,
+    val error: String?,
+    /** Absolute path of the saved WAV, if kept. */
+    val audioPath: String?,
+) {
+    val finalText: String get() = polishedText?.takeIf { it.isNotBlank() } ?: rawText
+}
+
+interface HistoryRepository {
+    suspend fun add(entry: HistoryEntry)
+    suspend fun update(entry: HistoryEntry)
+    suspend fun all(): List<HistoryEntry>
+    suspend fun delete(id: String)
+    suspend fun clear()
+    /** Persist a clip for later reprocessing; returns absolute path. */
+    suspend fun saveAudio(id: String, clip: AudioClip): String
+    suspend fun loadAudio(path: String): AudioClip?
+}
+
+data class PipelineResult(val text: String, val entry: HistoryEntry, val error: String?)
+
+interface DictationPipeline {
+    /** Transcribe, apply lexicon, polish. Never throws; errors land in [PipelineResult.error]. */
+    suspend fun run(clip: AudioClip): PipelineResult
+    /** Re-run [run] on the saved audio of an entry with current settings; returns the updated entry. */
+    suspend fun reprocess(entry: HistoryEntry): PipelineResult?
+}
