@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +42,8 @@ private const val NEW_RULE = -1
 fun VocabularyScreen(modifier: Modifier = Modifier) {
     val settings = AppGraph.settings
     val rules = remember { mutableStateListOf<LexiconRule>().apply { addAll(settings.lexicon) } }
-    var editing by remember { mutableStateOf<Int?>(null) }
+    // Saveable so that rotating the phone mid-edit does not throw the dialog away.
+    var editing by rememberSaveable { mutableStateOf<Int?>(null) }
 
     fun persist() {
         settings.lexicon = rules.toList()
@@ -123,8 +125,8 @@ private fun RuleDialog(
     onDismiss: () -> Unit,
     onSave: (LexiconRule) -> Unit,
 ) {
-    var canonical by remember { mutableStateOf(rule?.canonical.orEmpty()) }
-    var aliases by remember { mutableStateOf(rule?.aliases?.joinToString(", ").orEmpty()) }
+    var canonical by rememberSaveable { mutableStateOf(rule?.canonical.orEmpty()) }
+    var aliases by rememberSaveable { mutableStateOf(rule?.aliases?.joinToString(", ").orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

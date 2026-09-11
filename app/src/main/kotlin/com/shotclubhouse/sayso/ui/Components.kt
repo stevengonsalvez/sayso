@@ -160,6 +160,7 @@ fun ApiKeyRow(
     val secrets = AppGraph.secrets
     var value by remember(providerId) { mutableStateOf("") }
     var saved by remember(providerId) { mutableStateOf(false) }
+    var saveFailed by remember(providerId) { mutableStateOf(false) }
     var visible by remember(providerId) { mutableStateOf(false) }
 
     // Unlocking the keystore costs tens of milliseconds on first use, and a
@@ -175,14 +176,25 @@ fun ApiKeyRow(
     Column(modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         OutlinedTextField(
             value = value,
-            onValueChange = { value = it },
+            onValueChange = {
+                value = it
+                saveFailed = false
+            },
             label = { Text(stringResource(R.string.api_key_label, providerName)) },
             singleLine = true,
             visualTransformation =
                 if (visible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             supportingText = {
-                Text(stringResource(if (saved) R.string.api_key_saved else R.string.api_key_none))
+                Text(
+                    stringResource(
+                        when {
+                            saveFailed -> R.string.api_key_save_failed
+                            saved -> R.string.api_key_saved
+                            else -> R.string.api_key_none
+                        },
+                    ),
+                )
             },
             trailingIcon = {
                 IconButton(onClick = { visible = !visible }) {
@@ -200,8 +212,16 @@ fun ApiKeyRow(
             TextButton(
                 onClick = {
                     val key = value.trim()
-                    scope.launch { withContext(Dispatchers.IO) { secrets.set(providerId, key) } }
-                    saved = key.isNotEmpty()
+                    scope.launch {
+                        // A wiped or locked Keystore makes the store drop the value silently,
+                        // so the row reports what was actually stored, not what was typed.
+                        val stored = withContext(Dispatchers.IO) {
+                            secrets.set(providerId, key)
+                            secrets.get(providerId) == key
+                        }
+                        saved = stored
+                        saveFailed = !stored
+                    }
                 },
                 enabled = value.isNotBlank(),
             ) { Text(stringResource(R.string.action_save)) }
@@ -210,6 +230,7 @@ fun ApiKeyRow(
                     scope.launch { withContext(Dispatchers.IO) { secrets.remove(providerId) } }
                     value = ""
                     saved = false
+                    saveFailed = false
                 },
                 enabled = saved || value.isNotBlank(),
             ) { Text(stringResource(R.string.action_clear)) }

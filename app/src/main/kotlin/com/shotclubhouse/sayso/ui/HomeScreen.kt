@@ -32,7 +32,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -45,6 +47,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.service.DictationService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Hub screen: what still needs setting up, what is currently configured, and where to go next. */
 @Composable
@@ -52,8 +56,9 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
-    var sttSummary by remember { mutableStateOf(sttSummary()) }
+    var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
+    var resumeTick by remember { mutableIntStateOf(0) }
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -64,9 +69,16 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     LifecycleResumeEffect(Unit) {
         micGranted = context.hasMicPermission()
         serviceOn = DictationService.isEnabled(context)
-        sttSummary = sttSummary()
-        cleanupSummary = cleanupSummary()
+        resumeTick++
         onPauseOrDispose { }
+    }
+
+    // Naming the transcription model walks the on-device models directory, which is a
+    // disk read, so it happens off the main thread rather than during composition.
+    LaunchedEffect(resumeTick) {
+        val summaries = withContext(Dispatchers.IO) { sttSummary() to cleanupSummary() }
+        sttSummary = summaries.first
+        cleanupSummary = summaries.second
     }
 
     val ready = micGranted && serviceOn

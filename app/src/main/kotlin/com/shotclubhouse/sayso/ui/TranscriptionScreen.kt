@@ -18,13 +18,16 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.shotclubhouse.sayso.AppGraph
@@ -66,6 +69,13 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var sounds by remember { mutableStateOf(settings.soundsEnabled) }
     var history by remember { mutableStateOf(settings.historyEnabled) }
     var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
+
+    // Leaving the screen with the keyboard still up never blurs the field, so the last edit
+    // is flushed on the way out as well.
+    val pendingHints by rememberUpdatedState(hints)
+    DisposableEffect(Unit) {
+        onDispose { settings.hints = pendingHints.toCsvList() }
+    }
 
     // The on-device provider lists its models by walking the models directory, so the whole
     // catalogue is read once off the main thread instead of on every recomposition.
@@ -131,15 +141,15 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
 
         OutlinedTextField(
             value = hints,
-            onValueChange = {
-                hints = it
-                settings.hints = it.toCsvList()
-            },
+            onValueChange = { hints = it },
             label = { Text(stringResource(R.string.transcription_hints)) },
             supportingText = { Text(stringResource(R.string.transcription_hints_help)) },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                // Saved when the field is done with, not on every keystroke: each write is a
+                // SharedPreferences commit, and a half-typed word is not a hint.
+                .onFocusChanged { if (!it.isFocused) settings.hints = hints.toCsvList() },
         )
 
         SectionHeader(stringResource(R.string.transcription_section_recording))

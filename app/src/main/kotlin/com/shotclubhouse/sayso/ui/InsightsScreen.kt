@@ -27,6 +27,9 @@ import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.history.Insights
 import com.shotclubhouse.sayso.history.InsightsSummary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /** Speaking stats derived from what is stored in history. */
@@ -35,8 +38,10 @@ import kotlin.math.roundToInt
 fun InsightsScreen(modifier: Modifier = Modifier) {
     var summary by remember { mutableStateOf<InsightsSummary?>(null) }
 
+    // Counting the words of every stored transcript is a pass over the whole history file,
+    // so both the read and the arithmetic stay off the main thread.
     LaunchedEffect(Unit) {
-        summary = Insights.compute(AppGraph.history.all())
+        summary = withContext(Dispatchers.Default) { Insights.compute(AppGraph.history.all()) }
     }
 
     val stats = summary
@@ -66,7 +71,7 @@ fun InsightsScreen(modifier: Modifier = Modifier) {
             stringResource(R.string.insights_filler_rate),
             stringResource(
                 R.string.insights_filler_unit,
-                String.format("%.1f", stats.fillerRatePer1k),
+                String.format(Locale.getDefault(), "%.1f", stats.fillerRatePer1k),
             ),
         )
         StatCard(

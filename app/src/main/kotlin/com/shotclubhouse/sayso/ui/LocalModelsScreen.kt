@@ -26,6 +26,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,10 +37,11 @@ import androidx.compose.ui.unit.dp
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.models.DownloadState
-import com.shotclubhouse.sayso.models.LocalModel
 import com.shotclubhouse.sayso.models.LocalModelCatalog
 import com.shotclubhouse.sayso.service.DictationService
+import com.shotclubhouse.sayso.settings.Settings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -49,9 +52,11 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
     val settings = AppGraph.settings
     val downloads = AppGraph.downloads
     val modelsDir = AppGraph.localModelsDir
+    val scope = rememberCoroutineScope()
     var refreshToken by remember { mutableIntStateOf(0) }
     var selectedModel by remember { mutableStateOf(settings.sttModelId) }
-    var pendingDelete by remember { mutableStateOf<LocalModel?>(null) }
+    // The directory name rather than the model, so the confirmation survives a rotation.
+    var pendingDeleteDirName by rememberSaveable { mutableStateOf<String?>(null) }
     var installedDirNames by remember { mutableStateOf(emptySet<String>()) }
 
     // Whether a model is on disk is a directory listing, which composition must not do.
@@ -87,7 +92,7 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
                             DictationService.instance?.reloadLocalModel()
                         },
                         trailing = {
-                            IconButton(onClick = { pendingDelete = model }) {
+                            IconButton(onClick = { pendingDeleteDirName = model.dirName }) {
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = stringResource(R.string.action_delete),
@@ -129,24 +134,32 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    val doomed = pendingDelete
+    val doomed = pendingDeleteDirName?.let(LocalModelCatalog::byDirName)
     if (doomed != null) {
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteDirName = null },
             title = { Text(stringResource(R.string.local_models_delete_title, doomed.displayName)) },
             text = { Text(stringResource(R.string.local_models_delete_body)) },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        downloads.delete(doomed, modelsDir)
-                        pendingDelete = null
-                        refreshToken++
-                        DictationService.instance?.reloadLocalModel()
+                        pendingDeleteDirName = null
+                        scope.launch {
+                            downloads.delete(doomed, modelsDir)
+                            // Leaving the setting pointing at files that are gone would make
+                            // every dictation fail until the user noticed and picked another.
+                            if (settings.sttModelId == "local/${doomed.dirName}") {
+                                settings.sttModelId = Settings.DEFAULT_STT_MODEL_ID
+                                selectedModel = Settings.DEFAULT_STT_MODEL_ID
+                            }
+                            refreshToken++
+                            DictationService.instance?.reloadLocalModel()
+                        }
                     },
                 ) { Text(stringResource(R.string.action_delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) {
+                TextButton(onClick = { pendingDeleteDirName = null }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             },
