@@ -31,4 +31,4 @@ Sayso contains no analytics, advertising, or crash reporting SDKs.
 
 ## Contact
 
-Questions about privacy: liam@shotclubhouse.com
+Questions about privacy: steven.gonsalvez@gmail.com
