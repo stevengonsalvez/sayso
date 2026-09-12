@@ -55,6 +55,7 @@
     <!-- Transcription -->
     <string name="transcription_section_recognition">Recognition</string>
     <string name="transcription_section_recording">Recording</string>
+    <string name="transcription_section_floating_and_wake">Floating button &amp; hands-free</string>
     <string name="transcription_local_empty">No models installed yet. Download one from Local models.</string>
     <string name="transcription_local_open">Open local models</string>
     <string name="transcription_language">Spoken language</string>

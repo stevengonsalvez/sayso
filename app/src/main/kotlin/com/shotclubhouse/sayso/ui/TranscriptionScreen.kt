@@ -192,6 +192,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 settings.historyEnabled = it
             },
         )
+        SectionHeader(stringResource(R.string.transcription_section_floating_and_wake))
         SwitchRow(
             title = stringResource(R.string.transcription_bubble_always_visible),
             subtitle = stringResource(R.string.transcription_bubble_always_visible_help),
