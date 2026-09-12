@@ -68,7 +68,7 @@ class OverlayBubble(
 
     private val icon = ImageView(context).apply {
         setImageResource(R.drawable.ic_bubble_idle)
-        layoutParams = FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER)
+        layoutParams = FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER)
     }
 
     private val spinner = ProgressBar(context).apply {
