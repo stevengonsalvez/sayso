@@ -19,4 +19,5 @@ class InMemorySettings(
     override var bubbleX: Int = Settings.DEFAULT_BUBBLE_POSITION,
     override var bubbleY: Int = Settings.DEFAULT_BUBBLE_POSITION,
     override var bubbleAlwaysVisible: Boolean = false,
+    override var wakeWordEnabled: Boolean = false,
 ) : SettingsStore
