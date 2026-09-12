@@ -28,12 +28,14 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.core.SttModel
 import com.shotclubhouse.sayso.service.DictationService
+import com.shotclubhouse.sayso.service.WakeWordService
 import com.shotclubhouse.sayso.settings.Settings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -60,6 +62,7 @@ private const val RECORDING_STEP_SECONDS = 30
 /** Which engine turns speech into text, and the knobs that shape a recording. */
 @Composable
 fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     val settings = AppGraph.settings
     var selectedModel by remember { mutableStateOf(settings.sttModelId) }
     var language by remember { mutableStateOf(settings.language) }
@@ -68,6 +71,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var sounds by remember { mutableStateOf(settings.soundsEnabled) }
     var history by remember { mutableStateOf(settings.historyEnabled) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
+    var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
     var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
 
     // Leaving the screen with the keyboard still up never blurs the field, so the last edit
@@ -196,6 +200,20 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 bubbleAlwaysVisible = it
                 settings.bubbleAlwaysVisible = it
                 DictationService.instance?.updateBubbleVisibility()
+            },
+        )
+        SwitchRow(
+            title = stringResource(R.string.transcription_wake_word),
+            subtitle = stringResource(R.string.transcription_wake_word_help),
+            checked = wakeWord,
+            onCheckedChange = { enabled ->
+                wakeWord = enabled
+                settings.wakeWordEnabled = enabled
+                if (enabled) {
+                    WakeWordService.start(context)
+                } else {
+                    WakeWordService.stop(context)
+                }
             },
         )
     }

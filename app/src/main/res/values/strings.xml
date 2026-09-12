@@ -68,6 +68,11 @@
     <string name="transcription_history_help">Store transcripts and audio on this device so you can reprocess them.</string>
     <string name="transcription_bubble_always_visible">Always show floating button</string>
     <string name="transcription_bubble_always_visible_help">Show the floating microphone button everywhere. When off, it only appears when you tap an input field.</string>
+    <string name="transcription_wake_word">Wake word (\"Hey Sayso\")</string>
+    <string name="transcription_wake_word_help">Say \"Hey Sayso\" to start dictating hands-free.</string>
+    <string name="wake_word_notification_title">Sayso is listening</string>
+    <string name="wake_word_notification_text">Say \"Hey Sayso\" to start dictating</string>
+    <string name="wake_word_notification_channel">Wake word detection</string>
 
     <!-- API keys -->
     <string name="api_key_label">%1$s API key</string>

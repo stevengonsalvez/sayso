@@ -74,6 +74,10 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getBoolean(KEY_BUBBLE_ALWAYS_VISIBLE, false)
         set(value) = prefs.edit().putBoolean(KEY_BUBBLE_ALWAYS_VISIBLE, value).apply()
 
+    override var wakeWordEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WAKE_WORD_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_WAKE_WORD_ENABLED, value).apply()
+
     private fun optionalString(key: String): String? =
         prefs.getString(key, null)?.takeIf { it.isNotBlank() }
 
@@ -135,6 +139,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** Whether the bubble is shown everywhere or only when an editable text field is focused. */
         const val KEY_BUBBLE_ALWAYS_VISIBLE = "bubble_always_visible"
+
+        /** Whether continuous on-device wake-word detection is running. */
+        const val KEY_WAKE_WORD_ENABLED = "wake_word_enabled"
 
         /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
         val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"

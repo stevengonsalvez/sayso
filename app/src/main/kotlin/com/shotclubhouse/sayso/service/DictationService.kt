@@ -2,12 +2,14 @@ package com.shotclubhouse.sayso.service
 
 import android.Manifest
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.core.AudioClip
@@ -54,6 +56,17 @@ class DictationService : AccessibilityService() {
         scope.coroutineContext.cancelChildren()
         sounds?.release()
         bubble?.hide()
+
+        val info = serviceInfo ?: AccessibilityServiceInfo()
+        info.eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
+            AccessibilityEvent.TYPE_VIEW_CLICKED or
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+        info.flags = info.flags or
+            AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+            AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        serviceInfo = info
 
         injector = TextInjector(this)
         sounds = SoundCues(AppGraph.settings)
@@ -106,6 +119,13 @@ class DictationService : AccessibilityService() {
 
     private fun checkActiveWindowFocus() {
         if (AppGraph.settings.bubbleAlwaysVisible || state != State.IDLE) {
+            bubble?.show()
+            return
+        }
+
+        // If soft keyboard (IME window) is currently open, user is in an input field
+        val isKeyboardOpen = windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        if (isKeyboardOpen) {
             bubble?.show()
             return
         }
@@ -174,6 +194,12 @@ class DictationService : AccessibilityService() {
             State.RECORDING -> stopRecording()
             State.BUSY -> feedback(getString(R.string.feedback_busy))
         }
+    }
+
+    fun startRecordingFromWakeWord() {
+        if (state != State.IDLE) return
+        bubble?.show()
+        startRecording()
     }
 
     private fun startRecording() {
@@ -285,6 +311,11 @@ class DictationService : AccessibilityService() {
         @Volatile
         var instance: DictationService? = null
             private set
+
+        fun isBusyOrRecording(): Boolean {
+            val s = instance?.state
+            return s == State.RECORDING || s == State.BUSY
+        }
 
         /** Whether the user has granted Sayso the accessibility permission. */
         fun isEnabled(context: Context): Boolean {

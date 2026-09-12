@@ -98,6 +98,7 @@ interface SettingsStore {
     var bubbleX: Int
     var bubbleY: Int
     var bubbleAlwaysVisible: Boolean
+    var wakeWordEnabled: Boolean
 }
 
 data class HistoryEntry(

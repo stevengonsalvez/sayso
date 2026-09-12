@@ -1,7 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
   <rect width="108" height="108" rx="24" fill="#1E2A44"/>
-  <path fill="#F4B942" d="M54 26C37.4 26 24 37.2 24 51c0 7.2 3.7 13.7 9.6 18.2L30 82l15.6-7.4C48.3 75.5 51.1 76 54 76c16.6 0 30-11.2 30-25S70.6 26 54 26z"/>
-  <rect x="42" y="45" width="5" height="12" rx="1.5" fill="#1E2A44"/>
-  <rect x="51.5" y="39" width="5" height="24" rx="1.5" fill="#1E2A44"/>
-  <rect x="61" y="45" width="5" height="12" rx="1.5" fill="#1E2A44"/>
+  <!-- Sayso Sound Waveform -->
+  <rect x="21" y="43" width="6" height="22" rx="3" fill="#F4B942"/>
+  <rect x="31" y="34" width="6" height="40" rx="3" fill="#F4B942"/>
+  <rect x="41" y="26" width="6" height="56" rx="3" fill="#F4B942"/>
+  <rect x="51" y="19" width="6" height="70" rx="3" fill="#F4B942"/>
+  <rect x="61" y="26" width="6" height="56" rx="3" fill="#F4B942"/>
+  <rect x="71" y="34" width="6" height="40" rx="3" fill="#F4B942"/>
+  <rect x="81" y="43" width="6" height="22" rx="3" fill="#F4B942"/>
 </svg>
