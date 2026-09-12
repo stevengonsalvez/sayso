@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.core.AudioClip
@@ -56,12 +57,78 @@ class DictationService : AccessibilityService() {
 
         injector = TextInjector(this)
         sounds = SoundCues(AppGraph.settings)
-        bubble = OverlayBubble(this, AppGraph.settings, ::onTap).apply { show() }
+        bubble = OverlayBubble(this, AppGraph.settings, ::onTap)
         instance = this
         enter(State.IDLE)
+        updateBubbleVisibility()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val settings = AppGraph.settings
+        if (settings.bubbleAlwaysVisible || state != State.IDLE) {
+            bubble?.show()
+            return
+        }
+
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_FOCUSED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                val source = event.source
+                if (source != null && isEditableTarget(source)) {
+                    bubble?.show()
+                } else {
+                    checkActiveWindowFocus()
+                }
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                checkActiveWindowFocus()
+            }
+        }
+    }
+
+    fun updateBubbleVisibility() {
+        if (AppGraph.settings.bubbleAlwaysVisible || state != State.IDLE) {
+            bubble?.show()
+        } else {
+            checkActiveWindowFocus()
+        }
+    }
+
+    private fun isEditableTarget(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) return true
+        val className = node.className?.toString().orEmpty()
+        if (className.contains("EditText", ignoreCase = true)) return true
+        if (className.contains("TerminalView", ignoreCase = true)) return true
+        return false
+    }
+
+    private fun checkActiveWindowFocus() {
+        if (AppGraph.settings.bubbleAlwaysVisible || state != State.IDLE) {
+            bubble?.show()
+            return
+        }
+
+        val root = rootInActiveWindow
+        val focusedInput = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focusedInput != null && isEditableTarget(focusedInput)) {
+            bubble?.show()
+            return
+        }
+
+        val hasEditableFocus = windows.filter { it.isActive || it.isFocused }.any { window ->
+            val wRoot = window.root ?: return@any false
+            val inputFocus = wRoot.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            inputFocus != null && isEditableTarget(inputFocus)
+        }
+
+        if (hasEditableFocus) {
+            bubble?.show()
+        } else {
+            bubble?.hide()
+        }
+    }
 
     override fun onInterrupt() = Unit
 
@@ -158,6 +225,7 @@ class DictationService : AccessibilityService() {
             if (currentCoroutineContext().isActive) {
                 capture = null
                 enter(State.IDLE)
+                updateBubbleVisibility()
             }
         }
     }

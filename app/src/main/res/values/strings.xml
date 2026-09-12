@@ -66,6 +66,8 @@
     <string name="transcription_sounds_help">Play a short tone when recording starts and stops.</string>
     <string name="transcription_history">Keep history</string>
     <string name="transcription_history_help">Store transcripts and audio on this device so you can reprocess them.</string>
+    <string name="transcription_bubble_always_visible">Always show floating button</string>
+    <string name="transcription_bubble_always_visible_help">Show the floating microphone button everywhere. When off, it only appears when you tap an input field.</string>
 
     <!-- API keys -->
     <string name="api_key_label">%1$s API key</string>

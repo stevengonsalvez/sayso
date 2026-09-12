@@ -18,4 +18,5 @@ class InMemorySettings(
     override var historyEnabled: Boolean = true,
     override var bubbleX: Int = Settings.DEFAULT_BUBBLE_POSITION,
     override var bubbleY: Int = Settings.DEFAULT_BUBBLE_POSITION,
+    override var bubbleAlwaysVisible: Boolean = false,
 ) : SettingsStore
