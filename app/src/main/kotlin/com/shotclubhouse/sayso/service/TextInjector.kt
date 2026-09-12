@@ -32,6 +32,32 @@ fun spliceAtSelection(existing: String, insert: String, selectionStart: Int, sel
     return prefix + before + insert + after + suffix
 }
 
+/** Regex matching common input field placeholders/hints that should not be treated as existing user text. */
+internal val COMMON_PLACEHOLDER_REGEX = Regex(
+    """^(?:message|messages|type\s+a\s+message|type\s+message|send\s+a\s+message|write\s+a\s+message|enter\s+message|text\s+message|chat\s+message|search|search\s+or\s+type\s+url|type\s+something|write\s+something|leave\s+a\s+comment|add\s+a\s+comment)[.…:!]*$""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Resolves the actual user-typed text in an editable node.
+ *
+ * If the node is currently showing a hint/placeholder, or if the text matches the node's hintText,
+ * or matches known messaging placeholders (e.g. "Message", "Type a message"), it returns an empty string
+ * to prevent prepending placeholder text to the dictated transcript.
+ */
+fun resolveExistingText(
+    text: CharSequence?,
+    hintText: CharSequence? = null,
+    isShowingHintText: Boolean = false,
+): String {
+    if (text.isNullOrBlank()) return ""
+    if (isShowingHintText) return ""
+    val raw = text.toString().trim()
+    if (hintText != null && raw.equals(hintText.toString().trim(), ignoreCase = true)) return ""
+    if (COMMON_PLACEHOLDER_REGEX.matches(raw)) return ""
+    return text.toString()
+}
+
 /**
  * Only a terminal emulator gets its paste action picked out by label. Anywhere else that
  * would sooner or later fire whatever unrelated action happens to be called "paste", in
@@ -176,11 +202,16 @@ class TextInjector(private val service: AccessibilityService) {
         }
 
         if (editable) {
+            val existing = resolveExistingText(
+                text = node.text,
+                hintText = node.hintText,
+                isShowingHintText = node.isShowingHintText,
+            )
             val merged = spliceAtSelection(
-                existing = node.text?.toString().orEmpty(),
+                existing = existing,
                 insert = text,
-                selectionStart = node.textSelectionStart,
-                selectionEnd = node.textSelectionEnd,
+                selectionStart = if (existing.isEmpty()) 0 else node.textSelectionStart,
+                selectionEnd = if (existing.isEmpty()) 0 else node.textSelectionEnd,
             )
             val arguments = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, merged)

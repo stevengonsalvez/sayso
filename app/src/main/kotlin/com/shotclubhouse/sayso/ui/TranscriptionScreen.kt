@@ -67,6 +67,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var maxSeconds by remember { mutableFloatStateOf(settings.maxRecordingSeconds.toFloat()) }
     var sounds by remember { mutableStateOf(settings.soundsEnabled) }
     var history by remember { mutableStateOf(settings.historyEnabled) }
+    var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
 
     // Leaving the screen with the keyboard still up never blurs the field, so the last edit
@@ -185,6 +186,16 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
             onCheckedChange = {
                 history = it
                 settings.historyEnabled = it
+            },
+        )
+        SwitchRow(
+            title = stringResource(R.string.transcription_bubble_always_visible),
+            subtitle = stringResource(R.string.transcription_bubble_always_visible_help),
+            checked = bubbleAlwaysVisible,
+            onCheckedChange = {
+                bubbleAlwaysVisible = it
+                settings.bubbleAlwaysVisible = it
+                DictationService.instance?.updateBubbleVisibility()
             },
         )
     }

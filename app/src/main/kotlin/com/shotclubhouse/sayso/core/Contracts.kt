@@ -97,6 +97,7 @@ interface SettingsStore {
     var historyEnabled: Boolean
     var bubbleX: Int
     var bubbleY: Int
+    var bubbleAlwaysVisible: Boolean
 }
 
 data class HistoryEntry(

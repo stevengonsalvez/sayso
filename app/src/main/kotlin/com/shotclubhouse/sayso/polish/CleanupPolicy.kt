@@ -147,6 +147,10 @@ object CleanupPolicy {
                 break
             }
         }
+
+        val prefixRegex = Regex("""^(?:message|transcript|cleaned\s*transcript|result)\s*:\s*""", RegexOption.IGNORE_CASE)
+        text = text.replace(prefixRegex, "").trim()
+
         return text
     }
 

@@ -70,6 +70,10 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getInt(KEY_BUBBLE_Y, DEFAULT_BUBBLE_POSITION)
         set(value) = prefs.edit().putInt(KEY_BUBBLE_Y, value).apply()
 
+    override var bubbleAlwaysVisible: Boolean
+        get() = prefs.getBoolean(KEY_BUBBLE_ALWAYS_VISIBLE, false)
+        set(value) = prefs.edit().putBoolean(KEY_BUBBLE_ALWAYS_VISIBLE, value).apply()
+
     private fun optionalString(key: String): String? =
         prefs.getString(key, null)?.takeIf { it.isNotBlank() }
 
@@ -128,6 +132,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         /** Last bubble position in pixels; [DEFAULT_BUBBLE_POSITION] means "not placed yet". */
         const val KEY_BUBBLE_X = "bubble_x"
         const val KEY_BUBBLE_Y = "bubble_y"
+
+        /** Whether the bubble is shown everywhere or only when an editable text field is focused. */
+        const val KEY_BUBBLE_ALWAYS_VISIBLE = "bubble_always_visible"
 
         /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
         val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"

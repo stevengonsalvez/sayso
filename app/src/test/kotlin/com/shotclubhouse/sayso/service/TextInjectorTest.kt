@@ -101,4 +101,39 @@ class TextInjectorTest {
         assertFalse(matchesPasteByLabel("android.webkit.WebView"))
         assertFalse(matchesPasteByLabel(null))
     }
+
+    @Test
+    fun `resolveExistingText drops hint when isShowingHintText is true`() {
+        assertEquals("", resolveExistingText("Message", isShowingHintText = true))
+        assertEquals("", resolveExistingText("Type something", isShowingHintText = true))
+    }
+
+    @Test
+    fun `resolveExistingText drops text matching hintText`() {
+        assertEquals("", resolveExistingText("Message", hintText = "Message"))
+        assertEquals("", resolveExistingText("Search here", hintText = "Search here"))
+    }
+
+    @Test
+    fun `resolveExistingText drops common placeholder patterns`() {
+        assertEquals("", resolveExistingText("Message"))
+        assertEquals("", resolveExistingText("message"))
+        assertEquals("", resolveExistingText("Type a message..."))
+        assertEquals("", resolveExistingText("Send a message"))
+        assertEquals("", resolveExistingText("Search"))
+        assertEquals("", resolveExistingText("Type something"))
+    }
+
+    @Test
+    fun `resolveExistingText keeps genuine typed text`() {
+        assertEquals("Hello world", resolveExistingText("Hello world"))
+        assertEquals("Important message for Stevie", resolveExistingText("Important message for Stevie"))
+    }
+
+    @Test
+    fun `resolveExistingText handles empty and null`() {
+        assertEquals("", resolveExistingText(null))
+        assertEquals("", resolveExistingText(""))
+        assertEquals("", resolveExistingText("   "))
+    }
 }

@@ -184,4 +184,14 @@ class CleanupPolicyTest {
         assertEquals(answer, CleanupPolicy.stripWrapping(answer))
         assertEquals("```", CleanupPolicy.stripWrapping("```"))
     }
+
+    @Test
+    fun `strip wrapping removes leading label prefixes`() {
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("Message: Hello world"))
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("message: Hello world"))
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("Transcript: Hello world"))
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("Cleaned transcript: Hello world"))
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("Result: Hello world"))
+        assertEquals("Hello world", CleanupPolicy.stripWrapping("```\nMessage: Hello world\n```"))
+    }
 }
