@@ -15,10 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,9 +52,23 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf(emptyList<HistoryEntry>()) }
+    var searchQuery by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
+
+    val filteredEntries = remember(entries, searchQuery) {
+        if (searchQuery.isBlank()) {
+            entries
+        } else {
+            val query = searchQuery.trim()
+            entries.filter { entry ->
+                entry.finalText.contains(query, ignoreCase = true) ||
+                    entry.rawText.contains(query, ignoreCase = true) ||
+                    entry.sttModelId.contains(query, ignoreCase = true)
+            }
+        }
+    }
 
     suspend fun reload() {
         entries = AppGraph.history.all()
@@ -58,6 +78,26 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
 
     LazyColumn(modifier.fillMaxSize()) {
         item {
+            if (entries.isNotEmpty() || searchQuery.isNotBlank()) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(stringResource(R.string.history_search_placeholder)) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = stringResource(R.string.action_clear))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -84,10 +124,17 @@ fun HistoryScreen(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp),
                 )
+            } else if (filteredEntries.isEmpty()) {
+                Text(
+                    stringResource(R.string.history_search_empty, searchQuery.trim()),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
             }
         }
 
-        items(entries, key = { it.id }) { entry ->
+        items(filteredEntries, key = { it.id }) { entry ->
             HistoryRow(
                 entry = entry,
                 expanded = expandedId == entry.id,
