@@ -54,9 +54,9 @@ android {
         applicationId = "com.shotclubhouse.sayso"
         minSdk = 30
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.0.4"
-        ndk { abiFilters += "arm64-v8a" }
+        versionCode = 6
+        versionName = "1.0.5"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     signingConfigs {
