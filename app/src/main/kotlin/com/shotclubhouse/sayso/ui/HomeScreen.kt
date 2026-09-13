@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.service.DictationService
+import com.shotclubhouse.sayso.service.WakeWordService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -56,19 +57,28 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
+    var wakeWord by remember { mutableStateOf(AppGraph.settings.wakeWordEnabled) }
+    var bubbleAlwaysVisible by remember { mutableStateOf(AppGraph.settings.bubbleAlwaysVisible) }
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
     var resumeTick by remember { mutableIntStateOf(0) }
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> micGranted = granted }
+    ) { granted ->
+        micGranted = granted
+        if (granted && AppGraph.settings.wakeWordEnabled) {
+            WakeWordService.start(context)
+        }
+    }
 
     // Both the permission and the accessibility toggle are changed in system UI,
     // so the only reliable moment to re-read them is when we come back.
     LifecycleResumeEffect(Unit) {
         micGranted = context.hasMicPermission()
         serviceOn = DictationService.isEnabled(context)
+        wakeWord = AppGraph.settings.wakeWordEnabled
+        bubbleAlwaysVisible = AppGraph.settings.bubbleAlwaysVisible
         resumeTick++
         onPauseOrDispose { }
     }
@@ -140,6 +150,38 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 )
             }
         }
+
+        SectionHeader(stringResource(R.string.transcription_section_floating_and_wake))
+        SwitchRow(
+            title = stringResource(R.string.transcription_wake_word),
+            subtitle = stringResource(R.string.transcription_wake_word_help),
+            checked = wakeWord,
+            onCheckedChange = { enabled ->
+                if (enabled) {
+                    if (!micGranted) {
+                        micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        wakeWord = true
+                        AppGraph.settings.wakeWordEnabled = true
+                        WakeWordService.start(context)
+                    }
+                } else {
+                    wakeWord = false
+                    AppGraph.settings.wakeWordEnabled = false
+                    WakeWordService.stop(context)
+                }
+            },
+        )
+        SwitchRow(
+            title = stringResource(R.string.transcription_bubble_always_visible),
+            subtitle = stringResource(R.string.transcription_bubble_always_visible_help),
+            checked = bubbleAlwaysVisible,
+            onCheckedChange = {
+                bubbleAlwaysVisible = it
+                AppGraph.settings.bubbleAlwaysVisible = it
+                DictationService.instance?.updateBubbleVisibility()
+            },
+        )
 
         SettingRow(
             title = stringResource(R.string.home_stt_title),

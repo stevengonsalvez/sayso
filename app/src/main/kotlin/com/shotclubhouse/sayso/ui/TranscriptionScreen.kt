@@ -1,5 +1,8 @@
 package com.shotclubhouse.sayso.ui
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -89,12 +92,58 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
         }
     }
 
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            wakeWord = true
+            settings.wakeWordEnabled = true
+            WakeWordService.start(context)
+        } else {
+            wakeWord = false
+            settings.wakeWordEnabled = false
+        }
+    }
+
     Column(
         modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(bottom = 32.dp),
     ) {
+        SectionHeader(stringResource(R.string.transcription_section_floating_and_wake))
+        SwitchRow(
+            title = stringResource(R.string.transcription_wake_word),
+            subtitle = stringResource(R.string.transcription_wake_word_help),
+            checked = wakeWord,
+            onCheckedChange = { enabled ->
+                if (enabled) {
+                    if (!context.hasMicPermission()) {
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else {
+                        wakeWord = true
+                        settings.wakeWordEnabled = true
+                        WakeWordService.start(context)
+                    }
+                } else {
+                    wakeWord = false
+                    settings.wakeWordEnabled = false
+                    WakeWordService.stop(context)
+                }
+            },
+        )
+        SwitchRow(
+            title = stringResource(R.string.transcription_bubble_always_visible),
+            subtitle = stringResource(R.string.transcription_bubble_always_visible_help),
+            checked = bubbleAlwaysVisible,
+            onCheckedChange = {
+                bubbleAlwaysVisible = it
+                settings.bubbleAlwaysVisible = it
+                DictationService.instance?.updateBubbleVisibility()
+            },
+        )
+
+        SectionHeader(stringResource(R.string.transcription_section_recognition))
         for (provider in AppGraph.stt.providers) {
             ProviderGroup(provider.displayName) {
                 if (provider.needsApiKey) {
@@ -190,31 +239,6 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
             onCheckedChange = {
                 history = it
                 settings.historyEnabled = it
-            },
-        )
-        SectionHeader(stringResource(R.string.transcription_section_floating_and_wake))
-        SwitchRow(
-            title = stringResource(R.string.transcription_bubble_always_visible),
-            subtitle = stringResource(R.string.transcription_bubble_always_visible_help),
-            checked = bubbleAlwaysVisible,
-            onCheckedChange = {
-                bubbleAlwaysVisible = it
-                settings.bubbleAlwaysVisible = it
-                DictationService.instance?.updateBubbleVisibility()
-            },
-        )
-        SwitchRow(
-            title = stringResource(R.string.transcription_wake_word),
-            subtitle = stringResource(R.string.transcription_wake_word_help),
-            checked = wakeWord,
-            onCheckedChange = { enabled ->
-                wakeWord = enabled
-                settings.wakeWordEnabled = enabled
-                if (enabled) {
-                    WakeWordService.start(context)
-                } else {
-                    WakeWordService.stop(context)
-                }
             },
         )
     }
