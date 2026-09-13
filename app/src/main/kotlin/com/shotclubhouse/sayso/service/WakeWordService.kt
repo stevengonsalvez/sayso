@@ -43,16 +43,29 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.e(TAG, "RECORD_AUDIO permission not granted; cannot start WakeWordService")
+            stopSelf()
+            return
+        }
+
         createNotificationChannel()
         val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "startForeground failed: ${e.message}", e)
+            stopSelf()
+            return
         }
         startListening()
     }
@@ -76,20 +89,21 @@ class WakeWordService : Service() {
         if (isListening) return
         isListening = true
 
-        detector = WakeWordDetector(this) { keyword ->
-            Log.i(TAG, "Wake word trigger: $keyword")
-            scope.launch(Dispatchers.Main) {
-                DictationService.instance?.startRecordingFromWakeWord()
+        scope.launch(Dispatchers.Default) {
+            val d = WakeWordDetector(this@WakeWordService) { keyword ->
+                Log.i(TAG, "Wake word trigger: $keyword")
+                scope.launch(Dispatchers.Main) {
+                    DictationService.instance?.startRecordingFromWakeWord()
+                }
             }
-        }
 
-        if (detector?.start() != true) {
-            Log.e(TAG, "Failed to start detector")
-            stopSelf()
-            return
-        }
+            if (!d.start()) {
+                Log.e(TAG, "Failed to start detector")
+                stopSelf()
+                return@launch
+            }
+            detector = d
 
-        scope.launch(Dispatchers.IO) {
             runAudioLoop()
         }
     }
@@ -209,11 +223,19 @@ class WakeWordService : Service() {
             private set
 
         fun start(context: Context) {
-            val intent = Intent(context, WakeWordService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "Cannot start WakeWordService: RECORD_AUDIO permission missing")
+                return
+            }
+            try {
+                val intent = Intent(context, WakeWordService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Failed to start WakeWordService: ${e.message}", e)
             }
         }
 
