@@ -13,7 +13,11 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.ui.MainActivity
@@ -92,8 +96,19 @@ class WakeWordService : Service() {
         scope.launch(Dispatchers.Default) {
             val d = WakeWordDetector(this@WakeWordService) { keyword ->
                 Log.i(TAG, "Wake word trigger: $keyword")
+                triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
-                    DictationService.instance?.startRecordingFromWakeWord()
+                    val service = DictationService.instance
+                    if (service != null) {
+                        runCatching { audioRecord?.stop() }
+                        service.startRecordingFromWakeWord()
+                    } else {
+                        Toast.makeText(
+                            this@WakeWordService,
+                            R.string.wake_word_accessibility_not_enabled,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 }
             }
 
@@ -105,6 +120,26 @@ class WakeWordService : Service() {
             detector = d
 
             runAudioLoop()
+        }
+    }
+
+    private fun triggerWakeWordFeedback() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                val vibrator = vibratorManager?.defaultVibrator
+                vibrator?.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_HEAVY_CLICK))
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val vibrator = getSystemService(Vibrator::class.java)
+                vibrator?.vibrate(VibrationEffect.createOneShot(150, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = getSystemService(Vibrator::class.java)
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(150)
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "Failed to vibrate on wake word: ${e.message}")
         }
     }
 
@@ -163,8 +198,13 @@ class WakeWordService : Service() {
         while (scope.isActive && isListening) {
             // While DictationService is recording or busy, pause wake-word ingestion to avoid mic contention
             if (DictationService.isBusyOrRecording()) {
+                if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    try { record.stop() } catch (_: Throwable) {}
+                }
                 delay(200)
                 continue
+            } else if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                try { record.startRecording() } catch (_: Throwable) {}
             }
 
             val read = record.read(shortBuffer, 0, shortBuffer.size)

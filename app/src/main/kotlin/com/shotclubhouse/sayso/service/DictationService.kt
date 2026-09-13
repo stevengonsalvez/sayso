@@ -70,7 +70,13 @@ class DictationService : AccessibilityService() {
 
         injector = TextInjector(this)
         sounds = SoundCues(AppGraph.settings)
-        bubble = OverlayBubble(this, AppGraph.settings, ::onTap)
+        bubble = OverlayBubble(
+            context = this,
+            settings = AppGraph.settings,
+            onTap = ::onTap,
+            onHoldStart = ::onHoldStart,
+            onHoldEnd = ::onHoldEnd,
+        )
         instance = this
         enter(State.IDLE)
         updateBubbleVisibility()
@@ -193,6 +199,18 @@ class DictationService : AccessibilityService() {
             State.IDLE -> startRecording()
             State.RECORDING -> stopRecording()
             State.BUSY -> feedback(getString(R.string.feedback_busy))
+        }
+    }
+
+    private fun onHoldStart() {
+        if (state == State.IDLE) {
+            startRecording()
+        }
+    }
+
+    private fun onHoldEnd() {
+        if (state == State.RECORDING) {
+            stopRecording()
         }
     }
 

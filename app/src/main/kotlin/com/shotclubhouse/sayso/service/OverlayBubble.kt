@@ -46,8 +46,12 @@ fun clampToScreen(value: Int, size: Int, extent: Int, margin: Int): Int {
  * [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] so that no
  * SYSTEM_ALERT_WINDOW permission is needed.
  *
+ * Supports both:
+ * 1. Push-and-hold (press to talk, release to transcribe)
+ * 2. Tap-to-toggle (tap once to record hands-free, tap again to finish)
+ *
  * Dragging moves the window live; a release that travelled less than 10 dp counts
- * as a tap, anything further snaps to the nearest side and is remembered.
+ * as a tap/hold release, anything further snaps to the nearest side and is remembered.
  *
  * Every method must be called on the main thread.
  */
@@ -55,33 +59,58 @@ class OverlayBubble(
     private val context: Context,
     private val settings: SettingsStore,
     private val onTap: () -> Unit,
+    private val onHoldStart: () -> Unit = {},
+    private val onHoldEnd: () -> Unit = {},
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private val density = context.resources.displayMetrics.density
 
-    private val sizePx = dp(56)
+    private val sizePx = dp(60)
+    private val bubbleSizePx = dp(52)
     private val marginPx = dp(8)
     private val tapSlopPx = dp(10)
 
-    private val bubbleBackground = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+    private val glowBackground = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(GLOW_IDLE.toInt())
+    }
+
+    private val glowRing = View(context).apply {
+        background = glowBackground
+        layoutParams = FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
+    }
+
+    private val bubbleBackground = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(COLOUR_IDLE.toInt())
+        setStroke(dp(2.5f), STROKE_IDLE.toInt())
+    }
 
     private val icon = ImageView(context).apply {
         setImageResource(R.drawable.ic_bubble_idle)
+        setColorFilter(Color.WHITE)
         layoutParams = FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER)
     }
 
     private val spinner = ProgressBar(context).apply {
         isIndeterminate = true
         visibility = View.GONE
-        layoutParams = FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER)
+        layoutParams = FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER)
+    }
+
+    private val innerBubble = FrameLayout(context).apply {
+        background = bubbleBackground
+        elevation = dp(6).toFloat()
+        addView(spinner)
+        addView(icon)
+        layoutParams = FrameLayout.LayoutParams(bubbleSizePx, bubbleSizePx, Gravity.CENTER)
     }
 
     private val root = FrameLayout(context).apply {
-        background = bubbleBackground
         contentDescription = context.getString(R.string.bubble_content_description)
-        addView(spinner)
-        addView(icon)
+        addView(glowRing)
+        addView(innerBubble)
     }
 
     private val pill = TextView(context).apply {
@@ -92,7 +121,7 @@ class OverlayBubble(
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(10).toFloat()
-            setColor(COLOUR_IDLE.toInt())
+            setColor(0xEE1E293B.toInt())
         }
     }
 
@@ -117,7 +146,7 @@ class OverlayBubble(
     private var pillShown = false
 
     init {
-        bubbleBackground.setColor(COLOUR_IDLE.toInt())
+        setState(BubbleState.Idle)
         // Taps go through performClick so screen readers can activate the bubble too.
         root.setOnClickListener { onTap() }
         root.setOnTouchListener(DragListener())
@@ -144,14 +173,25 @@ class OverlayBubble(
     }
 
     fun setState(state: BubbleState) {
-        bubbleBackground.setColor(
-            when (state) {
-                BubbleState.Idle -> COLOUR_IDLE
-                BubbleState.Recording -> COLOUR_RECORDING
-                BubbleState.Busy -> COLOUR_BUSY
-            }.toInt(),
-        )
+        val (bgColour, strokeColour, glowColour) = when (state) {
+            BubbleState.Idle -> Triple(COLOUR_IDLE, STROKE_IDLE, GLOW_IDLE)
+            BubbleState.Recording -> Triple(COLOUR_RECORDING, STROKE_RECORDING, GLOW_RECORDING)
+            BubbleState.Busy -> Triple(COLOUR_BUSY, STROKE_BUSY, GLOW_BUSY)
+        }
+        bubbleBackground.setColor(bgColour.toInt())
+        bubbleBackground.setStroke(dp(2.5f), strokeColour.toInt())
+        glowBackground.setColor(glowColour.toInt())
+
         spinner.visibility = if (state == BubbleState.Busy) View.VISIBLE else View.GONE
+        icon.visibility = if (state == BubbleState.Busy) View.INVISIBLE else View.VISIBLE
+
+        innerBubble.invalidate()
+        glowRing.invalidate()
+        root.invalidate()
+        if (shown) {
+            runCatching { windowManager.updateViewLayout(root, params) }
+        }
+
         if (state == BubbleState.Recording) startPulse() else stopPulse()
     }
 
@@ -199,11 +239,17 @@ class OverlayBubble(
 
     private fun startPulse() {
         if (pulse != null) return
-        pulse = ValueAnimator.ofFloat(1f, 0.4f).apply {
+        pulse = ValueAnimator.ofFloat(1.0f, 1.25f).apply {
             duration = PULSE_MS
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
-            addUpdateListener { icon.alpha = it.animatedValue as Float }
+            addUpdateListener { anim ->
+                val scale = anim.animatedValue as Float
+                glowRing.scaleX = scale
+                glowRing.scaleY = scale
+                glowRing.alpha = 1.6f - scale
+                icon.alpha = 0.5f + (scale - 1.0f) * 2f
+            }
             start()
         }
     }
@@ -211,6 +257,9 @@ class OverlayBubble(
     private fun stopPulse() {
         pulse?.cancel()
         pulse = null
+        glowRing.scaleX = 1.05f
+        glowRing.scaleY = 1.05f
+        glowRing.alpha = 0.6f
         icon.alpha = 1f
     }
 
@@ -218,13 +267,24 @@ class OverlayBubble(
 
     private fun dp(value: Int): Int = (value * density).roundToInt()
 
-    /** Live drag, with a release that either taps or snaps to the nearest side. */
+    private fun dp(value: Float): Int = (value * density).roundToInt()
+
+    /** Live drag, with a release that either taps, holds, or snaps to the nearest side. */
     private inner class DragListener : View.OnTouchListener {
         private var downX = 0f
         private var downY = 0f
         private var startX = 0
         private var startY = 0
         private var travelled = 0f
+        private var isHolding = false
+        private var isDrag = false
+
+        private val holdRunnable = Runnable {
+            if (travelled < tapSlopPx) {
+                isHolding = true
+                onHoldStart()
+            }
+        }
 
         override fun onTouch(view: View, event: MotionEvent): Boolean {
             when (event.action) {
@@ -234,23 +294,50 @@ class OverlayBubble(
                     startX = params.x
                     startY = params.y
                     travelled = 0f
+                    isHolding = false
+                    isDrag = false
+                    handler.postDelayed(holdRunnable, HOLD_THRESHOLD_MS)
                 }
 
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
                     travelled = maxOf(travelled, hypot(dx, dy))
-                    val bounds = screenBounds()
-                    params.x = clampToScreen((startX + dx).roundToInt(), sizePx, bounds.width(), 0)
-                    params.y = clampToScreen((startY + dy).roundToInt(), sizePx, bounds.height(), 0)
-                    if (shown) windowManager.updateViewLayout(root, params)
+                    if (travelled >= tapSlopPx) {
+                        handler.removeCallbacks(holdRunnable)
+                        if (!isHolding) {
+                            isDrag = true
+                            val bounds = screenBounds()
+                            params.x = clampToScreen((startX + dx).roundToInt(), sizePx, bounds.width(), 0)
+                            params.y = clampToScreen((startY + dy).roundToInt(), sizePx, bounds.height(), 0)
+                            if (shown) windowManager.updateViewLayout(root, params)
+                        }
+                    }
                 }
 
                 MotionEvent.ACTION_UP -> {
-                    if (travelled < tapSlopPx) view.performClick() else settle()
+                    handler.removeCallbacks(holdRunnable)
+                    if (isHolding) {
+                        isHolding = false
+                        onHoldEnd()
+                    } else if (isDrag) {
+                        settle()
+                    } else if (travelled < tapSlopPx) {
+                        view.performClick()
+                    } else {
+                        settle()
+                    }
                 }
 
-                MotionEvent.ACTION_CANCEL -> settle()
+                MotionEvent.ACTION_CANCEL -> {
+                    handler.removeCallbacks(holdRunnable)
+                    if (isHolding) {
+                        isHolding = false
+                        onHoldEnd()
+                    } else if (isDrag) {
+                        settle()
+                    }
+                }
 
                 else -> return false
             }
@@ -269,9 +356,19 @@ class OverlayBubble(
 
     private companion object {
         const val TAG = "SaysoBubble"
-        const val COLOUR_IDLE = 0xDD1E2A44
-        const val COLOUR_RECORDING = 0xDDE5484D
-        const val COLOUR_BUSY = 0xDD6B6B6B
+        const val COLOUR_IDLE = 0xFF00B0FFL
+        const val STROKE_IDLE = 0xFFE0F7FAL
+        const val GLOW_IDLE = 0x5500D4FFL
+
+        const val COLOUR_RECORDING = 0xFFFF1744L
+        const val STROKE_RECORDING = 0xFFFF80ABL
+        const val GLOW_RECORDING = 0x77FF1744L
+
+        const val COLOUR_BUSY = 0xFFFF9100L
+        const val STROKE_BUSY = 0xFFFFF59DL
+        const val GLOW_BUSY = 0x55FFB300L
+
+        const val HOLD_THRESHOLD_MS = 280L
         const val PULSE_MS = 500L
         const val FEEDBACK_MS = 2_000L
     }

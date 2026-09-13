@@ -124,6 +124,9 @@
     <string name="history_copied">Copied</string>
     <string name="history_no_audio">No saved audio to reprocess</string>
     <string name="history_working">Working…</string>
+    <string name="history_search_placeholder">Search history…</string>
+    <string name="history_search_empty">No matching history found for \"%1$s\"</string>
+    <string name="wake_word_accessibility_not_enabled">Sayso wake word heard, but accessibility service is off. Turn on Sayso in Accessibility settings.</string>
     <string name="output_inserted">Typed in</string>
     <string name="output_clipboard">Copied</string>
     <string name="output_none">Not delivered</string>

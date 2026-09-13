@@ -42,8 +42,8 @@ class WakeWordDetector(
                 modelConfig = modelConfig,
                 maxActivePaths = 4,
                 keywordsFile = "kws/keywords.txt",
-                keywordsScore = 1.0f,
-                keywordsThreshold = 0.25f,
+                keywordsScore = 1.5f,
+                keywordsThreshold = 0.20f,
                 numTrailingBlanks = 1,
             )
             val s = KeywordSpotter(context.assets, config)
