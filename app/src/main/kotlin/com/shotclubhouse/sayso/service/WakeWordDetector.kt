@@ -35,6 +35,7 @@ class WakeWordDetector(
                 transducer = transducerConfig,
                 tokens = "kws/tokens.txt",
                 numThreads = 1,
+                modelType = "zipformer2",
             )
             val config = KeywordSpotterConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
