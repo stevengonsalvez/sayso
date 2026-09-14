@@ -70,13 +70,17 @@ class DefaultDictationPipeline(
 
         val notice = model.notice
 
+        val dictationHints = (settings.hints + settings.pronunciations.filter { !it.isRegex && it.word.length in 2..40 }.map { it.word })
+            .distinct()
+            .take(100)
+
         val transcription = try {
             model.provider.transcribe(
                 TranscriptionRequest(
                     clip = clip,
                     modelName = model.model.modelName,
                     language = settings.language,
-                    hints = settings.hints,
+                    hints = dictationHints,
                 ),
                 model.apiKey,
             )
@@ -95,7 +99,7 @@ class DefaultDictationPipeline(
             return finish(clip, previous, "No speech detected", model.model.id, notice = notice)
         }
 
-        val raw = Lexicon.apply(transcript, settings.lexicon)
+        val raw = Lexicon.applyPronunciations(transcript, settings.pronunciations)
         val cleanup = if (settings.polishEnabled) applyPolish(raw) else Cleanup.SKIPPED
 
         return finish(
