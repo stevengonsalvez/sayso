@@ -33,7 +33,7 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Build unsigned release (R8 check)
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease bundleRelease --no-daemon
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -60,7 +60,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
-      - name: Build signed release APK
+      - name: Build signed release APK and App Bundle
         env:
           SAYSO_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           SAYSO_KEYSTORE_PASSWORD: ${{ secrets.SAYSO_KEYSTORE_PASSWORD }}
@@ -71,8 +71,9 @@ jobs:
           SAYSO_KEYSTORE_B64: ${{ secrets.SAYSO_KEYSTORE_B64 }}
         run: |
           printf '%s' "$SAYSO_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease bundleRelease --no-daemon
           mv app/build/outputs/apk/release/app-release.apk "sayso-${GITHUB_REF_NAME}.apk"
+          mv app/build/outputs/bundle/release/app-release.aab "sayso-${GITHUB_REF_NAME}.aab"
 
       - name: Remove the decoded keystore
         if: always()
@@ -80,4 +81,6 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: sayso-${{ github.ref_name }}.apk
+          files: |
+            sayso-${{ github.ref_name }}.apk
+            sayso-${{ github.ref_name }}.aab
