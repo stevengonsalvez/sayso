@@ -102,6 +102,7 @@
     <string name="cleanup_section_prompt">Instructions</string>
     <string name="cleanup_preset_custom">Custom</string>
     <string name="cleanup_custom_prompt">Custom instructions</string>
+    <string name="cleanup_reset_default_prompt">Reset to default prompt</string>
     <string name="cleanup_output_language">Output language</string>
     <string name="cleanup_output_language_help">Spelling conventions to follow, for example British English. Leave empty to match the speaker.</string>
     <string name="cleanup_preview">Preview prompt</string>

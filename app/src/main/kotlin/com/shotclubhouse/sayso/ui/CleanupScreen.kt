@@ -1,14 +1,25 @@
 package com.shotclubhouse.sayso.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,7 +45,9 @@ private const val CUSTOM_PRESET = "__custom__"
  */
 private fun presetKeyFor(prompt: String?): String {
     if (prompt == null) return CleanupPolicy.PRESETS.keys.first()
-    return CleanupPolicy.PRESETS.entries.firstOrNull { it.value == prompt }?.key ?: CUSTOM_PRESET
+    return CleanupPolicy.PRESETS.entries
+        .filter { it.value != CleanupPolicy.BASE_PROMPT }
+        .firstOrNull { it.value == prompt }?.key ?: CUSTOM_PRESET
 }
 
 /** Cleanup backend, key, and the instructions the model is given. */
@@ -109,23 +122,52 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
             selected = presetKey == CUSTOM_PRESET,
             onSelect = {
                 presetKey = CUSTOM_PRESET
-                settings.customPrompt = customText.takeIf { it.isNotBlank() }
+                if (customText.isBlank()) {
+                    customText = CleanupPolicy.BASE_PROMPT
+                }
+                settings.customPrompt = customText
             },
         )
 
         if (presetKey == CUSTOM_PRESET) {
-            OutlinedTextField(
-                value = customText,
-                onValueChange = {
-                    customText = it
-                    settings.customPrompt = it.takeIf { text -> text.isNotBlank() }
-                },
-                label = { Text(stringResource(R.string.cleanup_custom_prompt)) },
-                minLines = 6,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                OutlinedTextField(
+                    value = customText,
+                    onValueChange = {
+                        customText = it
+                        settings.customPrompt = it.takeIf { text -> text.isNotBlank() }
+                    },
+                    label = { Text(stringResource(R.string.cleanup_custom_prompt)) },
+                    minLines = 6,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            customText = CleanupPolicy.BASE_PROMPT
+                            settings.customPrompt = CleanupPolicy.BASE_PROMPT
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(stringResource(R.string.cleanup_reset_default_prompt))
+                    }
+                }
+            }
         }
 
         OutlinedTextField(
