@@ -47,6 +47,30 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = Lexicon.decode(prefs.getString(KEY_LEXICON, null).orEmpty())
         set(value) = putString(KEY_LEXICON, Lexicon.encode(value))
 
+    override var pronunciations: List<com.shotclubhouse.sayso.core.PronunciationEntry>
+        get() {
+            val raw = prefs.getString(KEY_PRONUNCIATIONS, null)
+            if (raw.isNullOrBlank()) {
+                val legacy = lexicon
+                if (legacy.isNotEmpty()) {
+                    return legacy.map {
+                        com.shotclubhouse.sayso.core.PronunciationEntry(
+                            word = it.canonical,
+                            pronunciation = it.aliases.firstOrNull().orEmpty(),
+                            replacement = it.aliases.drop(1).firstOrNull(),
+                            category = com.shotclubhouse.sayso.core.PronunciationCategory.TECHNICAL,
+                        )
+                    }
+                }
+                return com.shotclubhouse.sayso.polish.PronunciationDefaults.entries
+            }
+            return Lexicon.decodePronunciations(raw)
+        }
+        set(value) {
+            putString(KEY_PRONUNCIATIONS, Lexicon.encodePronunciations(value))
+            lexicon = value.map { it.toLexiconRule() }
+        }
+
     override var maxRecordingSeconds: Int
         // Clamped on read so a value left by an older build cannot ask for a clip the app
         // will not hold in memory.
@@ -123,6 +147,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** JSON array of lexicon rules, see [Lexicon.encode]. */
         const val KEY_LEXICON = "lexicon"
+
+        /** JSON array of pronunciation entries, see [Lexicon.encodePronunciations]. */
+        const val KEY_PRONUNCIATIONS = "pronunciation_dictionary"
 
         /** Hard cap on a single recording. */
         const val KEY_MAX_RECORDING_SECONDS = "max_recording_seconds"

@@ -36,6 +36,7 @@ object AppGraph {
     lateinit var polish: PolishRegistry private set
     lateinit var history: HistoryStore private set
     lateinit var pipeline: DictationPipeline private set
+    lateinit var corrections: com.shotclubhouse.sayso.correction.AutoCorrectionEngine private set
 
     /** Model downloads outlive any one screen, so the in-flight one lives here. */
     lateinit var downloads: ModelDownloads private set
@@ -66,6 +67,7 @@ object AppGraph {
             },
             history = history,
         )
+        corrections = com.shotclubhouse.sayso.correction.AutoCorrectionEngine.open(app, settings)
         downloads = ModelDownloads(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
         initialised = true
     }

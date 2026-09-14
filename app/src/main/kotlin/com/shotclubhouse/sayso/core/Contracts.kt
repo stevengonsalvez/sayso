@@ -73,6 +73,52 @@ interface PolishProvider {
 /** A personal-vocabulary rule: any alias is rewritten to the canonical spelling. */
 data class LexiconRule(val canonical: String, val aliases: List<String>)
 
+/** Categories for pronunciation entries, matching developer workflows. */
+enum class PronunciationCategory(val displayName: String) {
+    TECHNICAL("Technical"),
+    NAMES("Names"),
+    ACRONYMS("Acronyms"),
+    SYMBOLS("Symbols"),
+    BRANDS("Brands"),
+    MEDICAL("Medical"),
+    CUSTOM("Custom");
+
+    companion object {
+        fun fromString(value: String?): PronunciationCategory =
+            entries.firstOrNull {
+                it.name.equals(value, ignoreCase = true) || it.displayName.equals(value, ignoreCase = true)
+            } ?: CUSTOM
+    }
+}
+
+/**
+ * Custom pronunciation and technical dictionary entry.
+ * Supports phonetic mapping, text replacement, regex, and category filtering.
+ */
+data class PronunciationEntry(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val word: String,
+    val pronunciation: String,
+    val replacement: String? = null,
+    val category: PronunciationCategory = PronunciationCategory.TECHNICAL,
+    val isRegex: Boolean = false,
+    val caseSensitive: Boolean = false,
+) {
+    fun toLexiconRule(): LexiconRule {
+        val aliases = mutableListOf<String>()
+        val p = pronunciation.trim()
+        val r = replacement?.trim()
+        val w = word.trim()
+        if (p.isNotBlank() && !p.equals(w, ignoreCase = true)) {
+            aliases += p
+        }
+        if (!r.isNullOrBlank() && !r.equals(w, ignoreCase = true) && !aliases.contains(r)) {
+            aliases += r
+        }
+        return LexiconRule(canonical = w, aliases = aliases)
+    }
+}
+
 /** Secret storage keyed by provider id. */
 interface SecretStore {
     fun get(providerId: String): String?
@@ -92,6 +138,17 @@ interface SettingsStore {
     var customPrompt: String?
     var outputLanguage: String?
     var lexicon: List<LexiconRule>
+    var pronunciations: List<PronunciationEntry>
+        get() = lexicon.map {
+            PronunciationEntry(
+                word = it.canonical,
+                pronunciation = it.aliases.firstOrNull().orEmpty(),
+                replacement = it.aliases.drop(1).firstOrNull(),
+            )
+        }
+        set(value) {
+            lexicon = value.map { it.toLexiconRule() }
+        }
     var maxRecordingSeconds: Int
     var soundsEnabled: Boolean
     var historyEnabled: Boolean
