@@ -90,4 +90,12 @@ class LocalRulesPolisherTest {
         assertTrue(result is PolishResult.Success)
         assertEquals("This is a \"quoted\" test.", (result as PolishResult.Success).text)
     }
+
+    @Test
+    fun `transforms spoken code symbols`() {
+        assertEquals("If a != b.", LocalRulesPolisher.clean("if a not equal b"))
+        assertEquals("When x == y.", LocalRulesPolisher.clean("when x double equals y"))
+        assertEquals("Map item -> result.", LocalRulesPolisher.clean("map item arrow result"))
+        assertEquals("Fn = () => true.", LocalRulesPolisher.clean("fn = () fat arrow true"))
+    }
 }
