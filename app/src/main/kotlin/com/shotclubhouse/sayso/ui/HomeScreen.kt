@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Spellcheck
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -45,7 +46,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -86,6 +90,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
     var insightsSummary by remember { mutableStateOf<InsightsSummary?>(null) }
+    var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     var resumeTick by remember { mutableIntStateOf(0) }
 
     val micPermission = rememberLauncherForActivityResult(
@@ -147,8 +152,122 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             micGranted = micGranted,
             serviceOn = serviceOn,
             onRequestMic = { if (!micGranted) micPermission.launch(Manifest.permission.RECORD_AUDIO) },
-            onOpenAccessibility = { context.openAccessibilitySettings() },
+            onOpenAccessibility = {
+                if (serviceOn) {
+                    context.openAccessibilitySettings()
+                } else {
+                    showAccessibilityDisclosure = true
+                }
+            },
         )
+
+        if (showAccessibilityDisclosure) {
+            AlertDialog(
+                onDismissRequest = { showAccessibilityDisclosure = false },
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        Color(0xFF0284C7),
+                                    ),
+                                ),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_bubble_idle),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                },
+                title = {
+                    Text(
+                        text = "Accessibility Permission",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Sayso uses Android's AccessibilityService API solely to detect active text input fields and paste your dictated speech into them.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        text = "Only active editable text fields are detected when you tap dictate.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        text = "No passwords, personal messages, or screen content are monitored.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.Top) {
+                                    Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                    Text(
+                                        text = "Zero audio, text, or keystrokes are tracked or sent to external servers.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "Tap below to open Android Settings, select Sayso under Downloaded apps, and switch it on.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showAccessibilityDisclosure = false
+                            context.openAccessibilitySettings()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text("Agree & Open Settings", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAccessibilityDisclosure = false }) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surface,
+            )
+        }
 
         // 3. Hands-Free & Overlay Controls Card
         HandsFreeControlsCard(
