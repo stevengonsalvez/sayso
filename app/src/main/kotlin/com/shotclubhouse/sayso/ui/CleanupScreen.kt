@@ -61,6 +61,8 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
         mutableStateOf(settings.customPrompt ?: CleanupPolicy.BASE_PROMPT)
     }
     var outputLanguage by remember { mutableStateOf(settings.outputLanguage.orEmpty()) }
+    var appContextAware by remember { mutableStateOf(settings.appContextAwarenessEnabled) }
+    var smartDictation by remember { mutableStateOf(settings.smartDictationModesEnabled) }
     var previewOpen by remember { mutableStateOf(false) }
 
     Column(
@@ -76,6 +78,27 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
             onCheckedChange = {
                 enabled = it
                 settings.polishEnabled = it
+            },
+        )
+        HorizontalDivider()
+
+        SectionHeader(stringResource(R.string.cleanup_section_smart_capabilities))
+        SwitchRow(
+            title = stringResource(R.string.cleanup_app_context),
+            subtitle = stringResource(R.string.cleanup_app_context_help),
+            checked = appContextAware,
+            onCheckedChange = {
+                appContextAware = it
+                settings.appContextAwarenessEnabled = it
+            },
+        )
+        SwitchRow(
+            title = stringResource(R.string.cleanup_smart_dictation),
+            subtitle = stringResource(R.string.cleanup_smart_dictation_help),
+            checked = smartDictation,
+            onCheckedChange = {
+                smartDictation = it
+                settings.smartDictationModesEnabled = it
             },
         )
         HorizontalDivider()
