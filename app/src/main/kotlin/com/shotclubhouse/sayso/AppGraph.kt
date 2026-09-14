@@ -52,6 +52,7 @@ object AppGraph {
         localModelsDir = File(app.filesDir, "models").apply { mkdirs() }
         local = LocalSherpaProvider(localModelsDir)
         stt = SttRegistry(local)
+        com.shotclubhouse.sayso.polish.LocalSlmPolisher.init(app.filesDir)
         polish = PolishRegistry()
         history = HistoryStore(File(app.filesDir, "history"))
         pipeline = DefaultDictationPipeline(

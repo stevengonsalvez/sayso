@@ -12,7 +12,7 @@ class PolishRegistryTest {
     @Test
     fun `lists every backend in a stable order`() {
         assertEquals(
-            listOf("rules", "openai", "anthropic", "groq", "gemini", "openrouter"),
+            listOf("rules", "local-slm", "openai", "anthropic", "groq", "gemini", "openrouter"),
             registry.providers.map { it.id },
         )
         assertEquals("rules/basic", PolishRegistry.defaultModelId)
