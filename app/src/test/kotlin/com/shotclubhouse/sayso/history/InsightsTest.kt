@@ -4,6 +4,7 @@ import com.shotclubhouse.sayso.core.HistoryEntry
 import com.shotclubhouse.sayso.core.OutputMethod
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InsightsTest {
@@ -69,6 +70,17 @@ class InsightsTest {
         assertFalse(topWords.containsKey("to"))
         assertFalse(topWords.containsKey("um"))
         assertFalse(topWords.containsKey("uh"))
+
+        // Rich insights
+        assertEquals(85.0, summary.medianWpm, 0.001)
+        assertEquals(5, summary.paceBuckets.size)
+        assertEquals(1, summary.paceBuckets.first { it.label == "<100" }.count) // 50 wpm
+        assertEquals(1, summary.paceBuckets.first { it.label == "100-130" }.count) // 120 wpm
+        assertEquals(2, summary.topFillers.size)
+        assertTrue(summary.topFillers.any { it.word == "um" && it.count == 1 })
+        assertTrue(summary.topFillers.any { it.word == "uh" && it.count == 1 })
+        assertTrue(summary.uniqueWords > 0)
+        assertTrue(summary.richnessPercent > 0.0)
     }
 
     @Test
