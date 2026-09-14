@@ -32,13 +32,24 @@ object LocalRulesPolisher : PolishProvider {
     /** Trims transcription markers and normalises spacing, casing and the final full stop. */
     fun clean(text: String): String {
         var cleaned = MARKER.replace(text, " ")
+        cleaned = applyCodeSymbols(cleaned)
         cleaned = SPACE_BEFORE_PUNCTUATION.replace(cleaned, "$1")
+        cleaned = BRACKET_SPACING_OPEN.replace(cleaned, "$1")
+        cleaned = BRACKET_SPACING_CLOSE.replace(cleaned, "$1")
         cleaned = WHITESPACE_RUN.replace(cleaned, " ").trim()
         if (cleaned.isEmpty()) return ""
 
         if (firstWordIsPlain(cleaned)) cleaned = cleaned.replaceFirstChar { it.uppercaseChar() }
         if (needsTerminalPunctuation(cleaned)) cleaned += "."
         return cleaned
+    }
+
+    private fun applyCodeSymbols(text: String): String {
+        var result = text
+        for ((pattern, replacement) in CODE_SYMBOLS) {
+            result = pattern.replace(result, replacement)
+        }
+        return result
     }
 
     /** Leaves "iPhone" alone: a first word that already carries a capital keeps its own casing. */
@@ -50,12 +61,25 @@ object LocalRulesPolisher : PolishProvider {
 
     private const val MIN_WORDS_FOR_PERIOD = 3
 
-    // Only the known marker vocabulary. A wildcard bracket rule would eat real dictation
+    // Known marker vocabulary. A wildcard bracket rule would eat real dictation
     // such as "list[0]", which the technical cleanup preset promises to preserve.
     private val MARKER = Regex(
-        "[\\[(](?:blank[ _-]?audio|inaudible|unintelligible|silence|music|noise|laughter|applause)[\\])]",
+        "[\\[(](?:blank[ _-]?audio|inaudible|unintelligible|silence|music|noise|laughter|applause|whispering|crying|sigh|groan)[\\])]",
         RegexOption.IGNORE_CASE,
     )
-    private val SPACE_BEFORE_PUNCTUATION = Regex("\\s+([,.;:!?])")
+    private val SPACE_BEFORE_PUNCTUATION = Regex("\\s+([,.;:?]|!(?!=))")
+    private val BRACKET_SPACING_OPEN = Regex("([(\\[{])\\s+")
+    private val BRACKET_SPACING_CLOSE = Regex("\\s+([)\\]}])")
     private val WHITESPACE_RUN = Regex("\\s+")
+
+    private val CODE_SYMBOLS = listOf(
+        Regex("(?i)\\bnot\\s+equal(?:s)?(?:\\s+to)?\\b") to "!=",
+        Regex("(?i)\\bequals?\\s+equals?\\b|\\bdouble\\s+equals?\\b") to "==",
+        Regex("(?i)\\bgreater\\s+than\\s+or\\s+equal(?:s)?(?:\\s+to)?\\b") to ">=",
+        Regex("(?i)\\bless\\s+than\\s+or\\s+equal(?:s)?(?:\\s+to)?\\b") to "<=",
+        Regex("(?i)\\bfat\\s+arrow\\b") to "=>",
+        Regex("(?i)\\b(?:right\\s+)?arrow\\b") to "->",
+        Regex("(?i)\\bhash\\s+tag\\b") to "#",
+        Regex("(?i)\\bat\\s+sign\\b") to "@",
+    )
 }
