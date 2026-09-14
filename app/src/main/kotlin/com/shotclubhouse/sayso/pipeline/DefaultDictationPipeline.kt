@@ -51,18 +51,20 @@ class DefaultDictationPipeline(
     // The pipeline owns its dispatcher. Every step blocks (sockets, on-device inference, the
     // history file), so callers on the main thread, the service and the history screen, hand
     // the whole run over rather than each wrapping it themselves.
-    override suspend fun run(clip: AudioClip): PipelineResult = withContext(Dispatchers.IO) {
-        process(clip, previous = null)
+    override suspend fun run(clip: AudioClip): PipelineResult = run(clip, targetPackage = null)
+
+    override suspend fun run(clip: AudioClip, targetPackage: String?): PipelineResult = withContext(Dispatchers.IO) {
+        process(clip, previous = null, targetPackage = targetPackage)
     }
 
     override suspend fun reprocess(entry: HistoryEntry): PipelineResult? = withContext(Dispatchers.IO) {
         val repository = history ?: return@withContext null
         val path = entry.audioPath ?: return@withContext null
         val clip = ignoringFailure { repository.loadAudio(path) } ?: return@withContext null
-        process(clip, previous = entry)
+        process(clip, previous = entry, targetPackage = null)
     }
 
-    private suspend fun process(clip: AudioClip, previous: HistoryEntry?): PipelineResult {
+    private suspend fun process(clip: AudioClip, previous: HistoryEntry?, targetPackage: String? = null): PipelineResult {
         if (clip.isEmpty) return finish(clip, previous, error = "No audio captured")
 
         val model = resolveStt()
@@ -100,7 +102,7 @@ class DefaultDictationPipeline(
         }
 
         val raw = Lexicon.applyPronunciations(transcript, settings.pronunciations)
-        val cleanup = if (settings.polishEnabled) applyPolish(raw) else Cleanup.SKIPPED
+        val cleanup = if (settings.polishEnabled) applyPolish(raw, targetPackage) else Cleanup.SKIPPED
 
         return finish(
             clip = clip,
@@ -162,7 +164,7 @@ class DefaultDictationPipeline(
      * transcript rather than failing the dictation. It is not silent though: without a word the
      * user just sees cleanup quietly stop working.
      */
-    private suspend fun applyPolish(raw: String): Cleanup {
+    private suspend fun applyPolish(raw: String, targetPackage: String? = null): Cleanup {
         val (provider, model) = polish.find(settings.polishModelId)
             ?: return Cleanup.skipped("unknown cleanup model")
         val apiKey = if (provider.needsApiKey) {
@@ -175,9 +177,21 @@ class DefaultDictationPipeline(
             ?.takeIf { it.isNotBlank() && provider.supportsCustomPrompt }
             ?: CleanupPolicy.BASE_PROMPT
 
+        val appContext = if (settings.appContextAwarenessEnabled) {
+            CleanupPolicy.AppContextCategory.fromPackage(targetPackage)
+        } else {
+            null
+        }
+
         val result = try {
             provider.polish(
-                systemPrompt = CleanupPolicy.systemPrompt(base, settings.outputLanguage, settings.lexicon),
+                systemPrompt = CleanupPolicy.systemPrompt(
+                    base = base,
+                    outputLanguage = settings.outputLanguage,
+                    lexicon = settings.lexicon,
+                    appContext = appContext,
+                    enableSmartDictation = settings.smartDictationModesEnabled,
+                ),
                 userMessage = CleanupPolicy.userMessage(raw),
                 modelName = model.modelName,
                 apiKey = apiKey,
