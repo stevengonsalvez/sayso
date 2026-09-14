@@ -156,6 +156,8 @@ interface SettingsStore {
     var bubbleY: Int
     var bubbleAlwaysVisible: Boolean
     var wakeWordEnabled: Boolean
+    var appContextAwarenessEnabled: Boolean get() = true; set(_) {}
+    var smartDictationModesEnabled: Boolean get() = true; set(_) {}
 }
 
 data class HistoryEntry(
@@ -195,7 +197,8 @@ data class PipelineResult(
 
 interface DictationPipeline {
     /** Transcribe, apply lexicon, polish. Never throws; errors land in [PipelineResult.error]. */
-    suspend fun run(clip: AudioClip): PipelineResult
+    suspend fun run(clip: AudioClip): PipelineResult = run(clip, targetPackage = null)
+    suspend fun run(clip: AudioClip, targetPackage: String?): PipelineResult
     /** Re-run [run] on the saved audio of an entry with current settings; returns the updated entry. */
     suspend fun reprocess(entry: HistoryEntry): PipelineResult?
 }

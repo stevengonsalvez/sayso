@@ -8,6 +8,7 @@ class PolishRegistry {
 
     val providers: List<PolishProvider> = listOf(
         LocalRulesPolisher,
+        LocalSlmPolisher,
         OpenAiPolisher(),
         AnthropicPolisher(),
         GroqPolisher(),

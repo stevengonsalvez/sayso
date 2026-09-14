@@ -33,15 +33,39 @@ object LocalRulesPolisher : PolishProvider {
     fun clean(text: String): String {
         var cleaned = MARKER.replace(text, " ")
         cleaned = applyCodeSymbols(cleaned)
+
+        val isCommand = COMMAND_PREFIX_REGEX.containsMatchIn(cleaned)
+        if (isCommand) {
+            cleaned = COMMAND_PREFIX_REGEX.replace(cleaned, "").trim()
+            return cleaned
+        }
+
         cleaned = SPACE_BEFORE_PUNCTUATION.replace(cleaned, "$1")
         cleaned = BRACKET_SPACING_OPEN.replace(cleaned, "$1")
         cleaned = BRACKET_SPACING_CLOSE.replace(cleaned, "$1")
         cleaned = WHITESPACE_RUN.replace(cleaned, " ").trim()
         if (cleaned.isEmpty()) return ""
 
-        if (firstWordIsPlain(cleaned)) cleaned = cleaned.replaceFirstChar { it.uppercaseChar() }
+        cleaned = applyActionItems(cleaned)
+        cleaned = applyBulletSummary(cleaned)
+
+        cleaned = when {
+            cleaned.startsWith("- [ ] ") -> "- [ ] " + cleaned.removePrefix("- [ ] ").replaceFirstChar { it.uppercaseChar() }
+            cleaned.startsWith("- ") -> "- " + cleaned.removePrefix("- ").replaceFirstChar { it.uppercaseChar() }
+            firstWordIsPlain(cleaned) -> cleaned.replaceFirstChar { it.uppercaseChar() }
+            else -> cleaned
+        }
+
         if (needsTerminalPunctuation(cleaned)) cleaned += "."
         return cleaned
+    }
+
+    private fun applyActionItems(text: String): String {
+        return ACTION_ITEM_REGEX.replace(text, "- [ ] ")
+    }
+
+    private fun applyBulletSummary(text: String): String {
+        return BULLET_PREFIX_REGEX.replace(text, "- ")
     }
 
     private fun applyCodeSymbols(text: String): String {
@@ -57,7 +81,10 @@ object LocalRulesPolisher : PolishProvider {
         text.substringBefore(' ').drop(1).none { it.isUpperCase() }
 
     private fun needsTerminalPunctuation(text: String): Boolean =
-        text.last().isLetterOrDigit() && text.split(' ').count { it.isNotBlank() } >= MIN_WORDS_FOR_PERIOD
+        !text.startsWith("- [ ]") &&
+            !text.startsWith("- ") &&
+            text.last().isLetterOrDigit() &&
+            text.split(' ').count { it.isNotBlank() } >= MIN_WORDS_FOR_PERIOD
 
     private const val MIN_WORDS_FOR_PERIOD = 3
 
@@ -71,6 +98,9 @@ object LocalRulesPolisher : PolishProvider {
     private val BRACKET_SPACING_OPEN = Regex("([(\\[{])\\s+")
     private val BRACKET_SPACING_CLOSE = Regex("\\s+([)\\]}])")
     private val WHITESPACE_RUN = Regex("\\s+")
+    private val ACTION_ITEM_REGEX = Regex("(?im)^\\s*(?:todo|task|action item)\\s*:\\s*")
+    private val BULLET_PREFIX_REGEX = Regex("(?im)^\\s*(?:bullet|in bullets|summary|summarize)\\s*:\\s*")
+    private val COMMAND_PREFIX_REGEX = Regex("(?i)^\\s*(?:run\\s+command|command|shell)\\s*:\\s*")
 
     private val CODE_SYMBOLS = listOf(
         Regex("(?i)\\bnot\\s+equal(?:s)?(?:\\s+to)?\\b") to "!=",

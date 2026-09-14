@@ -99,6 +99,11 @@
     <!-- Cleanup -->
     <string name="cleanup_enabled">Clean up transcripts</string>
     <string name="cleanup_enabled_help">Pass the transcript through a model that fixes punctuation, casing, and obvious errors.</string>
+    <string name="cleanup_section_smart_capabilities">Wispr Flow &amp; Smart Capabilities</string>
+    <string name="cleanup_app_context">App-context adaptation</string>
+    <string name="cleanup_app_context_help">Automatically adapt tone and style based on active app (e.g. casual Slack, formal Gmail, strict Code).</string>
+    <string name="cleanup_smart_dictation">Smart dictation &amp; action items</string>
+    <string name="cleanup_smart_dictation_help">Format spoken tasks into \'- [ ]\' checklists and summarize key takeaways on demand.</string>
     <string name="cleanup_section_prompt">Instructions</string>
     <string name="cleanup_preset_custom">Custom</string>
     <string name="cleanup_custom_prompt">Custom instructions</string>

@@ -427,4 +427,25 @@ class DefaultDictationPipelineTest {
         assertNull(pipeline(settings, history = history).reprocess(entry))
         assertNull(pipeline(settings, history = history).reprocess(entry.copy(audioPath = "/gone.wav")))
     }
+
+    @Test
+    fun `pipeline injects app context and smart dictation into polish prompt`() = runTest {
+        val polisher = FakePolishProvider(needsApiKey = false, result = PolishResult.Success("ok"))
+        val settings = InMemorySettings(
+            sttModelId = "local/model",
+            polishEnabled = true,
+            polishModelId = "fake-polish/model",
+            appContextAwarenessEnabled = true,
+            smartDictationModesEnabled = true,
+        )
+
+        pipeline(
+            settings,
+            polish = FakePolishCatalog(listOf(polisher)),
+        ).run(clip, targetPackage = "com.Slack")
+
+        assertNotNull(polisher.lastSystemPrompt)
+        assertTrue(polisher.lastSystemPrompt!!.contains("Application context: Target app is a messaging client"))
+        assertTrue(polisher.lastSystemPrompt!!.contains("Smart dictation & task formatting:"))
+    }
 }

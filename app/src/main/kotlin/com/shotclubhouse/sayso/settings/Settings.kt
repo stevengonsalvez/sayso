@@ -102,6 +102,14 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getBoolean(KEY_WAKE_WORD_ENABLED, false)
         set(value) = prefs.edit().putBoolean(KEY_WAKE_WORD_ENABLED, value).apply()
 
+    override var appContextAwarenessEnabled: Boolean
+        get() = prefs.getBoolean(KEY_APP_CONTEXT_AWARENESS, true)
+        set(value) = prefs.edit().putBoolean(KEY_APP_CONTEXT_AWARENESS, value).apply()
+
+    override var smartDictationModesEnabled: Boolean
+        get() = prefs.getBoolean(KEY_SMART_DICTATION_MODES, true)
+        set(value) = prefs.edit().putBoolean(KEY_SMART_DICTATION_MODES, value).apply()
+
     private fun optionalString(key: String): String? =
         prefs.getString(key, null)?.takeIf { it.isNotBlank() }
 
@@ -169,6 +177,12 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** Whether continuous on-device wake-word detection is running. */
         const val KEY_WAKE_WORD_ENABLED = "wake_word_enabled"
+
+        /** Whether the active target application context alters dictation style. */
+        const val KEY_APP_CONTEXT_AWARENESS = "app_context_awareness_enabled"
+
+        /** Whether smart dictation formatting (checklists, summaries) is active. */
+        const val KEY_SMART_DICTATION_MODES = "smart_dictation_modes_enabled"
 
         /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
         val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"

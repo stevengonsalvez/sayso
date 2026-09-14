@@ -285,9 +285,22 @@ class DictationService : AccessibilityService() {
         }
     }
 
+    private fun getTargetPackageName(): String? {
+        val focused = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (focused?.packageName != null) return focused.packageName.toString()
+        val rootPkg = rootInActiveWindow?.packageName
+        if (rootPkg != null) return rootPkg.toString()
+        for (w in windows) {
+            val p = w.root?.packageName ?: continue
+            return p.toString()
+        }
+        return null
+    }
+
     private suspend fun dictate(clip: AudioClip) {
         // The pipeline moves itself off the main thread.
-        val result = AppGraph.pipeline.run(clip)
+        val targetPackage = getTargetPackageName()
+        val result = AppGraph.pipeline.run(clip, targetPackage)
         if (result.text.isBlank()) {
             fail(result.error ?: getString(R.string.feedback_no_speech))
             return

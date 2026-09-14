@@ -194,4 +194,33 @@ class CleanupPolicyTest {
         assertEquals("Hello world", CleanupPolicy.stripWrapping("Result: Hello world"))
         assertEquals("Hello world", CleanupPolicy.stripWrapping("```\nMessage: Hello world\n```"))
     }
+
+    @Test
+    fun `system prompt injects smart dictation directives when enabled`() {
+        val prompt = CleanupPolicy.systemPrompt(enableSmartDictation = true)
+        assertTrue(prompt.contains("Smart dictation & task formatting:"))
+        assertTrue(prompt.contains("- [ ] <task>"))
+    }
+
+    @Test
+    fun `system prompt injects application context based on category`() {
+        val chatPrompt = CleanupPolicy.systemPrompt(appContext = CleanupPolicy.AppContextCategory.CHAT)
+        assertTrue(chatPrompt.contains("Application context: Target app is a messaging client"))
+
+        val codePrompt = CleanupPolicy.systemPrompt(appContext = CleanupPolicy.AppContextCategory.CODE_TERMINAL)
+        assertTrue(codePrompt.contains("Application context: Target app is a code editor or terminal"))
+
+        val generalPrompt = CleanupPolicy.systemPrompt(appContext = CleanupPolicy.AppContextCategory.GENERAL)
+        assertFalse(generalPrompt.contains("Application context:"))
+    }
+
+    @Test
+    fun `app context detects package names properly`() {
+        assertEquals(CleanupPolicy.AppContextCategory.CHAT, CleanupPolicy.AppContextCategory.fromPackage("com.Slack"))
+        assertEquals(CleanupPolicy.AppContextCategory.CHAT, CleanupPolicy.AppContextCategory.fromPackage("com.discord"))
+        assertEquals(CleanupPolicy.AppContextCategory.EMAIL, CleanupPolicy.AppContextCategory.fromPackage("com.google.android.gm"))
+        assertEquals(CleanupPolicy.AppContextCategory.CODE_TERMINAL, CleanupPolicy.AppContextCategory.fromPackage("com.termux"))
+        assertEquals(CleanupPolicy.AppContextCategory.DOCS_NOTES, CleanupPolicy.AppContextCategory.fromPackage("com.google.android.keep"))
+        assertEquals(CleanupPolicy.AppContextCategory.GENERAL, CleanupPolicy.AppContextCategory.fromPackage("com.android.calculator2"))
+    }
 }

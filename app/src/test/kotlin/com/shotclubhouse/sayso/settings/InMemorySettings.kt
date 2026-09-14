@@ -20,4 +20,6 @@ class InMemorySettings(
     override var bubbleY: Int = Settings.DEFAULT_BUBBLE_POSITION,
     override var bubbleAlwaysVisible: Boolean = false,
     override var wakeWordEnabled: Boolean = false,
+    override var appContextAwarenessEnabled: Boolean = true,
+    override var smartDictationModesEnabled: Boolean = true,
 ) : SettingsStore

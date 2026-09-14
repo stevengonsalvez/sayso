@@ -98,4 +98,24 @@ class LocalRulesPolisherTest {
         assertEquals("Map item -> result.", LocalRulesPolisher.clean("map item arrow result"))
         assertEquals("Fn = () => true.", LocalRulesPolisher.clean("fn = () fat arrow true"))
     }
+
+    @Test
+    fun `formats action items into markdown checklist`() {
+        assertEquals("- [ ] Buy groceries", LocalRulesPolisher.clean("todo: buy groceries"))
+        assertEquals("- [ ] Review pull request", LocalRulesPolisher.clean("task: review pull request"))
+        assertEquals("- [ ] Call doctor", LocalRulesPolisher.clean("action item: call doctor"))
+    }
+
+    @Test
+    fun `dispatches commands cleanly without period`() {
+        assertEquals("git status", LocalRulesPolisher.clean("command: git status"))
+        assertEquals("docker compose up -d", LocalRulesPolisher.clean("run command: docker compose up -d"))
+        assertEquals("npm run dev", LocalRulesPolisher.clean("shell: npm run dev"))
+    }
+
+    @Test
+    fun `formats bullet summaries`() {
+        assertEquals("- Meeting concluded early", LocalRulesPolisher.clean("summarize: meeting concluded early"))
+        assertEquals("- First key point", LocalRulesPolisher.clean("in bullets: first key point"))
+    }
 }
