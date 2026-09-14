@@ -71,19 +71,84 @@ object CleanupPolicy {
         "Minimal" to MINIMAL_PROMPT,
     )
 
+    /** Target application categorization for Wispr Flow style adaptation. */
+    enum class AppContextCategory(val displayName: String, val directive: String) {
+        CHAT(
+            "Chat & Messaging",
+            "Target app is a messaging client (e.g. Slack, Discord, WhatsApp). Style: Natural, direct, conversational, concise. Avoid unnecessary corporate salutations unless dictated.",
+        ),
+        EMAIL(
+            "Email Client",
+            "Target app is an email client (e.g. Gmail, Outlook). Style: Professional, coherent paragraphs, proper capitalization and sentence structure.",
+        ),
+        CODE_TERMINAL(
+            "Code / Terminal",
+            "Target app is a code editor or terminal (e.g. Termux, GitHub, IDE). Style: Preserve CLI commands, flags, camelCase/snake_case identifiers, file paths, and syntax exactly. Never rewrite commands into conversational text.",
+        ),
+        DOCS_NOTES(
+            "Docs & Notes",
+            "Target app is a notes or document editor (e.g. Google Docs, Keep, Notion). Style: Clean structured text with clear sentence and paragraph flow.",
+        ),
+        GENERAL(
+            "General",
+            "Standard formatting according to base instructions.",
+        );
+
+        companion object {
+            fun fromPackage(packageName: String?): AppContextCategory {
+                if (packageName.isNullOrBlank()) return GENERAL
+                val pkg = packageName.lowercase()
+                return when {
+                    pkg.contains("slack") || pkg.contains("discord") || pkg.contains("whatsapp") ||
+                        pkg.contains("telegram") || pkg.contains("teams") || pkg.contains("signal") ||
+                        pkg.contains("messenger") || pkg.contains("talk") || pkg.contains("chat") -> CHAT
+
+                    pkg.contains("gm") || pkg.contains("email") || pkg.contains("mail") ||
+                        pkg.contains("outlook") || pkg.contains("proton") -> EMAIL
+
+                    pkg.contains("termux") || pkg.contains("terminal") || pkg.contains("github") ||
+                        pkg.contains("code") || pkg.contains("git") || pkg.contains("editor") ||
+                        pkg.contains("ide") -> CODE_TERMINAL
+
+                    pkg.contains("docs") || pkg.contains("notes") || pkg.contains("keep") ||
+                        pkg.contains("notion") || pkg.contains("obsidian") || pkg.contains("onenote") -> DOCS_NOTES
+
+                    else -> GENERAL
+                }
+            }
+        }
+    }
+
+    val SMART_DICTATION_DIRECTIVES: String = """
+        Smart dictation & task formatting:
+
+        - If the speaker dictates tasks, to-dos, or action items (or says "action items", "tasks", "todo list"), format each item as a Markdown checklist item: `- [ ] <task>`.
+        - If the speaker asks to "summarize", "in bullets", or "key points", extract the core points and format as concise bullet points starting with `- `.
+        - If the speaker dictates a shell or CLI command, output the exact clean command on its own line without surrounding fluff.
+        - Respect explicit formatting instructions from the speaker (e.g. "new line", "bullet points", "number one", "quote").
+    """.trimIndent()
+
     /**
-     * Layers optional language and lexicon context onto [base]. A [base] that does not
-     * already carry the [GUARDRAILS] gets them appended, so a user-written prompt cannot
-     * drop the app's only defence against a dictated instruction.
+     * Layers optional language, app context, smart dictation, and lexicon context onto [base].
      */
     fun systemPrompt(
         base: String = BASE_PROMPT,
-        outputLanguage: String?,
-        lexicon: List<LexiconRule>,
+        outputLanguage: String? = null,
+        lexicon: List<LexiconRule> = emptyList(),
+        appContext: AppContextCategory? = null,
+        enableSmartDictation: Boolean = false,
     ): String {
         val sections = mutableListOf(base.trim())
 
         if (!base.contains(GUARDRAIL_ANCHOR)) sections += GUARDRAILS
+
+        if (enableSmartDictation) {
+            sections += SMART_DICTATION_DIRECTIVES
+        }
+
+        if (appContext != null && appContext != AppContextCategory.GENERAL) {
+            sections += "Application context: ${appContext.directive}"
+        }
 
         outputLanguage?.trim()?.takeIf { it.isNotEmpty() }?.let { language ->
             sections += "Output language context: use $language spelling and punctuation conventions."
