@@ -17,7 +17,7 @@
     <string name="feedback_with_warning">%1$s. %2$s</string>
 
     <!-- Navigation and shared -->
-    <string name="screen_home">Sayso</string>
+    <string name="screen_home">Dashboard</string>
     <string name="screen_transcription">Transcription</string>
     <string name="screen_local_models">Local models</string>
     <string name="screen_cleanup">Cleanup</string>
@@ -34,7 +34,9 @@
     <string name="status_done">Done</string>
     <string name="status_todo">Not set up</string>
 
-    <!-- Home -->
+    <!-- Home / Dashboard -->
+    <string name="home_insights_title">Speech Insights</string>
+    <string name="home_insights_cta">See more insights</string>
     <string name="home_ready_title">Ready to dictate</string>
     <string name="home_ready_body">Tap the floating microphone, speak, then tap it again. Sayso types the text into whatever you are editing.</string>
     <string name="home_setup_title">Finish setting up</string>
