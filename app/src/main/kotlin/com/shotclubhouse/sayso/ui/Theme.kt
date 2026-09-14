@@ -1,65 +1,86 @@
 package com.shotclubhouse.sayso.ui
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 
-private val Navy = Color(0xFF1E2A44)
-private val Amber = Color(0xFFF4B942)
+// Sonic Cobalt primary & Energetic Amber secondary brand anchors
+private val SonicCobaltLight = Color(0xFF2563EB)
+private val SonicCobaltDark = Color(0xFF60A5FA)
+private val CobaltContainerLight = Color(0xFFDBEAFE)
+private val CobaltContainerDark = Color(0xFF1E3A8A)
+private val OnCobaltContainerLight = Color(0xFF1E40AF)
+private val OnCobaltContainerDark = Color(0xFFDBEAFE)
+
+private val AmberLight = Color(0xFFF59E0B)
+private val AmberDark = Color(0xFFFBBF24)
+private val AmberContainerLight = Color(0xFFFEF3C7)
+private val AmberContainerDark = Color(0xFF78350F)
+private val OnAmberContainerLight = Color(0xFF92400E)
+private val OnAmberContainerDark = Color(0xFFFEF3C7)
+
+private val CrimsonLight = Color(0xFFEF4444)
+private val CrimsonDark = Color(0xFFF87171)
 
 private val LightScheme = lightColorScheme(
-    primary = Navy,
+    primary = SonicCobaltLight,
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE2F2),
-    onPrimaryContainer = Color(0xFF101828),
-    secondary = Amber,
-    onSecondary = Color(0xFF3A2B00),
-    secondaryContainer = Color(0xFFFDECC6),
-    onSecondaryContainer = Color(0xFF3A2B00),
-    tertiary = Color(0xFF4C6070),
-    background = Color(0xFFFAFAFC),
-    surface = Color(0xFFFAFAFC),
-    surfaceVariant = Color(0xFFE3E5ED),
+    primaryContainer = CobaltContainerLight,
+    onPrimaryContainer = OnCobaltContainerLight,
+    secondary = AmberLight,
+    onSecondary = Color.White,
+    secondaryContainer = AmberContainerLight,
+    onSecondaryContainer = OnAmberContainerLight,
+    tertiary = Color(0xFF0284C7),
+    onTertiary = Color.White,
+    error = CrimsonLight,
+    onError = Color.White,
+    background = Color(0xFFF8FAFC),
+    onBackground = Color(0xFF0F172A),
+    surface = Color.White,
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF475569),
+    outline = Color(0xFFCBD5E1),
+    outlineVariant = Color(0xFFE2E8F0),
 )
 
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFB4C4E8),
-    onPrimary = Color(0xFF1E2A44),
-    primaryContainer = Color(0xFF2C3A58),
-    onPrimaryContainer = Color(0xFFDCE2F2),
-    secondary = Amber,
-    onSecondary = Color(0xFF3A2B00),
-    secondaryContainer = Color(0xFF554114),
-    onSecondaryContainer = Color(0xFFFDECC6),
-    tertiary = Color(0xFFB3C9DA),
-    background = Color(0xFF12151C),
-    surface = Color(0xFF12151C),
-    surfaceVariant = Color(0xFF3F434D),
+    primary = SonicCobaltDark,
+    onPrimary = Color(0xFF0B0F17),
+    primaryContainer = CobaltContainerDark,
+    onPrimaryContainer = OnCobaltContainerDark,
+    secondary = AmberDark,
+    onSecondary = Color(0xFF451A03),
+    secondaryContainer = AmberContainerDark,
+    onSecondaryContainer = OnAmberContainerDark,
+    tertiary = Color(0xFF38BDF8),
+    onTertiary = Color(0xFF082F49),
+    error = CrimsonDark,
+    onError = Color(0xFF450A0A),
+    background = Color(0xFF0B0F17),
+    onBackground = Color(0xFFF8FAFC),
+    surface = Color(0xFF131B2A),
+    onSurface = Color(0xFFF8FAFC),
+    surfaceVariant = Color(0xFF1E293B),
+    onSurfaceVariant = Color(0xFF94A3B8),
+    outline = Color(0xFF334155),
+    outlineVariant = Color(0xFF1E293B),
 )
 
 /**
- * Material 3 wrapper for every Sayso screen. Android 12 and newer follow the
- * wallpaper palette; older releases fall back to the navy and amber of the icon.
+ * Material 3 wrapper for every Sayso screen. Enforces Sayso's signature
+ * Sonic Cobalt brand theme consistently across all Android versions.
  */
 @Composable
 fun SaysoTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val context = LocalContext.current
-    val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-
-        darkTheme -> DarkScheme
-        else -> LightScheme
-    }
+    val colorScheme = if (darkTheme) DarkScheme else LightScheme
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
+
