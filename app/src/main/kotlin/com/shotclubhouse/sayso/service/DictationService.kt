@@ -42,6 +42,8 @@ class DictationService : AccessibilityService() {
     private var sounds: SoundCues? = null
     private var capture: AudioCapture? = null
     private var state = State.IDLE
+    private var lastInjectedText: String? = null
+    private var lastInjectedTime: Long = 0L
 
     /**
      * Called again every time the system rebinds the service, so whatever the previous
@@ -103,6 +105,15 @@ class DictationService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
                 checkActiveWindowFocus()
+            }
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val injected = lastInjectedText
+                if (injected != null && System.currentTimeMillis() - lastInjectedTime < 45_000L) {
+                    val current = event.text.joinToString("")
+                    if (current.isNotBlank() && current != injected) {
+                        AppGraph.corrections.recordEdit(injected, current)
+                    }
+                }
             }
         }
     }
@@ -283,6 +294,10 @@ class DictationService : AccessibilityService() {
         }
 
         val method = injector?.inject(result.text) ?: OutputMethod.NONE
+        if (method == OutputMethod.INSERTED) {
+            lastInjectedText = result.text
+            lastInjectedTime = System.currentTimeMillis()
+        }
         if (method == OutputMethod.NONE) {
             fail(getString(R.string.feedback_not_delivered))
         } else {
