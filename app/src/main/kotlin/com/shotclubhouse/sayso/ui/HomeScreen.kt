@@ -7,12 +7,17 @@ import android.content.pm.PackageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -26,10 +31,12 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,20 +45,27 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
+import com.shotclubhouse.sayso.history.Insights
+import com.shotclubhouse.sayso.history.InsightsSummary
 import com.shotclubhouse.sayso.service.DictationService
 import com.shotclubhouse.sayso.service.WakeWordService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.math.roundToInt
 
-/** Hub screen: what still needs setting up, what is currently configured, and where to go next. */
+/** Hub screen: speech insights dashboard, setup readiness, and quick settings. */
 @Composable
 fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -61,6 +75,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var bubbleAlwaysVisible by remember { mutableStateOf(AppGraph.settings.bubbleAlwaysVisible) }
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
+    var insightsSummary by remember { mutableStateOf<InsightsSummary?>(null) }
     var resumeTick by remember { mutableIntStateOf(0) }
 
     val micPermission = rememberLauncherForActivityResult(
@@ -89,9 +104,16 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     // would read the directory twice at startup.
     LaunchedEffect(resumeTick) {
         if (resumeTick == 0) return@LaunchedEffect
-        val summaries = withContext(Dispatchers.IO) { sttSummary() to cleanupSummary() }
-        sttSummary = summaries.first
-        cleanupSummary = summaries.second
+        val (stt, cleanup, insights) = withContext(Dispatchers.IO) {
+            Triple(
+                sttSummary(),
+                cleanupSummary(),
+                Insights.compute(AppGraph.history.all()),
+            )
+        }
+        sttSummary = stt
+        cleanupSummary = cleanup
+        insightsSummary = insights
     }
 
     val ready = micGranted && serviceOn
@@ -102,7 +124,13 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .padding(bottom = 24.dp),
     ) {
-        ElevatedCard(Modifier.fillMaxWidth().padding(16.dp)) {
+        HomeInsightsWidget(
+            summary = insightsSummary,
+            onSeeMore = { onNavigate(Screen.Insights) },
+            modifier = Modifier.padding(16.dp),
+        )
+
+        ElevatedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Column(Modifier.padding(16.dp)) {
                 Text(
                     stringResource(if (ready) R.string.home_ready_title else R.string.home_setup_title),
@@ -277,3 +305,120 @@ internal fun cleanupSummary(): String? {
     val found = AppGraph.polish.find(id) ?: return id
     return "${found.first.displayName}: ${found.second.displayName}"
 }
+
+@Composable
+private fun HomeInsightsWidget(
+    summary: InsightsSummary?,
+    onSeeMore: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    Icons.Default.Insights,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    stringResource(R.string.home_insights_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                if (summary != null && summary.sessions > 0) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Text(
+                            text = "${summary.sessions} ${stringResource(R.string.insights_sessions).lowercase()}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            if (summary != null && summary.sessions > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    InsightStatTile(
+                        label = stringResource(R.string.insights_total_words),
+                        value = summary.totalWords.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    InsightStatTile(
+                        label = stringResource(R.string.insights_average_wpm),
+                        value = "${summary.averageWpm.roundToInt()} wpm",
+                        modifier = Modifier.weight(1f),
+                    )
+                    InsightStatTile(
+                        label = stringResource(R.string.insights_filler_rate),
+                        value = "${String.format(Locale.US, "%.1f", summary.fillerRatePer1k)}/1k",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            } else {
+                Text(
+                    text = stringResource(R.string.insights_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            FilledTonalButton(
+                onClick = onSeeMore,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text(stringResource(R.string.home_insights_cta), fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InsightStatTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(horizontal = 4.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = value,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
