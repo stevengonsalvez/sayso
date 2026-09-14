@@ -114,6 +114,22 @@
     <string name="vocabulary_aliases">Heard as</string>
     <string name="vocabulary_aliases_help">What the recogniser gets wrong, separated by commas.</string>
     <string name="vocabulary_aliases_summary">Heard as %1$s</string>
+    <string name="pronunciation_dict_title">Pronunciation Dictionary</string>
+    <string name="pronunciation_search_hint">Search dictionary…</string>
+    <string name="pronunciation_import">Import</string>
+    <string name="pronunciation_export">Export</string>
+    <string name="pronunciation_word_label">Word / Canonical output</string>
+    <string name="pronunciation_pronun_label">Pronunciation / Spoken trigger</string>
+    <string name="pronunciation_repl_label">Replacement text (optional)</string>
+    <string name="pronunciation_category_label">Category</string>
+    <string name="pronunciation_regex_toggle">Treat as Regular Expression</string>
+    <string name="pronunciation_case_toggle">Case sensitive</string>
+    <string name="pronunciation_import_title">Import Dictionary</string>
+    <string name="pronunciation_import_message">Merge imported entries with existing ones or replace all entries?</string>
+    <string name="pronunciation_merge">Merge</string>
+    <string name="pronunciation_replace">Replace</string>
+    <string name="pronunciation_exported_toast">Dictionary exported</string>
+    <string name="pronunciation_imported_toast">Imported %1$d entries</string>
 
     <!-- History -->
     <string name="history_empty">Nothing dictated yet.</string>
