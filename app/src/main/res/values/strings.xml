@@ -20,7 +20,7 @@
     <string name="screen_home">Dashboard</string>
     <string name="screen_transcription">Transcription</string>
     <string name="screen_local_models">Local models</string>
-    <string name="screen_cleanup">Cleanup</string>
+    <string name="screen_cleanup">Post-Processing</string>
     <string name="screen_vocabulary">Vocabulary</string>
     <string name="screen_history">History</string>
     <string name="screen_insights">Insights</string>
@@ -51,13 +51,17 @@
     <string name="home_accessibility_off">Tap to turn Sayso on in Android settings</string>
     <string name="home_disclosure_title">Why Sayso needs the accessibility service</string>
     <string name="home_stt_title">Transcription model</string>
-    <string name="home_cleanup_title">Cleanup</string>
+    <string name="home_cleanup_title">Post-Processing</string>
     <string name="home_cleanup_off">Off</string>
 
     <!-- Transcription -->
     <string name="transcription_section_recognition">Recognition</string>
     <string name="transcription_section_recording">Recording</string>
     <string name="transcription_section_floating_and_wake">Floating button &amp; hands-free</string>
+    <string name="transcription_mode_local">On-Device (Local)</string>
+    <string name="transcription_mode_cloud">Cloud (BYOK)</string>
+    <string name="transcription_provider">Cloud Provider</string>
+    <string name="transcription_model">Model</string>
     <string name="transcription_local_empty">No models installed yet. Download one from Local models.</string>
     <string name="transcription_local_open">Open local models</string>
     <string name="transcription_language">Spoken language</string>
@@ -96,14 +100,22 @@
     <string name="local_models_delete_title">Delete %1$s?</string>
     <string name="local_models_delete_body">The model files are removed from this device. You can download it again later.</string>
 
-    <!-- Cleanup -->
-    <string name="cleanup_enabled">Clean up transcripts</string>
-    <string name="cleanup_enabled_help">Pass the transcript through a model that fixes punctuation, casing, and obvious errors.</string>
+    <!-- Post-Processing -->
+    <string name="cleanup_enabled">Enable post-processing</string>
+    <string name="cleanup_enabled_help">Transform raw transcripts with rules, on-device SLM, or cloud models.</string>
     <string name="cleanup_section_smart_capabilities">Wispr Flow &amp; Smart Capabilities</string>
     <string name="cleanup_app_context">App-context adaptation</string>
     <string name="cleanup_app_context_help">Automatically adapt tone and style based on active app (e.g. casual Slack, formal Gmail, strict Code).</string>
     <string name="cleanup_smart_dictation">Smart dictation &amp; action items</string>
     <string name="cleanup_smart_dictation_help">Format spoken tasks into \'- [ ]\' checklists and summarize key takeaways on demand.</string>
+    <string name="postprocessing_mode_none">No LLM (Fast Rules)</string>
+    <string name="postprocessing_mode_none_desc">Instant offline regex cleanup. Fixes capitalization, symbols, and checklists with zero battery drain.</string>
+    <string name="postprocessing_mode_local">Local LLM (Offline)</string>
+    <string name="postprocessing_mode_local_desc">On-device neural SLM (Qwen 2.5 0.5B ONNX). Offline context adaptation and smart dictation.</string>
+    <string name="postprocessing_mode_cloud">Cloud LLM (BYOK)</string>
+    <string name="postprocessing_mode_cloud_desc">High-accuracy cloud models (OpenAI, Anthropic, Groq, Gemini). Connect with your own API key.</string>
+    <string name="postprocessing_provider">LLM Provider</string>
+    <string name="postprocessing_model">Model</string>
     <string name="cleanup_section_prompt">Instructions</string>
     <string name="cleanup_preset_custom">Custom</string>
     <string name="cleanup_custom_prompt">Custom instructions</string>
