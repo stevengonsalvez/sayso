@@ -88,3 +88,13 @@ jobs:
           files: |
             sayso-${{ github.ref_name }}.apk
             sayso-${{ github.ref_name }}.aab
+
+      - name: Deploy to Google Play (Internal Testing)
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_JSON_KEY }}
+          packageName: com.shotclubhouse.sayso
+          releaseFiles: sayso-${{ github.ref_name }}.aab
+          track: internal
+          status: completed
+          mappingFile: app/build/outputs/mapping/release/mapping.txt
