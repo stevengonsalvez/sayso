@@ -154,6 +154,7 @@ fun ApiKeyRow(
     providerName: String,
     apiKeyUrl: String?,
     modifier: Modifier = Modifier,
+    onKeyChanged: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -221,13 +222,17 @@ fun ApiKeyRow(
                         }
                         saved = stored
                         saveFailed = !stored
+                        if (stored) onKeyChanged?.invoke()
                     }
                 },
                 enabled = value.isNotBlank(),
             ) { Text(stringResource(R.string.action_save)) }
             TextButton(
                 onClick = {
-                    scope.launch { withContext(Dispatchers.IO) { secrets.remove(providerId) } }
+                    scope.launch {
+                        withContext(Dispatchers.IO) { secrets.remove(providerId) }
+                        onKeyChanged?.invoke()
+                    }
                     value = ""
                     saved = false
                     saveFailed = false
