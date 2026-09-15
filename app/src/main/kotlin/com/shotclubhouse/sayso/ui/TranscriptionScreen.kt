@@ -3,12 +3,21 @@ package com.shotclubhouse.sayso.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -16,27 +25,34 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.shotclubhouse.sayso.AppGraph
 import com.shotclubhouse.sayso.R
 import com.shotclubhouse.sayso.core.SttModel
+import com.shotclubhouse.sayso.core.TranscriptionProvider
 import com.shotclubhouse.sayso.service.DictationService
 import com.shotclubhouse.sayso.service.WakeWordService
 import com.shotclubhouse.sayso.settings.Settings
@@ -67,7 +83,12 @@ private const val RECORDING_STEP_SECONDS = 30
 fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val settings = AppGraph.settings
-    var selectedModel by remember { mutableStateOf(settings.sttModelId) }
+        var selectedModel by remember { mutableStateOf(settings.sttModelId) }
+    val initialIsCloud = selectedModel.substringBefore('/') != "local"
+    var isCloudMode by remember { mutableStateOf(initialIsCloud) }
+    var selectedCloudProviderId by remember {
+        mutableStateOf(if (initialIsCloud) selectedModel.substringBefore('/') else "openai")
+    }
     var language by remember { mutableStateOf(settings.language) }
     var hints by remember { mutableStateOf(settings.hints.joinToString(", ")) }
     var maxSeconds by remember { mutableFloatStateOf(settings.maxRecordingSeconds.toFloat()) }
@@ -144,29 +165,115 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
         )
 
         SectionHeader(stringResource(R.string.transcription_section_recognition))
-        for (provider in AppGraph.stt.providers) {
-            ProviderGroup(provider.displayName) {
-                if (provider.needsApiKey) {
-                    ApiKeyRow(
-                        providerId = provider.id,
-                        providerName = provider.displayName,
-                        apiKeyUrl = provider.apiKeyUrl,
+
+        val cloudProviders = remember { AppGraph.stt.providers.filter { it.id != "local" } }
+        var keyUpdateTrigger by remember { mutableIntStateOf(0) }
+        var savedKeyProviders by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+        LaunchedEffect(keyUpdateTrigger) {
+            savedKeyProviders = withContext(Dispatchers.IO) {
+                cloudProviders.filter { !AppGraph.secrets.get(it.id).isNullOrBlank() }.map { it.id }.toSet()
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Surface(
+                onClick = {
+                    isCloudMode = false
+                    val localModels = modelsByProvider["local"].orEmpty()
+                    if (localModels.isNotEmpty()) {
+                        selectedModel = localModels.first().id
+                        settings.sttModelId = selectedModel
+                        DictationService.instance?.reloadLocalModel()
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = if (!isCloudMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(
+                    1.5.dp,
+                    if (!isCloudMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = null,
+                        tint = if (!isCloudMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                val models = modelsByProvider[provider.id].orEmpty()
-                if (models.isEmpty() && provider.id == "local" && modelsByProvider.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        stringResource(R.string.transcription_local_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+                        text = stringResource(R.string.transcription_mode_local),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (!isCloudMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                     )
-                    Button(
-                        onClick = onOpenLocalModels,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    ) { Text(stringResource(R.string.transcription_local_open)) }
                 }
-                for (model in models) {
+            }
+
+            Surface(
+                onClick = {
+                    isCloudMode = true
+                    val currentProvider = cloudProviders.firstOrNull { it.id == selectedCloudProviderId } ?: cloudProviders.firstOrNull()
+                    if (currentProvider != null) {
+                        val models = modelsByProvider[currentProvider.id].orEmpty()
+                        if (models.isNotEmpty() && selectedModel.substringBefore('/') != currentProvider.id) {
+                            selectedModel = models.first().id
+                            settings.sttModelId = selectedModel
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = if (isCloudMode) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(
+                    1.5.dp,
+                    if (isCloudMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Cloud,
+                        contentDescription = null,
+                        tint = if (isCloudMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.transcription_mode_cloud),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isCloudMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+
+        if (!isCloudMode) {
+            val localModels = modelsByProvider["local"].orEmpty()
+            if (localModels.isEmpty() && modelsByProvider.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.transcription_local_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+                Button(
+                    onClick = onOpenLocalModels,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                ) { Text(stringResource(R.string.transcription_local_open)) }
+            } else {
+                for (model in localModels) {
                     RadioRow(
                         title = model.displayName,
                         subtitle = model.note.takeIf { it.isNotBlank() },
@@ -174,15 +281,50 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                         onSelect = {
                             selectedModel = model.id
                             settings.sttModelId = model.id
-                            if (provider.id == "local") DictationService.instance?.reloadLocalModel()
+                            DictationService.instance?.reloadLocalModel()
                         },
                     )
                 }
             }
-            HorizontalDivider()
+        } else {
+            SttProviderDropdown(
+                providers = cloudProviders,
+                selectedId = selectedCloudProviderId,
+                savedKeyProviders = savedKeyProviders,
+                onSelect = { providerId ->
+                    selectedCloudProviderId = providerId
+                    val models = modelsByProvider[providerId].orEmpty()
+                    if (models.isNotEmpty()) {
+                        selectedModel = models.first().id
+                        settings.sttModelId = selectedModel
+                    }
+                },
+            )
+
+            val activeProvider = cloudProviders.firstOrNull { it.id == selectedCloudProviderId }
+            if (activeProvider != null) {
+                ApiKeyRow(
+                    providerId = activeProvider.id,
+                    providerName = activeProvider.displayName,
+                    apiKeyUrl = activeProvider.apiKeyUrl,
+                    onKeyChanged = { keyUpdateTrigger++ },
+                )
+
+                val models = modelsByProvider[activeProvider.id].orEmpty()
+                if (models.isNotEmpty()) {
+                    SttModelDropdown(
+                        models = models,
+                        selectedId = selectedModel,
+                        onSelect = { modelId ->
+                            selectedModel = modelId
+                            settings.sttModelId = modelId
+                        },
+                    )
+                }
+            }
         }
 
-        SectionHeader(stringResource(R.string.transcription_section_recognition))
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
         LanguageDropdown(
             selected = language,
@@ -272,6 +414,122 @@ private fun LanguageDropdown(selected: String?, onSelect: (String?) -> Unit) {
                     onClick = {
                         expanded = false
                         onSelect(code)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SttProviderDropdown(
+    providers: List<TranscriptionProvider>,
+    selectedId: String,
+    savedKeyProviders: Set<String>,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentProvider = providers.firstOrNull { it.id == selectedId } ?: providers.firstOrNull()
+    val currentDisplayName = currentProvider?.displayName.orEmpty()
+    val hasKey = currentProvider?.let { savedKeyProviders.contains(it.id) } == true
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        OutlinedTextField(
+            value = if (hasKey) "$currentDisplayName (Key saved)" else currentDisplayName,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.transcription_provider)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (provider in providers) {
+                val providerHasKey = savedKeyProviders.contains(provider.id)
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = provider.displayName,
+                                fontWeight = if (provider.id == selectedId) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            if (providerHasKey) {
+                                Text(
+                                    text = "Key saved",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF16A34A),
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(provider.id)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SttModelDropdown(
+    models: List<SttModel>,
+    selectedId: String,
+    onSelect: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentModel = models.firstOrNull { it.id == selectedId } ?: models.firstOrNull()
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        OutlinedTextField(
+            value = currentModel?.displayName.orEmpty(),
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.transcription_model)) },
+            supportingText = currentModel?.note?.takeIf { it.isNotBlank() }?.let { { Text(it) } },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (model in models) {
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                text = model.displayName,
+                                fontWeight = if (model.id == selectedId) FontWeight.Bold else FontWeight.Normal,
+                            )
+                            if (model.note.isNotBlank()) {
+                                Text(
+                                    text = model.note,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(model.id)
                     },
                 )
             }

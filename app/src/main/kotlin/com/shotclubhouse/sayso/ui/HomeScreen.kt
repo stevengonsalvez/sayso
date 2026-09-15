@@ -731,7 +731,7 @@ private fun ActiveModelsCard(
 ) {
     Column {
         Text(
-            text = "SPEECH & CLEANUP ENGINES",
+            text = "SPEECH & POST-PROCESSING ENGINES",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
