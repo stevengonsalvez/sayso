@@ -47,15 +47,15 @@ tasks.named("preBuild") { dependsOn(fetchSherpaOnnx) }
 val releaseKeystore: String? = System.getenv("SAYSO_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
 
 android {
-    namespace = "com.shotclubhouse.sayso"
+    namespace = "ai.sayso.dictation"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.shotclubhouse.sayso"
+        applicationId = "ai.sayso.dictation"
         minSdk = 30
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.0.14"
+        versionCode = 16
+        versionName = "1.0.15"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
