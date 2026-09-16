@@ -5,15 +5,15 @@
 -keepattributes *Annotation*, InnerClasses
 -dontnote kotlinx.serialization.**
 
--if @kotlinx.serialization.Serializable class com.shotclubhouse.sayso.**
--keepclassmembers class com.shotclubhouse.sayso.** {
+-if @kotlinx.serialization.Serializable class ai.sayso.dictation.**
+-keepclassmembers class ai.sayso.dictation.** {
     *** Companion;
 }
--if @kotlinx.serialization.Serializable class com.shotclubhouse.sayso.**
--keepclasseswithmembers class com.shotclubhouse.sayso.** {
+-if @kotlinx.serialization.Serializable class ai.sayso.dictation.**
+-keepclasseswithmembers class ai.sayso.dictation.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,includedescriptorclasses class com.shotclubhouse.sayso.**$$serializer { *; }
+-keep,includedescriptorclasses class ai.sayso.dictation.**$$serializer { *; }
 
 # sherpa-onnx is called from native code, so its classes and members are reached
 # by JNI name lookup rather than from any Kotlin call site.
