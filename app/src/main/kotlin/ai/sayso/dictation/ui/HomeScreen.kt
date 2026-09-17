@@ -43,13 +43,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import ai.sayso.dictation.models.DownloadState
+import ai.sayso.dictation.models.LocalModelCatalog
+import java.io.File
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -83,13 +88,20 @@ import kotlin.math.roundToInt
 @Composable
 fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val downloads = AppGraph.downloads
+    val settings = AppGraph.settings
+    val modelsDir = AppGraph.localModelsDir
+    val defaultLocalModel = LocalModelCatalog.default
+
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
-    var wakeWord by remember { mutableStateOf(AppGraph.settings.wakeWordEnabled) }
-    var bubbleAlwaysVisible by remember { mutableStateOf(AppGraph.settings.bubbleAlwaysVisible) }
+    var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
+    var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
     var insightsSummary by remember { mutableStateOf<InsightsSummary?>(null) }
+    var isSttReady by remember { mutableStateOf(false) }
+    var showOnboarding by remember { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     var resumeTick by remember { mutableIntStateOf(0) }
 
@@ -97,7 +109,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         micGranted = granted
-        if (granted && AppGraph.settings.wakeWordEnabled) {
+        if (granted && settings.wakeWordEnabled) {
             WakeWordService.start(context)
         }
     }
@@ -107,31 +119,33 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     LifecycleResumeEffect(Unit) {
         micGranted = context.hasMicPermission()
         serviceOn = DictationService.isEnabled(context)
-        wakeWord = AppGraph.settings.wakeWordEnabled
-        bubbleAlwaysVisible = AppGraph.settings.bubbleAlwaysVisible
+        wakeWord = settings.wakeWordEnabled
+        bubbleAlwaysVisible = settings.bubbleAlwaysVisible
         resumeTick++
         onPauseOrDispose { }
     }
 
-    // Naming the transcription model walks the on-device models directory, which is a
-    // disk read, so it happens off the main thread rather than during composition.
-    // Tick 0 is skipped: the first resume always follows composition, so running here too
-    // would read the directory twice at startup.
-    LaunchedEffect(resumeTick) {
-        if (resumeTick == 0) return@LaunchedEffect
-        val (stt, cleanup, insights) = withContext(Dispatchers.IO) {
+    // Reading directory and settings off main thread
+    LaunchedEffect(resumeTick, downloads.state, settings.sttModelId) {
+        val (stt, cleanup, readyStt) = withContext(Dispatchers.IO) {
             Triple(
                 sttSummary(),
                 cleanupSummary(),
-                Insights.compute(AppGraph.history.all()),
+                checkSttReady(settings, modelsDir),
             )
+        }
+        val ins = if (resumeTick > 0) {
+            withContext(Dispatchers.IO) { Insights.compute(AppGraph.history.all()) }
+        } else {
+            insightsSummary
         }
         sttSummary = stt
         cleanupSummary = cleanup
-        insightsSummary = insights
+        insightsSummary = ins
+        isSttReady = readyStt
     }
 
-    val ready = micGranted && serviceOn
+    val ready = micGranted && serviceOn && isSttReady
 
     Column(
         modifier
@@ -140,6 +154,21 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // 0. Model Required Setup Banner (Actionable CTA when model is missing)
+        if (!isSttReady) {
+            ModelRequiredBanner(
+                downloadState = downloads.state,
+                isDownloading = downloads.busy,
+                onDownload = {
+                    downloads.start(defaultLocalModel, modelsDir, context.cacheDir) {
+                        settings.sttModelId = "local/${defaultLocalModel.dirName}"
+                        DictationService.instance?.reloadLocalModel()
+                    }
+                },
+                onOpenWizard = { showOnboarding = true },
+            )
+        }
+
         // 1. Hero Speech Insights Widget
         HomeInsightsWidget(
             summary = insightsSummary,
@@ -151,6 +180,10 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             ready = ready,
             micGranted = micGranted,
             serviceOn = serviceOn,
+            sttReady = isSttReady,
+            sttSummary = sttSummary,
+            downloadState = downloads.state,
+            isDownloading = downloads.busy,
             onRequestMic = { if (!micGranted) micPermission.launch(Manifest.permission.RECORD_AUDIO) },
             onOpenAccessibility = {
                 if (serviceOn) {
@@ -159,6 +192,13 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                     showAccessibilityDisclosure = true
                 }
             },
+            onDownloadModel = {
+                downloads.start(defaultLocalModel, modelsDir, context.cacheDir) {
+                    settings.sttModelId = "local/${defaultLocalModel.dirName}"
+                    DictationService.instance?.reloadLocalModel()
+                }
+            },
+            onOpenTranscription = { onNavigate(Screen.Transcription) },
         )
 
         if (showAccessibilityDisclosure) {
@@ -304,9 +344,19 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         )
 
         // 5. Tools & Capabilities Card
-        CapabilitiesCard(onNavigate = onNavigate)
+        CapabilitiesCard(
+            onNavigate = onNavigate,
+            onOpenOnboarding = { showOnboarding = true },
+        )
 
         Spacer(Modifier.height(16.dp))
+    }
+
+    if (showOnboarding) {
+        OnboardingDialog(
+            onDismiss = { showOnboarding = false },
+            onNavigateToScreen = onNavigate,
+        )
     }
 }
 
@@ -543,12 +593,174 @@ private fun InsightStatTile(
 }
 
 @Composable
+private fun ModelRequiredBanner(
+    downloadState: DownloadState?,
+    isDownloading: Boolean,
+    onDownload: () -> Unit,
+    onOpenWizard: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+        ),
+        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.home_banner_model_needed_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Black,
+                    )
+                    Text(
+                        text = "1-Tap Setup Required",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            Text(
+                text = stringResource(R.string.home_banner_model_needed_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp,
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            if (isDownloading) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    when (downloadState) {
+                        is DownloadState.Downloading -> {
+                            val pct = (downloadState.progress * 100).roundToInt()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "Downloading Parakeet 110M...",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "$pct%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            LinearProgressIndicator(
+                                progress = { downloadState.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                            )
+                        }
+                        DownloadState.Extracting -> {
+                            Text(
+                                text = "Extracting neural weights...",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                            )
+                        }
+                        is DownloadState.Error -> {
+                            Text(
+                                text = "Download failed: ${downloadState.message}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                        else -> Unit
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = onDownload,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) {
+                        Icon(
+                            Icons.Default.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.home_banner_download_cta),
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onOpenWizard,
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text(stringResource(R.string.home_setup_wizard_cta), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun EngineStatusCard(
     ready: Boolean,
     micGranted: Boolean,
     serviceOn: Boolean,
+    sttReady: Boolean,
+    sttSummary: String,
+    downloadState: DownloadState?,
+    isDownloading: Boolean,
     onRequestMic: () -> Unit,
     onOpenAccessibility: () -> Unit,
+    onDownloadModel: () -> Unit,
+    onOpenTranscription: () -> Unit,
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -623,6 +835,137 @@ private fun EngineStatusCard(
                 done = serviceOn,
                 onClick = onOpenAccessibility,
             )
+            Spacer(Modifier.height(8.dp))
+            ModelStatusRow(
+                sttReady = sttReady,
+                sttSummary = sttSummary,
+                downloadState = downloadState,
+                isDownloading = isDownloading,
+                onDownload = onDownloadModel,
+                onOpenTranscription = onOpenTranscription,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModelStatusRow(
+    sttReady: Boolean,
+    sttSummary: String,
+    downloadState: DownloadState?,
+    isDownloading: Boolean,
+    onDownload: () -> Unit,
+    onOpenTranscription: () -> Unit,
+) {
+    if (isDownloading) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            when (downloadState) {
+                is DownloadState.Downloading -> {
+                    val pct = (downloadState.progress * 100).roundToInt()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "Downloading Speech Model...",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "$pct%",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { downloadState.progress },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                    )
+                }
+                DownloadState.Extracting -> {
+                    Text(
+                        text = "Extracting neural weights...",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                    )
+                }
+                is DownloadState.Error -> {
+                    Text(
+                        text = "Download error: ${downloadState.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                else -> Unit
+            }
+        }
+    } else {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = if (!sttReady) onDownload else onOpenTranscription)
+                .padding(vertical = 6.dp, horizontal = 4.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (sttReady) Color(0xFFDCFCE7) else Color(0xFFFEF3C7)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (sttReady) Icons.Default.CheckCircle else Icons.Default.Download,
+                    contentDescription = null,
+                    tint = if (sttReady) Color(0xFF16A34A) else Color(0xFFB45309),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Speech Recognition Engine",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (sttReady) sttSummary else "Model not downloaded (104 MB required)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!sttReady) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                ) {
+                    Text(
+                        text = "Download",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -771,7 +1114,10 @@ private fun ActiveModelsCard(
 }
 
 @Composable
-private fun CapabilitiesCard(onNavigate: (Screen) -> Unit) {
+private fun CapabilitiesCard(
+    onNavigate: (Screen) -> Unit,
+    onOpenOnboarding: () -> Unit,
+) {
     Column {
         Text(
             text = "FEATURES & TOOLS",
@@ -788,6 +1134,18 @@ private fun CapabilitiesCard(onNavigate: (Screen) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(vertical = 4.dp)) {
+                PremiumSettingRow(
+                    title = stringResource(R.string.home_setup_wizard_cta),
+                    subtitle = stringResource(R.string.home_setup_wizard_subtitle),
+                    icon = Icons.Default.AutoFixHigh,
+                    iconBg = Color(0xFFE0F2FE),
+                    iconTint = Color(0xFF0284C7),
+                    onClick = onOpenOnboarding,
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
                 PremiumSettingRow(
                     title = stringResource(R.string.screen_vocabulary),
                     subtitle = "Pronunciation dictionary and word replacements",
@@ -905,15 +1263,32 @@ private fun PremiumSettingRow(
 internal fun Context.hasMicPermission(): Boolean =
     checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-private fun Context.openAccessibilitySettings() {
-    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    startActivity(intent)
+internal fun checkSttReady(settings: ai.sayso.dictation.core.SettingsStore, modelsDir: File): Boolean {
+    val modelId = settings.sttModelId
+    return if (modelId.startsWith("local/")) {
+        val dirName = modelId.removePrefix("local/")
+        val model = LocalModelCatalog.byDirName(dirName) ?: return false
+        AppGraph.downloads.isInstalled(model, modelsDir)
+    } else {
+        val providerId = modelId.substringBefore('/')
+        AppGraph.secrets.get(providerId)?.isNotBlank() == true
+    }
 }
 
-/** "OpenAI: Whisper", or the bare id when the saved model is no longer available. */
+/** Friendly description of active model, or uninstalled warning if local model is absent. */
 internal fun sttSummary(): String {
     val id = AppGraph.settings.sttModelId
+    if (id.startsWith("local/")) {
+        val dirName = id.removePrefix("local/")
+        val model = LocalModelCatalog.byDirName(dirName)
+        val installed = model != null && AppGraph.downloads.isInstalled(model, AppGraph.localModelsDir)
+        val name = model?.displayName ?: dirName
+        return if (installed) {
+            "On device: $name"
+        } else {
+            "On device: $name (Not installed)"
+        }
+    }
     val found = AppGraph.stt.find(id) ?: return id
     return "${found.first.displayName}: ${found.second.displayName}"
 }
