@@ -355,6 +355,52 @@ class LocalModelDownloaderTest {
         server.shutdown()
     }
 
+    @Test
+    fun `multi file model downloads and verifies all files directly`() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+
+        val onnxBytes = "fake onnx model".toByteArray()
+        val tokensBytes = "token1\ntoken2".toByteArray()
+
+        server.enqueue(MockResponse().setBody(Buffer().write(onnxBytes)))
+        server.enqueue(MockResponse().setBody(Buffer().write(tokensBytes)))
+
+        val model = LocalModel(
+            dirName = "test-multi-file-model",
+            displayName = "Test Multi File",
+            sizeMb = 1,
+            note = "fixture",
+            files = listOf(
+                ModelFile(
+                    url = server.url("/model.int8.onnx").toString(),
+                    relativePath = "model.int8.onnx",
+                    sizeBytes = onnxBytes.size.toLong(),
+                    sha256 = sha256(onnxBytes),
+                ),
+                ModelFile(
+                    url = server.url("/tokens.txt").toString(),
+                    relativePath = "tokens.txt",
+                    sizeBytes = tokensBytes.size.toLong(),
+                    sha256 = sha256(tokensBytes),
+                ),
+            ),
+        )
+
+        val models = File(temp.root, "models")
+        val downloader = LocalModelDownloader(OkHttpClient())
+        val states = downloader.download(model, models, File(temp.root, "cache")).toList()
+
+        assertEquals(DownloadState.Done, states.last())
+        val installedDir = File(models, model.dirName)
+        assertTrue(installedDir.isDirectory)
+        assertEquals("fake onnx model", File(installedDir, "model.int8.onnx").readText())
+        assertEquals("token1\ntoken2", File(installedDir, "tokens.txt").readText())
+        assertTrue(downloader.isInstalled(model, models))
+
+        server.shutdown()
+    }
+
     private fun redirectingClient(server: MockWebServer) = OkHttpClient.Builder().addInterceptor { chain ->
         val to = server.url("/" + chain.request().url.pathSegments.last())
         chain.proceed(chain.request().newBuilder().url(to).build())
