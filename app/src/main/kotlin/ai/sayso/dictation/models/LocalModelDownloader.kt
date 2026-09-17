@@ -52,27 +52,74 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
         // user walks away from, leaves the model they already had working.
         val staging = File(modelsDir, "${model.dirName}.tmp")
         try {
-            // The pinned digest is all that stands between the phone and whatever the release
-            // host serves, so an entry without one is a packaging bug, not a fast path.
-            if (model.sha256.isBlank()) throw IOException("Model has no checksum")
             cacheDir.mkdirs()
             modelsDir.mkdirs()
             staging.deleteRecursively()
 
-            val digest = fetch(model, archive) { emit(DownloadState.Downloading(it)) }
-            if (!digest.equals(model.sha256, ignoreCase = true)) {
-                throw IOException("Downloaded archive did not match its checksum")
+            if (model.files.isNotEmpty()) {
+                staging.mkdirs()
+                val totalBytes = model.files.sumOf { it.sizeBytes }.takeIf { it > 0 } ?: (model.sizeMb * 1_000_000L)
+                var totalWritten = 0L
+                var lastStep = -1
+
+                for (fileInfo in model.files) {
+                    val destFile = File(staging, fileInfo.relativePath)
+                    destFile.parentFile?.mkdirs()
+                    val sha = MessageDigest.getInstance("SHA-256")
+                    val request = Request.Builder().url(fileInfo.url).build()
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IOException("Download of ${fileInfo.relativePath} failed with HTTP ${response.code}")
+                        }
+                        val body = response.body ?: throw IOException("Empty response body for ${fileInfo.relativePath}")
+                        val source = body.byteStream()
+                        destFile.outputStream().use { sink ->
+                            val buffer = ByteArray(BUFFER_BYTES)
+                            var read = source.read(buffer)
+                            while (read >= 0) {
+                                currentCoroutineContext().ensureActive()
+                                sink.write(buffer, 0, read)
+                                sha.update(buffer, 0, read)
+                                totalWritten += read
+                                val step = (totalWritten * PROGRESS_STEPS / totalBytes).toInt()
+                                if (step != lastStep) {
+                                    lastStep = step
+                                    emit(DownloadState.Downloading((totalWritten.toFloat() / totalBytes).coerceIn(0f, 1f)))
+                                }
+                                read = source.read(buffer)
+                            }
+                        }
+                    }
+                    val digest = sha.digest().joinToString("") { "%02x".format(it) }
+                    if (fileInfo.sha256.isNotBlank() && !digest.equals(fileInfo.sha256, ignoreCase = true)) {
+                        throw IOException("${fileInfo.relativePath} did not match checksum")
+                    }
+                }
+
+                target.deleteRecursively()
+                if (!staging.renameTo(target)) throw IOException("Could not install ${model.dirName}")
+
+                emit(DownloadState.Done)
+            } else {
+                // The pinned digest is all that stands between the phone and whatever the release
+                // host serves, so an entry without one is a packaging bug, not a fast path.
+                if (model.sha256.isBlank()) throw IOException("Model has no checksum")
+
+                val digest = fetch(model, archive) { emit(DownloadState.Downloading(it)) }
+                if (!digest.equals(model.sha256, ignoreCase = true)) {
+                    throw IOException("Downloaded archive did not match its checksum")
+                }
+
+                emit(DownloadState.Extracting)
+                extract(archive, staging)
+                val unpacked = File(staging, model.dirName)
+                if (!isInstalled(model, staging)) throw IOException("Archive did not contain ${model.dirName}")
+
+                target.deleteRecursively()
+                if (!unpacked.renameTo(target)) throw IOException("Could not install ${model.dirName}")
+
+                emit(DownloadState.Done)
             }
-
-            emit(DownloadState.Extracting)
-            extract(archive, staging)
-            val unpacked = File(staging, model.dirName)
-            if (!isInstalled(model, staging)) throw IOException("Archive did not contain ${model.dirName}")
-
-            target.deleteRecursively()
-            if (!unpacked.renameTo(target)) throw IOException("Could not install ${model.dirName}")
-
-            emit(DownloadState.Done)
         } catch (e: IOException) {
             emit(DownloadState.Error(e.message ?: "Download failed"))
         } finally {
