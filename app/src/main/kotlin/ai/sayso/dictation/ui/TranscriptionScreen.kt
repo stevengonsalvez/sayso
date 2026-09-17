@@ -71,6 +71,8 @@ private val LANGUAGES: List<Pair<String?, Int>> = listOf(
     "pt" to R.string.lang_pt,
     "nl" to R.string.lang_nl,
     "hi" to R.string.lang_hi,
+    "ta" to R.string.lang_ta,
+    "ml" to R.string.lang_ml,
     "ja" to R.string.lang_ja,
     "ko" to R.string.lang_ko,
     "zh" to R.string.lang_zh,
