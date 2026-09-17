@@ -40,6 +40,7 @@ object AppGraph {
 
     /** Model downloads outlive any one screen, so the in-flight one lives here. */
     lateinit var downloads: ModelDownloads private set
+    lateinit var slmDownloads: ai.sayso.dictation.polish.SlmDownloads private set
 
     @Volatile private var initialised = false
 
@@ -70,6 +71,7 @@ object AppGraph {
         )
         corrections = ai.sayso.dictation.correction.AutoCorrectionEngine.open(app, settings)
         downloads = ModelDownloads(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
+        slmDownloads = ai.sayso.dictation.polish.SlmDownloads(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
         initialised = true
     }
 }
