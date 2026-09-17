@@ -59,7 +59,7 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
         withContext(Dispatchers.Default) {
             mutex.withLock {
                 try {
-                    transcribeLocked(request.modelName, request.clip)
+                    transcribeLocked(request.modelName, request.clip, request.language)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
@@ -73,14 +73,14 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
     /** Frees the native recogniser, for example when the user picks a cloud provider. */
     suspend fun unload() = mutex.withLock { release() }
 
-    private fun transcribeLocked(modelName: String, clip: AudioClip): TranscriptionResult {
+    private fun transcribeLocked(modelName: String, clip: AudioClip, language: String? = null): TranscriptionResult {
         if (clip.isEmpty) return TranscriptionResult.Failure("No audio recorded")
         // The name comes from a stored setting and is joined onto a path, so it stays one
         // directory name: no separators, no walking up out of the models directory.
         if (modelName.isBlank() || modelName.any { it in PATH_SEPARATORS } || modelName.contains("..")) {
             return TranscriptionResult.Failure("\"$modelName\" is not a valid model name")
         }
-        val active = recognizerFor(modelName)
+        val active = recognizerFor(modelName, language)
             ?: return TranscriptionResult.Failure("Model \"$modelName\" is not installed")
 
         val stream = active.createStream()
@@ -95,17 +95,18 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
         }
     }
 
-    private fun recognizerFor(modelName: String): OfflineRecognizer? {
-        recognizer?.let { if (loadedModel == modelName) return it }
+    private fun recognizerFor(modelName: String, language: String? = null): OfflineRecognizer? {
+        val key = "$modelName:${language.orEmpty()}"
+        recognizer?.let { if (loadedModel == key) return it }
         release()
 
         val dir = File(modelsDir, modelName)
         if (!dir.isDirectory) return null
-        val config = detectConfig(dir) ?: return null
+        val config = detectConfig(dir, language) ?: return null
 
         return OfflineRecognizer(config = config).also {
             recognizer = it
-            loadedModel = modelName
+            loadedModel = key
         }
     }
 
@@ -130,7 +131,7 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
  * first: moonshine has a preprocessor, a transducer has a joiner, an
  * encoder/decoder pair without one is whisper.
  */
-internal fun detectConfig(dir: File): OfflineRecognizerConfig? {
+internal fun detectConfig(dir: File, language: String? = null): OfflineRecognizerConfig? {
     val onnx = dir.listFiles().orEmpty().filter { it.isFile && it.name.endsWith(".onnx") }
     if (onnx.isEmpty()) return null
     val tokens = dir.listFiles().orEmpty().firstOrNull { it.name.endsWith("tokens.txt") } ?: return null
@@ -170,7 +171,11 @@ internal fun detectConfig(dir: File): OfflineRecognizerConfig? {
         )
 
         encoder != null && decoder != null -> OfflineModelConfig(
-            whisper = OfflineWhisperModelConfig(encoder = encoder, decoder = decoder),
+            whisper = OfflineWhisperModelConfig(
+                encoder = encoder,
+                decoder = decoder,
+                language = language.orEmpty(),
+            ),
             tokens = tokens.absolutePath,
             numThreads = INFERENCE_THREADS,
             modelType = "whisper",
