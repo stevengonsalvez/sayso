@@ -194,29 +194,62 @@
     <string name="lang_pt">Portuguese</string>
     <string name="lang_nl">Dutch</string>
     <string name="lang_hi">Hindi</string>
+    <string name="lang_ta">Tamil</string>
+    <string name="lang_ml">Malayalam</string>
     <string name="lang_ja">Japanese</string>
     <string name="lang_ko">Korean</string>
     <string name="lang_zh">Chinese</string>
 
-    <!-- Navigation and shared -->
-
-    <!-- Home -->
-
-    <!-- Transcription -->
-
-    <!-- API keys -->
-
-    <!-- Local models -->
-
-    <!-- Cleanup -->
-
-    <!-- Vocabulary -->
-
-    <!-- History -->
-
-    <!-- Insights -->
-
-    <!-- About -->
-
-    <!-- Languages -->
+    <!-- Onboarding & Setup -->
+    <string name="onboarding_title">Welcome to Sayso</string>
+    <string name="onboarding_subtitle">Private, instant voice dictation directly into any Android app.</string>
+    <string name="onboarding_skip">Skip for now</string>
+    <string name="onboarding_next">Next</string>
+    <string name="onboarding_back">Back</string>
+    <string name="onboarding_finish">Start Using Sayso</string>
+    <string name="onboarding_step_stt">Speech Engine</string>
+    <string name="onboarding_step_cleanup">AI Polish</string>
+    <string name="onboarding_step_permissions">Permissions</string>
+    <string name="onboarding_stt_title">Choose your speech engine</string>
+    <string name="onboarding_stt_subtitle">Sayso converts speech to text on-device for total privacy, or via cloud AI.</string>
+    <string name="onboarding_stt_local_title">On-Device Neural Model</string>
+    <string name="onboarding_stt_local_badge">Recommended · 100% Private</string>
+    <string name="onboarding_stt_local_desc">Sherpa-ONNX Parakeet 110M runs directly on your phone. Zero audio leaves your device. Works completely offline.</string>
+    <string name="onboarding_stt_download_cta">Download Voice Model (%1$d MB)</string>
+    <string name="onboarding_stt_installed">Model Installed &amp; Ready</string>
+    <string name="onboarding_stt_cloud_title">Cloud AI Speech</string>
+    <string name="onboarding_stt_cloud_badge">Ultra Fast · BYOK</string>
+    <string name="onboarding_stt_cloud_desc">Connect Groq, OpenAI Whisper, or Gemini using your own API key.</string>
+    <string name="onboarding_cleanup_title">Do you want AI Post-Processing?</string>
+    <string name="onboarding_cleanup_subtitle">Automatically clean filler words, format punctuation, and polish speech in real time.</string>
+    <string name="onboarding_cleanup_example_header">Transformation Example</string>
+    <string name="onboarding_cleanup_raw_label">Spoken (Raw):</string>
+    <string name="onboarding_cleanup_raw_text">\"um like basically we should ship this tomorrow right\"</string>
+    <string name="onboarding_cleanup_polished_label">Polished Output:</string>
+    <string name="onboarding_cleanup_polished_text">\"We should ship this tomorrow.\"</string>
+    <string name="onboarding_cleanup_option_rules_title">Smart Cleanup (Instant &amp; Free)</string>
+    <string name="onboarding_cleanup_option_rules_badge">Recommended</string>
+    <string name="onboarding_cleanup_option_rules_desc">Strips filler words (um, uh, like), fixes capitalization, punctuation, and formats lists. Zero battery drain, works offline.</string>
+    <string name="onboarding_cleanup_option_slm_title">On-Device SLM (Offline AI)</string>
+    <string name="onboarding_cleanup_option_slm_badge">Offline AI</string>
+    <string name="onboarding_cleanup_option_slm_desc">Qwen 2.5 0.5B neural model running 100% locally on your phone for smart context rewrite.</string>
+    <string name="onboarding_cleanup_option_cloud_title">Cloud LLM (Deep Polish)</string>
+    <string name="onboarding_cleanup_option_cloud_desc">Uses OpenAI, Groq, or Gemini to intelligently rephrase sentences, improve tone, and adapt to context (requires API key).</string>
+    <string name="onboarding_cleanup_option_off_title">Raw Transcription (Off)</string>
+    <string name="onboarding_cleanup_option_off_desc">Outputs exactly what was spoken with zero modifications or filtering.</string>
+    <string name="onboarding_permissions_title">Enable Permissions</string>
+    <string name="onboarding_permissions_subtitle">Two permissions are required so Sayso can float over apps and capture your voice.</string>
+    <string name="onboarding_perm_mic_title">Microphone Permission</string>
+    <string name="onboarding_perm_mic_desc">Required to record audio when you tap the dictation button.</string>
+    <string name="onboarding_perm_acc_title">Accessibility Service</string>
+    <string name="onboarding_perm_acc_desc">Required to detect focused input fields and type text directly into apps.</string>
+    <string name="onboarding_perm_grant">Grant</string>
+    <string name="onboarding_perm_enable">Enable</string>
+    <string name="onboarding_perm_granted">Granted</string>
+    <string name="onboarding_perm_active">Active</string>
+    <string name="home_setup_wizard_cta">Setup Wizard</string>
+    <string name="home_setup_wizard_subtitle">Interactive guide for speech models, AI polish, and permissions</string>
+    <string name="home_banner_model_needed_title">Voice Model Download Required</string>
+    <string name="home_banner_model_needed_desc">To start dictating, download the on-device Parakeet speech model (104 MB) or configure a cloud API key.</string>
+    <string name="home_banner_download_cta">Download Voice Model (104 MB)</string>
 </resources>

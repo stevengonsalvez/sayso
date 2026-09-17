@@ -110,6 +110,10 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getBoolean(KEY_SMART_DICTATION_MODES, true)
         set(value) = prefs.edit().putBoolean(KEY_SMART_DICTATION_MODES, value).apply()
 
+    override var hasCompletedOnboarding: Boolean
+        get() = prefs.getBoolean(KEY_HAS_COMPLETED_ONBOARDING, false)
+        set(value) = prefs.edit().putBoolean(KEY_HAS_COMPLETED_ONBOARDING, value).apply()
+
     private fun optionalString(key: String): String? =
         prefs.getString(key, null)?.takeIf { it.isNotBlank() }
 
@@ -183,6 +187,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** Whether smart dictation formatting (checklists, summaries) is active. */
         const val KEY_SMART_DICTATION_MODES = "smart_dictation_modes_enabled"
+
+        /** Whether the user has completed or dismissed first-run onboarding. */
+        const val KEY_HAS_COMPLETED_ONBOARDING = "has_completed_onboarding"
 
         /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
         val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"

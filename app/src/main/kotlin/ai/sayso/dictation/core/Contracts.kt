@@ -158,6 +158,7 @@ interface SettingsStore {
     var wakeWordEnabled: Boolean
     var appContextAwarenessEnabled: Boolean get() = true; set(_) {}
     var smartDictationModesEnabled: Boolean get() = true; set(_) {}
+    var hasCompletedOnboarding: Boolean get() = false; set(_) {}
 }
 
 data class HistoryEntry(

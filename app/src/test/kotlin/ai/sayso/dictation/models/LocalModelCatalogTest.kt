@@ -10,14 +10,23 @@ import org.junit.Test
 class LocalModelCatalogTest {
 
     @Test
-    fun `every entry points at a well formed sherpa release asset`() {
+    fun `every entry points at a well formed download target`() {
         LocalModelCatalog.all.forEach { model ->
-            val url = model.url.toHttpUrlOrNull()
-            assertNotNull("${model.dirName} has an unparseable url", url)
-            assertEquals("https", url!!.scheme)
-            assertEquals("github.com", url.host)
-            assertTrue(url.encodedPath.startsWith("/k2-fsa/sherpa-onnx/releases/download/asr-models/"))
-            assertEquals("${model.dirName}.tar.bz2", url.pathSegments.last())
+            if (model.files.isEmpty()) {
+                val url = model.url.toHttpUrlOrNull()
+                assertNotNull("${model.dirName} has an unparseable url", url)
+                assertEquals("https", url!!.scheme)
+                assertEquals("github.com", url.host)
+                assertTrue(url.encodedPath.startsWith("/k2-fsa/sherpa-onnx/releases/download/asr-models/"))
+                assertEquals("${model.dirName}.tar.bz2", url.pathSegments.last())
+            } else {
+                model.files.forEach { file ->
+                    val url = file.url.toHttpUrlOrNull()
+                    assertNotNull("${file.relativePath} has an unparseable url", url)
+                    assertEquals("https", url!!.scheme)
+                    assertTrue(file.sha256.matches(Regex("[0-9a-f]{64}")))
+                }
+            }
         }
     }
 
@@ -30,8 +39,13 @@ class LocalModelCatalogTest {
             assertTrue(it.displayName.isNotBlank())
             assertTrue(it.note.isNotBlank())
             assertTrue("${it.dirName} has an implausible size", it.sizeMb in 50..1000)
-            // A blank digest now fails the download outright, so every entry has to carry one.
-            assertTrue("${it.dirName} has no pinned checksum", it.sha256.matches(Regex("[0-9a-f]{64}")))
+            if (it.files.isEmpty()) {
+                assertTrue("${it.dirName} has no pinned checksum", it.sha256.matches(Regex("[0-9a-f]{64}")))
+            } else {
+                it.files.forEach { file ->
+                    assertTrue("${file.relativePath} has no pinned checksum", file.sha256.matches(Regex("[0-9a-f]{64}")))
+                }
+            }
         }
     }
 
@@ -46,7 +60,9 @@ class LocalModelCatalogTest {
 
     @Test
     fun `lookup by directory name matches what the downloader unpacks`() {
-        assertEquals("Whisper Base", LocalModelCatalog.byDirName("sherpa-onnx-whisper-base.en")?.displayName)
+        assertEquals("Whisper Base (English)", LocalModelCatalog.byDirName("sherpa-onnx-whisper-base.en")?.displayName)
+        assertEquals("AI4Bharat Tamil (Colloquial)", LocalModelCatalog.byDirName("ai4bharat-indicconformer-ta")?.displayName)
+        assertEquals("Whisper Multilingual Tiny", LocalModelCatalog.byDirName("sherpa-onnx-whisper-tiny")?.displayName)
         assertNull(LocalModelCatalog.byDirName("sherpa-onnx-not-shipped"))
     }
 }

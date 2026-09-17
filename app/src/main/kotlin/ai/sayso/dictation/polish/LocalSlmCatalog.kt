@@ -9,6 +9,7 @@ data class SlmModelInfo(
     val description: String,
     val downloadUrl: String,
     val fileName: String,
+    val sha256: String = "",
 )
 
 object LocalSlmCatalog {
@@ -16,13 +17,15 @@ object LocalSlmCatalog {
         id = "local-slm/qwen2.5-0.5b",
         displayName = "Qwen 2.5 (0.5B) Instruct",
         parameterCount = "0.5B",
-        quantizedSizeMb = 350,
+        quantizedSizeMb = 468,
         description = "Fast on-device SLM. Smart dictation, action items, and context rewrite with minimal battery usage.",
         downloadUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
     )
 
     val all: List<SlmModelInfo> = listOf(qwen05b)
+
+    val default: SlmModelInfo = qwen05b
 
     fun byId(id: String): SlmModelInfo? = all.firstOrNull { it.id == id }
 }
