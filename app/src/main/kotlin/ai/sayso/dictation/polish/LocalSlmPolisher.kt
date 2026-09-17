@@ -19,7 +19,8 @@ object LocalSlmPolisher : PolishProvider {
         PolishModel(LocalSlmCatalog.qwen05b.id, LocalSlmCatalog.qwen05b.displayName),
     )
 
-    private var storageDir: File? = null
+    var storageDir: File? = null
+        private set
 
     fun init(filesDir: File) {
         storageDir = File(filesDir, "models/slm").apply { mkdirs() }
@@ -40,6 +41,10 @@ object LocalSlmPolisher : PolishProvider {
     ): PolishResult {
         val transcript = CleanupPolicy.extractTranscript(userMessage)
             ?: return PolishResult.Failure("Malformed cleanup payload")
+
+        if (!isModelInstalled(modelName) && !isModelInstalled(LocalSlmCatalog.qwen05b.id)) {
+            return PolishResult.Failure("Qwen SLM is not downloaded yet. Download it in Cleanup settings.")
+        }
 
         // Format and clean text with smart rules baseline
         val cleaned = LocalRulesPolisher.clean(transcript)
