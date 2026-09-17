@@ -22,4 +22,5 @@ class InMemorySettings(
     override var wakeWordEnabled: Boolean = false,
     override var appContextAwarenessEnabled: Boolean = true,
     override var smartDictationModesEnabled: Boolean = true,
+    override var hasCompletedOnboarding: Boolean = false,
 ) : SettingsStore
