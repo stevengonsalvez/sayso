@@ -134,7 +134,7 @@ class LocalSherpaProviderTest {
 
         assertEquals(1, offered.size)
         assertEquals("local/sherpa-onnx-whisper-base.en", offered.single().id)
-        assertEquals("Whisper Base", offered.single().displayName)
+        assertEquals("Whisper Base (English)", offered.single().displayName)
         assertEquals("English, strong punctuation", offered.single().note)
     }
 }
