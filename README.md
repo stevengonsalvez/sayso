@@ -129,10 +129,6 @@ The first build automatically retrieves the `sherpa-onnx` runtime AAR from k2-fs
 - **Persistence**: Room SQLite database, Android Keystore encryption
 - **Networking**: OkHttp 4, Server-Sent Events (SSE)
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=stevengonsalvez/sayso&type=date&legend=top-left)](https://www.star-history.com/#stevengonsalvez/sayso&type=date&legend=top-left)
-
 ## Contributing
 
 Contributions are welcome! Please follow these steps:
