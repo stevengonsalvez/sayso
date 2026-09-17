@@ -28,9 +28,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -38,12 +41,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import ai.sayso.dictation.AppGraph
 import ai.sayso.dictation.R
+import ai.sayso.dictation.service.DictationService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Every destination in the settings app. Home is the hub; everything else is one level deep. */
 enum class Screen(@StringRes val titleRes: Int) {
@@ -74,7 +83,30 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SaysoApp() {
+    val context = LocalContext.current
+    val settings = AppGraph.settings
+    val downloads = AppGraph.downloads
+    val modelsDir = AppGraph.localModelsDir
+
     var screen by rememberSaveable { mutableStateOf(Screen.Home) }
+    var showOnboarding by rememberSaveable { mutableStateOf(!settings.hasCompletedOnboarding) }
+    var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
+    var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
+    var isSttReady by remember { mutableStateOf(false) }
+
+    LifecycleResumeEffect(Unit) {
+        micGranted = context.hasMicPermission()
+        serviceOn = DictationService.isEnabled(context)
+        onPauseOrDispose { }
+    }
+
+    LaunchedEffect(downloads.state, settings.sttModelId) {
+        isSttReady = withContext(Dispatchers.IO) {
+            checkSttReady(settings, modelsDir)
+        }
+    }
+
+    val isReady = micGranted && serviceOn && isSttReady
 
     BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
 
@@ -136,9 +168,11 @@ fun SaysoApp() {
                     if (screen == Screen.Home) {
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = Color(0xFFDCFCE7),
-                            border = BorderStroke(1.dp, Color(0xFF86EFAC)),
-                            modifier = Modifier.padding(end = 12.dp),
+                            color = if (isReady) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
+                            border = BorderStroke(1.dp, if (isReady) Color(0xFF86EFAC) else Color(0xFFFCD34D)),
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .clickable { if (!isReady) showOnboarding = true },
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -149,13 +183,13 @@ fun SaysoApp() {
                                     modifier = Modifier
                                         .size(7.dp)
                                         .clip(CircleShape)
-                                        .background(Color(0xFF16A34A)),
+                                        .background(if (isReady) Color(0xFF16A34A) else Color(0xFFD97706)),
                                 )
                                 Text(
-                                    text = "READY",
+                                    text = if (isReady) "READY" else "SETUP",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF15803D),
+                                    color = if (isReady) Color(0xFF15803D) else Color(0xFFB45309),
                                     letterSpacing = 0.5.sp,
                                 )
                             }
@@ -190,5 +224,12 @@ fun SaysoApp() {
                 Screen.About -> AboutScreen()
             }
         }
+    }
+
+    if (showOnboarding) {
+        OnboardingDialog(
+            onDismiss = { showOnboarding = false },
+            onNavigateToScreen = { screen = it },
+        )
     }
 }
