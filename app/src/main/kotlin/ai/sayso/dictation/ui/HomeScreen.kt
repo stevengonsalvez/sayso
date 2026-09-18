@@ -41,6 +41,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -50,6 +51,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.rememberCoroutineScope
+import ai.sayso.dictation.models.LocalModel
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import ai.sayso.dictation.models.DownloadState
@@ -79,7 +83,9 @@ import ai.sayso.dictation.history.Insights
 import ai.sayso.dictation.history.InsightsSummary
 import ai.sayso.dictation.service.DictationService
 import ai.sayso.dictation.service.WakeWordService
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -98,6 +104,9 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
+    var installedIndicModels by remember { mutableStateOf(emptySet<String>()) }
+    var showLanguageDownloadDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
     var insightsSummary by remember { mutableStateOf<InsightsSummary?>(null) }
@@ -136,6 +145,12 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 checkSttReady(settings, modelsDir),
             )
         }
+        val indicInstalled = withContext(Dispatchers.IO) {
+            LocalModelCatalog.indicModels
+                .filter { downloads.isInstalled(it, modelsDir) }
+                .map { it.dirName }
+                .toSet()
+        }
         val ins = if (resumeTick > 0) {
             withContext(Dispatchers.IO) { Insights.compute(AppGraph.history.all()) }
         } else {
@@ -145,6 +160,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         cleanupSummary = cleanup
         insightsSummary = ins
         isSttReady = readyStt
+        installedIndicModels = indicInstalled
     }
 
     val ready = micGranted && serviceOn && isSttReady
@@ -311,11 +327,35 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             )
         }
 
+        if (showLanguageDownloadDialog) {
+            LanguageRoutingDownloadDialog(
+                installedDirNames = installedIndicModels,
+                isDownloading = downloads.busy,
+                onDismiss = { showLanguageDownloadDialog = false },
+                onDownloadSelected = { selectedModels ->
+                    showLanguageDownloadDialog = false
+                    scope.launch {
+                        for (model in selectedModels) {
+                            if (!downloads.isInstalled(model, modelsDir)) {
+                                val done = CompletableDeferred<Unit>()
+                                downloads.start(model, modelsDir, context.cacheDir) {
+                                    done.complete(Unit)
+                                }
+                                done.await()
+                            }
+                        }
+                        resumeTick++
+                    }
+                },
+            )
+        }
+
         // 3. Hands-Free & Overlay Controls Card
         HandsFreeControlsCard(
             wakeWord = wakeWord,
             bubbleAlwaysVisible = bubbleAlwaysVisible,
             autoLanguageRouting = autoLanguageRouting,
+            installedIndicCount = installedIndicModels.size,
             onWakeWordChange = { enabled ->
                 if (enabled) {
                     if (!micGranted) {
@@ -339,7 +379,11 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             onAutoLanguageRoutingChange = { enabled ->
                 autoLanguageRouting = enabled
                 AppGraph.settings.autoLanguageRoutingEnabled = enabled
+                if (enabled && installedIndicModels.isEmpty()) {
+                    showLanguageDownloadDialog = true
+                }
             },
+            onOpenLanguageDownload = { showLanguageDownloadDialog = true },
         )
 
         // 4. Speech & Cleanup Engines Card
@@ -1033,9 +1077,11 @@ private fun HandsFreeControlsCard(
     wakeWord: Boolean,
     bubbleAlwaysVisible: Boolean,
     autoLanguageRouting: Boolean,
+    installedIndicCount: Int,
     onWakeWordChange: (Boolean) -> Unit,
     onBubbleAlwaysVisibleChange: (Boolean) -> Unit,
     onAutoLanguageRoutingChange: (Boolean) -> Unit,
+    onOpenLanguageDownload: () -> Unit,
 ) {
     Column {
         Text(
@@ -1069,6 +1115,77 @@ private fun HandsFreeControlsCard(
                     checked = autoLanguageRouting,
                     onCheckedChange = onAutoLanguageRoutingChange,
                 )
+                if (autoLanguageRouting) {
+                    if (installedIndicCount == 0) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clickable(onClick = onOpenLanguageDownload),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "⚠️",
+                                    fontSize = 14.sp,
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "No Indic models downloaded",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = "Tap to select and download languages for auto-routing",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download models",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clickable(onClick = onOpenLanguageDownload),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "✓",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 14.sp,
+                                )
+                                Text(
+                                    text = "Active for $installedIndicCount Indic language(s) + English. Tap to manage.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
+                    }
+                }
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -1082,6 +1199,130 @@ private fun HandsFreeControlsCard(
             }
         }
     }
+}
+
+@Composable
+private fun LanguageRoutingDownloadDialog(
+    installedDirNames: Set<String>,
+    isDownloading: Boolean,
+    onDismiss: () -> Unit,
+    onDownloadSelected: (List<LocalModel>) -> Unit,
+) {
+    val indicModels = remember { LocalModelCatalog.indicModels }
+    val selectedDirNames = remember {
+        mutableStateMapOf<String, Boolean>().apply {
+            indicModels.forEach { model ->
+                put(model.dirName, true)
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                MaterialTheme.colorScheme.primary,
+                                Color(0xFF0284C7),
+                            ),
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Download,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Language Routing Models",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Select Indic language models to download. Automatic routing will classify your speech and switch to these models seamlessly with English.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                        indicModels.forEach { model ->
+                            val isInstalled = model.dirName in installedDirNames
+                            val isChecked = selectedDirNames[model.dirName] == true
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !isInstalled) {
+                                        selectedDirNames[model.dirName] = !isChecked
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = isInstalled || isChecked,
+                                    onCheckedChange = if (isInstalled) null else { checked ->
+                                        selectedDirNames[model.dirName] = checked
+                                    },
+                                    enabled = !isInstalled,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = model.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = if (isInstalled) "Installed" else "${model.sizeMb} MB · On-device",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val toDownload = indicModels.filter { model ->
+                model.dirName !in installedDirNames && selectedDirNames[model.dirName] == true
+            }
+            Button(
+                onClick = { onDownloadSelected(toDownload) },
+                enabled = !isDownloading && toDownload.isNotEmpty(),
+            ) {
+                Text(if (toDownload.isEmpty()) "Done" else "Download (${toDownload.sumOf { it.sizeMb }} MB)")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Later")
+            }
+        },
+        shape = RoundedCornerShape(20.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+    )
 }
 
 @Composable
