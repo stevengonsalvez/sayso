@@ -85,8 +85,10 @@ class AudioCapture(
         val buffer = ByteArray(bufferBytes)
         var autoStopReason: AutoStopReason? = null
         var hasDetectedSpeech = false
-        var lastSpeechMs = System.currentTimeMillis()
+        val startMs = android.os.SystemClock.elapsedRealtime()
+        var lastSpeechMs = startMs
         val minSpeechBytes = SAMPLE_RATE * BYTES_PER_SAMPLE / 2 // At least 500 ms audio before silence can trigger
+        val initialSilenceTimeoutMs = 4000L // 4 seconds without speech at start ends recording
 
         while (recording) {
             val read = recorder.read(buffer, 0, buffer.size)
@@ -98,17 +100,20 @@ class AudioCapture(
             collected.write(buffer, 0, minOf(read, room))
 
             if (autoStopSilence) {
-                var maxAmp = 0
+                var sumSquares = 0.0
+                var samplesCount = 0
                 var i = 0
                 while (i + 1 < read) {
-                    val sample = (buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)
-                    val amp = kotlin.math.abs(sample.toShort().toInt())
-                    if (amp > maxAmp) maxAmp = amp
+                    val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()
+                    sumSquares += sample.toDouble() * sample.toDouble()
+                    samplesCount++
                     i += 2
                 }
+                val rms = if (samplesCount > 0) kotlin.math.sqrt(sumSquares / samplesCount) else 0.0
+                val isSpeech = rms > 350.0
 
-                val now = System.currentTimeMillis()
-                if (maxAmp > 700) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (isSpeech) {
                     hasDetectedSpeech = true
                     lastSpeechMs = now
                 } else if (hasDetectedSpeech && collected.size() >= minSpeechBytes) {
@@ -117,6 +122,10 @@ class AudioCapture(
                         autoStopReason = AutoStopReason.SILENCE
                         recording = false
                     }
+                } else if (!hasDetectedSpeech && (now - startMs >= initialSilenceTimeoutMs)) {
+                    Log.d(TAG, "Auto-stopping recording after initial silence timeout")
+                    autoStopReason = AutoStopReason.SILENCE
+                    recording = false
                 }
             }
 
