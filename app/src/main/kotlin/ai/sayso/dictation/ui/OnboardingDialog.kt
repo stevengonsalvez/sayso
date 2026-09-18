@@ -307,7 +307,7 @@ fun OnboardingDialog(
                             onOpenOtherModels = { showOtherModelsDialog = true },
                             isModelInstalled = isModelInstalled,
                             downloadState = downloads.state,
-                            isDownloading = downloads.busy,
+                            isDownloading = downloads.busy && downloads.activeDirName == selectedLocalModel.dirName,
                             onStartDownload = {
                                 selectedSttChoice = SttEngineChoice.LOCAL
                                 downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
@@ -337,9 +337,6 @@ fun OnboardingDialog(
                                     PolishModeChoice.LOCAL_SLM -> {
                                         settings.polishEnabled = true
                                         settings.polishModelId = defaultSlmModel.id
-                                        if (slmStorageDir != null && !isSlmInstalled && !slmDownloads.busy) {
-                                            slmDownloads.start(defaultSlmModel, slmStorageDir) {}
-                                        }
                                     }
                                     PolishModeChoice.CLOUD -> {
                                         settings.polishEnabled = true
@@ -1015,25 +1012,34 @@ private fun StepTwoPostProcessing(
                             )
                         }
                     } else {
-                        Button(
-                            onClick = onStartSlmDownload,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        ) {
-                            Icon(
-                                Icons.Default.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "Download ${defaultSlmModel.displayName} (${defaultSlmModel.quantizedSizeMb} MB)",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (slmDownloadState is DownloadState.Error) {
+                                Text(
+                                    text = "Download failed: ${slmDownloadState.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            Button(
+                                onClick = onStartSlmDownload,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Download ${defaultSlmModel.displayName} (${defaultSlmModel.quantizedSizeMb} MB)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
                         }
                     }
                 }
