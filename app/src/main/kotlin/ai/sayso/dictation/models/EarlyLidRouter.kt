@@ -77,7 +77,7 @@ object EarlyLidRouter {
             DetectedLanguage.HINDI -> MODEL_HINDI
             DetectedLanguage.MALAYALAM -> MODEL_MALAYALAM
             DetectedLanguage.ENGLISH -> {
-                if (defaultModelId.contains("indic") || defaultModelId.contains("ai4bharat")) {
+                if (overrideLanguage == DetectedLanguage.ENGLISH && (defaultModelId.contains("indic") || defaultModelId.contains("ai4bharat"))) {
                     MODEL_ENGLISH_DEFAULT
                 } else {
                     defaultModelId
