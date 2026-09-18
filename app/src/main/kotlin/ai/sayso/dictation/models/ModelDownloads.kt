@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import ai.sayso.dictation.core.SettingsStore
 import ai.sayso.dictation.settings.Settings
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -28,12 +29,47 @@ class ModelDownloads(private val scope: CoroutineScope) {
         get() = state is DownloadState.Downloading || state is DownloadState.Extracting
 
     fun start(model: LocalModel, modelsDir: File, cacheDir: File, onFinished: () -> Unit) {
-        if (busy) return
+        if (busy) {
+            onFinished()
+            return
+        }
         activeDirName = model.dirName
         state = DownloadState.Downloading(0f)
         scope.launch {
             downloader.download(model, modelsDir, cacheDir).collect { state = it }
             onFinished()
+        }
+    }
+
+    /**
+     * Downloads a sequence of models sequentially, skipping any already installed.
+     * Runs on the long-lived scope so navigating away does not abort queue.
+     */
+    fun enqueue(
+        models: List<LocalModel>,
+        modelsDir: File,
+        cacheDir: File,
+        onAllFinished: () -> Unit = {},
+    ) {
+        if (models.isEmpty()) {
+            onAllFinished()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            for (model in models) {
+                if (!isInstalled(model, modelsDir)) {
+                    val done = CompletableDeferred<Unit>()
+                    withContext(Dispatchers.Main) {
+                        start(model, modelsDir, cacheDir) {
+                            done.complete(Unit)
+                        }
+                    }
+                    done.await()
+                }
+            }
+            withContext(Dispatchers.Main) {
+                onAllFinished()
+            }
         }
     }
 
