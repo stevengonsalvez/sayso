@@ -98,6 +98,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var history by remember { mutableStateOf(settings.historyEnabled) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
+    var autoStopSilence by remember { mutableStateOf(settings.autoStopSilenceEnabled) }
     var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
 
     // Leaving the screen with the keyboard still up never blurs the field, so the last edit
@@ -153,6 +154,15 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                     settings.wakeWordEnabled = false
                     WakeWordService.stop(context)
                 }
+            },
+        )
+        SwitchRow(
+            title = "Hands-free silence auto-stop",
+            subtitle = "Automatically end recording when you pause speaking",
+            checked = autoStopSilence,
+            onCheckedChange = {
+                autoStopSilence = it
+                settings.autoStopSilenceEnabled = it
             },
         )
         SwitchRow(
@@ -286,6 +296,40 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                             DictationService.instance?.reloadLocalModel()
                         },
                     )
+                }
+
+                Surface(
+                    onClick = onOpenLocalModels,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Manage on-device models",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = "Download Indic (Tamil, Hindi, Malayalam), Whisper, Moonshine, or delete models",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         } else {
