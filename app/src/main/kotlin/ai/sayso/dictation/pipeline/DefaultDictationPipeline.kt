@@ -138,7 +138,7 @@ class DefaultDictationPipeline(
                     ai.sayso.dictation.models.DetectedLanguage.HINDI -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_HINDI
                     ai.sayso.dictation.models.DetectedLanguage.MALAYALAM -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_MALAYALAM
                     ai.sayso.dictation.models.DetectedLanguage.ENGLISH -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT
-                    else -> settings.sttModelId
+                    ai.sayso.dictation.models.DetectedLanguage.UNKNOWN -> settings.sttModelId
                 }
                 if (stt.find(matchingModel) != null) matchingModel else settings.sttModelId
             } else if (settings.sttModelId.contains("indic") || settings.sttModelId.contains("ai4bharat")) {
