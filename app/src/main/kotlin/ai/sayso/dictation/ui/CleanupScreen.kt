@@ -477,8 +477,8 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
             },
         )
         SwitchRow(
-            title = "Transliterate Indic to Latin",
-            subtitle = "Phonetically convert Tamil, Hindi, and Malayalam into colloquial Latin script (Tanglish, Hinglish, Manglish).",
+            title = "Transliterate to Tanglish / Hinglish / Manglish",
+            subtitle = "Phonetically convert Tamil, Hindi, and Malayalam speech into English letters (Tanglish, Hinglish, Manglish).",
             checked = transliterateIndic,
             onCheckedChange = {
                 transliterateIndic = it
