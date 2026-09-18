@@ -180,12 +180,12 @@ fun OnboardingDialog(
     var waitingForSlmDownload by remember { mutableStateOf(false) }
 
     // Latch waiting state when active model download begins
-    LaunchedEffect(downloads.busy) {
+    LaunchedEffect(downloads.busy, currentStep, selectedSttChoice) {
         if (downloads.busy && selectedSttChoice == SttEngineChoice.LOCAL && currentStep == 0) {
             waitingForSttDownload = true
         }
     }
-    LaunchedEffect(slmDownloads.busy) {
+    LaunchedEffect(slmDownloads.busy, currentStep, selectedPolishMode) {
         if (slmDownloads.busy && selectedPolishMode == PolishModeChoice.LOCAL_SLM && currentStep == 1) {
             waitingForSlmDownload = true
         }
@@ -364,8 +364,10 @@ fun OnboardingDialog(
                             onStartDownload = {
                                 selectedSttChoice = SttEngineChoice.LOCAL
                                 downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
-                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                    DictationService.instance?.reloadLocalModel()
+                                    if (downloads.state is DownloadState.Done && selectedSttChoice == SttEngineChoice.LOCAL) {
+                                        settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                        DictationService.instance?.reloadLocalModel()
+                                    }
                                 }
                             },
                         )
@@ -378,8 +380,10 @@ fun OnboardingDialog(
                             onStartSlmDownload = {
                                 if (slmStorageDir != null) {
                                     slmDownloads.start(defaultSlmModel, slmStorageDir) {
-                                        settings.polishEnabled = true
-                                        settings.polishModelId = defaultSlmModel.id
+                                        if (slmDownloads.state is DownloadState.Done && selectedPolishMode == PolishModeChoice.LOCAL_SLM) {
+                                            settings.polishEnabled = true
+                                            settings.polishModelId = defaultSlmModel.id
+                                        }
                                     }
                                 }
                             },
@@ -474,8 +478,10 @@ fun OnboardingDialog(
                                         waitingForSttDownload = true
                                         if (!downloads.busy) {
                                             downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
-                                                settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                                DictationService.instance?.reloadLocalModel()
+                                                if (downloads.state is DownloadState.Done && selectedSttChoice == SttEngineChoice.LOCAL) {
+                                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                                    DictationService.instance?.reloadLocalModel()
+                                                }
                                             }
                                         }
                                     }
@@ -483,8 +489,10 @@ fun OnboardingDialog(
                                         waitingForSlmDownload = true
                                         if (!slmDownloads.busy && slmStorageDir != null) {
                                             slmDownloads.start(defaultSlmModel, slmStorageDir) {
-                                                settings.polishEnabled = true
-                                                settings.polishModelId = defaultSlmModel.id
+                                                if (slmDownloads.state is DownloadState.Done && selectedPolishMode == PolishModeChoice.LOCAL_SLM) {
+                                                    settings.polishEnabled = true
+                                                    settings.polishModelId = defaultSlmModel.id
+                                                }
                                             }
                                         }
                                     }
