@@ -23,7 +23,17 @@ object LocalSlmCatalog {
         fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
     )
 
-    val all: List<SlmModelInfo> = listOf(qwen05b)
+    val phi3Mini = SlmModelInfo(
+        id = "local-slm/phi-3-mini",
+        displayName = "Microsoft Phi-3 Mini (3.8B)",
+        parameterCount = "3.8B",
+        quantizedSizeMb = 2390,
+        description = "Microsoft high-reasoning on-device SLM. Advanced restructuring, tone polish, and concise rewriting.",
+        downloadUrl = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+        fileName = "Phi-3-mini-4k-instruct-q4.gguf",
+    )
+
+    val all: List<SlmModelInfo> = listOf(qwen05b, phi3Mini)
 
     val default: SlmModelInfo = qwen05b
 
