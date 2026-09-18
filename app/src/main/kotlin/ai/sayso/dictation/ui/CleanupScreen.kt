@@ -62,6 +62,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ai.sayso.dictation.AppGraph
 import ai.sayso.dictation.R
 import ai.sayso.dictation.core.PolishModel
@@ -128,16 +129,16 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
     var previewOpen by remember { mutableStateOf(false) }
 
     val slmDownloads = AppGraph.slmDownloads
-    val slmModel = remember { LocalSlmCatalog.default }
     val slmStorageDir = remember { LocalSlmPolisher.storageDir }
     var slmRefreshTrigger by remember { mutableIntStateOf(0) }
-    var isSlmInstalled by remember { mutableStateOf(false) }
-    var showSlmDeleteConfirm by remember { mutableStateOf(false) }
+    var installedSlmIds by remember { mutableStateOf(emptySet<String>()) }
+    var pendingDeleteSlm by remember { mutableStateOf<ai.sayso.dictation.polish.SlmModelInfo?>(null) }
+    var previewPromptPreset by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(slmRefreshTrigger, slmDownloads.state) {
         if (slmStorageDir != null) {
-            isSlmInstalled = withContext(Dispatchers.IO) {
-                slmDownloads.isInstalled(slmModel, slmStorageDir)
+            installedSlmIds = withContext(Dispatchers.IO) {
+                LocalSlmCatalog.all.filter { slmDownloads.isInstalled(it, slmStorageDir) }.map { it.id }.toSet()
             }
         }
     }
@@ -186,8 +187,11 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
                 selected = mode == PostProcessingMode.LOCAL_LLM,
                 onClick = {
                     mode = PostProcessingMode.LOCAL_LLM
-                    selectedModel = slmModel.id
-                    settings.polishModelId = slmModel.id
+                    if (!selectedModel.startsWith("local-slm/")) {
+                        val first = LocalSlmCatalog.default.id
+                        selectedModel = first
+                        settings.polishModelId = first
+                    }
                 },
                 modifier = Modifier.weight(1f),
             )
@@ -241,146 +245,169 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
                 }
             }
             PostProcessingMode.LOCAL_LLM -> {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Memory,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    text = slmModel.displayName,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                                Text(
-                                    text = "${slmModel.parameterCount} params · ${slmModel.quantizedSizeMb} MB · GGUF q4_k_m",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-
-                            if (isSlmInstalled) {
-                                IconButton(onClick = { showSlmDeleteConfirm = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.Delete,
-                                        contentDescription = "Delete SLM model",
-                                        tint = MaterialTheme.colorScheme.error,
-                                    )
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = slmModel.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        val slmActive = slmDownloads.activeModelId == slmModel.id
+                    for (slm in LocalSlmCatalog.all) {
+                        val isInstalled = slm.id in installedSlmIds
+                        val isSelected = selectedModel == slm.id
+                        val slmActive = slmDownloads.activeModelId == slm.id
                         val slmState = slmDownloads.state
 
-                        if (isSlmInstalled) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        Color(0xFF16A34A).copy(alpha = 0.12f),
-                                        RoundedCornerShape(8.dp),
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = Color(0xFF16A34A),
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    text = "Model installed · Ready for offline rewrite",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF15803D),
-                                )
-                            }
-                        } else if (slmActive && slmState is DownloadState.Downloading) {
-                            val pct = (slmState.progress * 100).roundToInt()
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(
+                            onClick = {
+                                selectedModel = slm.id
+                                settings.polishModelId = slm.id
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            },
+                            border = BorderStroke(
+                                if (isSelected) 1.5.dp else 1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
-                                    Text(
-                                        text = "Downloading SLM weights...",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.SemiBold,
+                                    androidx.compose.material3.RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            selectedModel = slm.id
+                                            settings.polishModelId = slm.id
+                                        },
                                     )
-                                    Text(
-                                        text = "$pct%",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                                LinearProgressIndicator(
-                                    progress = { slmState.progress },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(8.dp)
-                                        .clip(RoundedCornerShape(4.dp)),
-                                )
-                            }
-                        } else {
-                            if (slmActive && slmState is DownloadState.Error) {
-                                Text(
-                                    text = "Error: ${slmState.message}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.padding(bottom = 8.dp),
-                                )
-                            }
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = slm.displayName,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                        Text(
+                                            text = "${slm.parameterCount} params · ${slm.quantizedSizeMb} MB · GGUF",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
 
-                            Button(
-                                enabled = !slmDownloads.busy && slmStorageDir != null,
-                                onClick = {
-                                    if (slmStorageDir != null) {
-                                        slmDownloads.start(slmModel, slmStorageDir) {
-                                            slmRefreshTrigger++
+                                    if (isInstalled) {
+                                        IconButton(onClick = { pendingDeleteSlm = slm }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete SLM model",
+                                                tint = MaterialTheme.colorScheme.error,
+                                            )
                                         }
                                     }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
+                                }
+
+                                Spacer(Modifier.height(6.dp))
                                 Text(
-                                    text = "Download Model (${slmModel.quantizedSizeMb} MB)",
-                                    fontWeight = FontWeight.Bold,
+                                    text = slm.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+
+                                Spacer(Modifier.height(10.dp))
+
+                                if (isInstalled) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .background(
+                                                androidx.compose.ui.graphics.Color(0xFF16A34A).copy(alpha = 0.12f),
+                                                RoundedCornerShape(8.dp),
+                                            )
+                                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = androidx.compose.ui.graphics.Color(0xFF16A34A),
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "Model installed · Ready for offline rewrite",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = androidx.compose.ui.graphics.Color(0xFF15803D),
+                                        )
+                                    }
+                                } else if (slmActive && slmState is DownloadState.Downloading) {
+                                    val pct = (slmState.progress * 100).roundToInt()
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text(
+                                                text = "Downloading ${slm.displayName}...",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Text(
+                                                text = "$pct%",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                        LinearProgressIndicator(
+                                            progress = { slmState.progress },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(8.dp)
+                                                .clip(RoundedCornerShape(4.dp)),
+                                        )
+                                    }
+                                } else {
+                                    if (slmActive && slmState is DownloadState.Error) {
+                                        Text(
+                                            text = "Error: ${slmState.message}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(bottom = 8.dp),
+                                        )
+                                    }
+
+                                    Button(
+                                        enabled = !slmDownloads.busy && slmStorageDir != null,
+                                        onClick = {
+                                            if (slmStorageDir != null) {
+                                                selectedModel = slm.id
+                                                settings.polishModelId = slm.id
+                                                slmDownloads.start(slm, slmStorageDir) {
+                                                    slmRefreshTrigger++
+                                                }
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Download,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "Download Model (${slm.quantizedSizeMb} MB)",
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -461,6 +488,14 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
                     customText = text
                     // The built-in prompt is the default, so it is stored as "no override".
                     settings.customPrompt = text.takeIf { it != CleanupPolicy.BASE_PROMPT }
+                },
+                trailing = {
+                    TextButton(onClick = { previewPromptPreset = name to text }) {
+                        Text(
+                            text = "Preview prompt",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 },
             )
         }
@@ -569,16 +604,17 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        if (showSlmDeleteConfirm && slmStorageDir != null) {
+        val slmToDelete = pendingDeleteSlm
+        if (slmToDelete != null && slmStorageDir != null) {
             AlertDialog(
-                onDismissRequest = { showSlmDeleteConfirm = false },
-                title = { Text("Delete ${slmModel.displayName}?") },
-                text = { Text("This will remove the ${slmModel.quantizedSizeMb} MB model file from device storage. You can redownload it anytime.") },
+                onDismissRequest = { pendingDeleteSlm = null },
+                title = { Text("Delete ${slmToDelete.displayName}?") },
+                text = { Text("This will remove the ${slmToDelete.quantizedSizeMb} MB model file from device storage. You can redownload it anytime.") },
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            showSlmDeleteConfirm = false
-                            slmDownloads.delete(slmModel, slmStorageDir) {
+                            pendingDeleteSlm = null
+                            slmDownloads.delete(slmToDelete, slmStorageDir) {
                                 slmRefreshTrigger++
                             }
                         },
@@ -587,8 +623,48 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showSlmDeleteConfirm = false }) {
+                    TextButton(onClick = { pendingDeleteSlm = null }) {
                         Text("Cancel")
+                    }
+                },
+            )
+        }
+
+        val promptPreview = previewPromptPreset
+        if (promptPreview != null) {
+            AlertDialog(
+                onDismissRequest = { previewPromptPreset = null },
+                title = {
+                    Text(
+                        text = "${promptPreview.first} Prompt",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = promptPreview.second,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp),
+                                lineHeight = 18.sp,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { previewPromptPreset = null }) {
+                        Text("Close")
                     }
                 },
             )
