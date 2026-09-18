@@ -161,6 +161,8 @@ interface SettingsStore {
     var hasCompletedOnboarding: Boolean get() = false; set(_) {}
     var autoStopSilenceEnabled: Boolean get() = true; set(_) {}
     var silenceTimeoutSeconds: Float get() = 1.8f; set(_) {}
+    var transliterateIndicToLatin: Boolean get() = false; set(_) {}
+    var autoLanguageRoutingEnabled: Boolean get() = false; set(_) {}
 }
 
 data class HistoryEntry(
