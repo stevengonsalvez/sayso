@@ -131,12 +131,31 @@ class DefaultDictationPipeline(
      */
     private fun resolveStt(clip: AudioClip? = null): Resolved? {
         val targetModelId = if (settings.autoLanguageRoutingEnabled && clip != null && !clip.isEmpty) {
-            val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
-                .map { "local/${it.dirName}" }
-                .filter { stt.find(it) != null }
-                .toSet()
-            val decision = ai.sayso.dictation.models.EarlyLidRouter.route(clip, installedIds, settings.sttModelId)
-            decision.recommendedModelId
+            val userExplicitLanguage = settings.language?.let { ai.sayso.dictation.models.DetectedLanguage.fromCode(it) }
+            if (userExplicitLanguage != null && userExplicitLanguage != ai.sayso.dictation.models.DetectedLanguage.UNKNOWN) {
+                val matchingModel = when (userExplicitLanguage) {
+                    ai.sayso.dictation.models.DetectedLanguage.TAMIL -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL
+                    ai.sayso.dictation.models.DetectedLanguage.HINDI -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_HINDI
+                    ai.sayso.dictation.models.DetectedLanguage.MALAYALAM -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_MALAYALAM
+                    ai.sayso.dictation.models.DetectedLanguage.ENGLISH -> ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT
+                    else -> settings.sttModelId
+                }
+                if (stt.find(matchingModel) != null) matchingModel else settings.sttModelId
+            } else if (settings.sttModelId.contains("indic") || settings.sttModelId.contains("ai4bharat")) {
+                settings.sttModelId
+            } else {
+                val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
+                    .map { "local/${it.dirName}" }
+                    .filter { stt.find(it) != null }
+                    .toSet()
+                val decision = ai.sayso.dictation.models.EarlyLidRouter.route(
+                    clip = clip,
+                    installedModelIds = installedIds,
+                    defaultModelId = settings.sttModelId,
+                    overrideLanguage = null,
+                )
+                decision.recommendedModelId
+            }
         } else {
             settings.sttModelId
         }
