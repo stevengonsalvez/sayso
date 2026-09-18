@@ -259,6 +259,7 @@ class DictationService : AccessibilityService() {
     }
 
     private fun onAutoStop(reason: AutoStopReason) {
+        if (state != State.RECORDING) return
         enterBusy()
         if (reason == AutoStopReason.MAX_DURATION) {
             feedback(getString(R.string.feedback_max_length))
