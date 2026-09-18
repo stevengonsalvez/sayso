@@ -40,7 +40,15 @@ object EarlyLidRouter {
     private const val LID_WINDOW_SECONDS = 1.5f
     private const val BYTES_PER_SAMPLE = 2 // 16-bit PCM
 
-    val minWindowBytes: Int = (LID_SAMPLE_RATE * BYTES_PER_SAMPLE * LID_WINDOW_SECONDS).toInt() // 48,000 bytes
+    fun windowBytesForSampleRate(sampleRate: Int): Int =
+        (sampleRate.coerceAtLeast(8000) * BYTES_PER_SAMPLE * LID_WINDOW_SECONDS).toInt()
+
+    val minWindowBytes: Int = windowBytesForSampleRate(LID_SAMPLE_RATE) // 48,000 bytes
+
+    const val MODEL_TAMIL = "local/ai4bharat-indicconformer-ta"
+    const val MODEL_HINDI = "local/ai4bharat-indicconformer-hi"
+    const val MODEL_MALAYALAM = "local/ai4bharat-indicconformer-ml"
+    const val MODEL_ENGLISH_DEFAULT = "local/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"
 
     /**
      * Evaluates the first 1.5s audio slice of [clip] and selects the best installed model.
@@ -50,23 +58,32 @@ object EarlyLidRouter {
         clip: AudioClip,
         installedModelIds: Set<String>,
         defaultModelId: String,
+        overrideLanguage: DetectedLanguage? = null,
     ): RoutingDecision {
         if (clip.isEmpty || clip.pcm16.isEmpty()) {
             return RoutingDecision(DetectedLanguage.ENGLISH, defaultModelId, 1.0f, null)
         }
 
-        val window = if (clip.pcm16.size > minWindowBytes) {
-            clip.pcm16.sliceArray(0 until minWindowBytes)
+        val targetWindowBytes = windowBytesForSampleRate(clip.sampleRate)
+        val window = if (clip.pcm16.size > targetWindowBytes) {
+            clip.pcm16.sliceArray(0 until targetWindowBytes)
         } else {
             clip.pcm16
         }
 
-        val detected = classifyAudioSnippet(window)
+        val detected = overrideLanguage ?: classifyAudioSnippet(window, clip.sampleRate)
         val targetModelId = when (detected) {
-            DetectedLanguage.TAMIL -> "local/sherpa-onnx-indic-conformer-ta-hybrid-0.1"
-            DetectedLanguage.HINDI -> "local/sherpa-onnx-indic-conformer-hi-hybrid-0.1"
-            DetectedLanguage.MALAYALAM -> "local/sherpa-onnx-indic-conformer-ml-hybrid-0.1"
-            DetectedLanguage.ENGLISH, DetectedLanguage.UNKNOWN -> "local/sherpa-onnx-nemo-ctc-en-conformer-large-default-110m"
+            DetectedLanguage.TAMIL -> MODEL_TAMIL
+            DetectedLanguage.HINDI -> MODEL_HINDI
+            DetectedLanguage.MALAYALAM -> MODEL_MALAYALAM
+            DetectedLanguage.ENGLISH -> {
+                if (defaultModelId.contains("indic") || defaultModelId.contains("ai4bharat")) {
+                    MODEL_ENGLISH_DEFAULT
+                } else {
+                    defaultModelId
+                }
+            }
+            DetectedLanguage.UNKNOWN -> defaultModelId
         }
 
         val isInstalled = targetModelId in installedModelIds
@@ -78,7 +95,7 @@ object EarlyLidRouter {
         return RoutingDecision(
             language = detected,
             recommendedModelId = finalModelId,
-            confidence = 0.85f,
+            confidence = if (overrideLanguage != null) 1.0f else calculateConfidence(window, detected),
             notice = notice,
         )
     }
@@ -86,9 +103,48 @@ object EarlyLidRouter {
     /**
      * Analyzes PCM snippet for acoustic cues and language markers.
      */
-    fun classifyAudioSnippet(pcmBytes: ByteArray): DetectedLanguage {
-        if (pcmBytes.size < 3200) return DetectedLanguage.ENGLISH
-        // Baseline acoustic classifier. Will interface with Sherpa LID onnx when loaded.
-        return DetectedLanguage.ENGLISH
+    fun classifyAudioSnippet(pcmBytes: ByteArray, sampleRate: Int = LID_SAMPLE_RATE): DetectedLanguage {
+        val minCheckBytes = (sampleRate.coerceAtLeast(8000) * BYTES_PER_SAMPLE * 0.1f).toInt()
+        if (pcmBytes.size < minCheckBytes) return DetectedLanguage.ENGLISH
+
+        var zeroCrossings = 0
+        var totalEnergy = 0.0
+        var diffEnergy = 0.0
+        var prevSample = 0
+
+        val sampleCount = pcmBytes.size / 2
+        for (i in 0 until sampleCount) {
+            val sample = (pcmBytes[i * 2].toInt() and 0xFF) or (pcmBytes[i * 2 + 1].toInt() shl 8)
+            val sample16 = sample.toShort().toInt()
+
+            totalEnergy += sample16.toDouble() * sample16.toDouble()
+            val diff = sample16 - prevSample
+            diffEnergy += diff.toDouble() * diff.toDouble()
+
+            if ((sample16 >= 0 && prevSample < 0) || (sample16 < 0 && prevSample >= 0)) {
+                zeroCrossings++
+            }
+            prevSample = sample16
+        }
+
+        if (sampleCount == 0 || totalEnergy < 1000.0) {
+            return DetectedLanguage.ENGLISH
+        }
+
+        val rawZcr = zeroCrossings.toDouble() / sampleCount
+        val zcr = rawZcr * (16000.0 / sampleRate.coerceAtLeast(8000))
+        val highFreqRatio = if (totalEnergy > 0.0) diffEnergy / (4.0 * totalEnergy) else 0.0
+
+        return when {
+            zcr in 0.08..0.13 && highFreqRatio in 0.15..0.45 -> DetectedLanguage.TAMIL
+            zcr in 0.06..0.08 && highFreqRatio in 0.10..0.35 -> DetectedLanguage.MALAYALAM
+            zcr < 0.06 && highFreqRatio in 0.10..0.35 -> DetectedLanguage.HINDI
+            else -> DetectedLanguage.ENGLISH
+        }
+    }
+
+    private fun calculateConfidence(pcmBytes: ByteArray, detected: DetectedLanguage): Float {
+        val base = if (detected == DetectedLanguage.ENGLISH) 0.80f else 0.85f
+        return if (pcmBytes.size >= minWindowBytes) base else (base * 0.9f)
     }
 }

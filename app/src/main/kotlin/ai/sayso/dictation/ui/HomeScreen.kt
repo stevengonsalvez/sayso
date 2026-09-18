@@ -97,6 +97,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
+    var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
     var insightsSummary by remember { mutableStateOf<InsightsSummary?>(null) }
@@ -121,6 +122,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         serviceOn = DictationService.isEnabled(context)
         wakeWord = settings.wakeWordEnabled
         bubbleAlwaysVisible = settings.bubbleAlwaysVisible
+        autoLanguageRouting = settings.autoLanguageRoutingEnabled
         resumeTick++
         onPauseOrDispose { }
     }
@@ -313,6 +315,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         HandsFreeControlsCard(
             wakeWord = wakeWord,
             bubbleAlwaysVisible = bubbleAlwaysVisible,
+            autoLanguageRouting = autoLanguageRouting,
             onWakeWordChange = { enabled ->
                 if (enabled) {
                     if (!micGranted) {
@@ -332,6 +335,10 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 bubbleAlwaysVisible = enabled
                 AppGraph.settings.bubbleAlwaysVisible = enabled
                 DictationService.instance?.updateBubbleVisibility()
+            },
+            onAutoLanguageRoutingChange = { enabled ->
+                autoLanguageRouting = enabled
+                AppGraph.settings.autoLanguageRoutingEnabled = enabled
             },
         )
 
@@ -1025,8 +1032,10 @@ private fun StatusActionRow(
 private fun HandsFreeControlsCard(
     wakeWord: Boolean,
     bubbleAlwaysVisible: Boolean,
+    autoLanguageRouting: Boolean,
     onWakeWordChange: (Boolean) -> Unit,
     onBubbleAlwaysVisibleChange: (Boolean) -> Unit,
+    onAutoLanguageRoutingChange: (Boolean) -> Unit,
 ) {
     Column {
         Text(
@@ -1049,6 +1058,16 @@ private fun HandsFreeControlsCard(
                     subtitle = stringResource(R.string.transcription_wake_word_help),
                     checked = wakeWord,
                     onCheckedChange = onWakeWordChange,
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                SwitchRow(
+                    title = "Automatic language routing",
+                    subtitle = "Classify first 1.5s of audio to automatically switch between English (Parakeet) and Indic (AI4Bharat) models",
+                    checked = autoLanguageRouting,
+                    onCheckedChange = onAutoLanguageRoutingChange,
                 )
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
