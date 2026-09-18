@@ -126,6 +126,7 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
     var outputLanguage by remember { mutableStateOf(settings.outputLanguage.orEmpty()) }
     var appContextAware by remember { mutableStateOf(settings.appContextAwarenessEnabled) }
     var smartDictation by remember { mutableStateOf(settings.smartDictationModesEnabled) }
+    var transliterateIndic by remember { mutableStateOf(settings.transliterateIndicToLatin) }
     var previewOpen by remember { mutableStateOf(false) }
 
     val slmDownloads = AppGraph.slmDownloads
@@ -473,6 +474,15 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
             onCheckedChange = {
                 smartDictation = it
                 settings.smartDictationModesEnabled = it
+            },
+        )
+        SwitchRow(
+            title = "Transliterate Indic to Latin",
+            subtitle = "Phonetically convert Tamil, Hindi, and Malayalam into colloquial Latin script (Tanglish, Hinglish, Manglish).",
+            checked = transliterateIndic,
+            onCheckedChange = {
+                transliterateIndic = it
+                settings.transliterateIndicToLatin = it
             },
         )
         HorizontalDivider()
