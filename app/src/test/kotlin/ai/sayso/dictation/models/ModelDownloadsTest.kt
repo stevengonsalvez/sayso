@@ -1,10 +1,13 @@
 package ai.sayso.dictation.models
 
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
-import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -12,70 +15,92 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class ModelDownloadsTest {
 
     @get:Rule val temp = TemporaryFolder()
 
-    @Test
-    fun `enqueue on empty list invokes onAllFinished immediately`() = runTest {
-        val testScope = TestScope(StandardTestDispatcher(testScheduler))
-        val downloads = ModelDownloads(testScope)
-        var finished = false
+    private class FakeDownloader(
+        var installedResult: Boolean = false,
+    ) : LocalModelDownloader() {
+        var downloadCallCount = 0
 
-        downloads.enqueue(emptyList(), temp.newFolder("models"), temp.newFolder("cache")) {
-            finished = true
+        override fun isInstalled(model: LocalModel, modelsDir: File): Boolean = installedResult
+
+        override fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> {
+            downloadCallCount++
+            return flowOf(DownloadState.Downloading(0.5f), DownloadState.Done)
         }
-
-        testScope.advanceUntilIdle()
-        assertTrue(finished)
     }
 
     @Test
-    fun `enqueue skips already installed models`() = kotlinx.coroutines.runBlocking {
-        val testScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
-        val downloads = ModelDownloads(testScope)
-        val modelsDir = temp.newFolder("models")
-        val cacheDir = temp.newFolder("cache")
+    fun `enqueue on empty list invokes onAllFinished immediately`() = runBlocking {
+        val fake = FakeDownloader()
+        val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
+        val finished = CompletableDeferred<Unit>()
 
-        // Default model installed with .onnx file
-        val model = LocalModelCatalog.default
-        val dir = File(modelsDir, model.dirName).apply { mkdirs() }
-        File(dir, "model.onnx").writeText("fake onnx")
-
-        val finished = kotlinx.coroutines.CompletableDeferred<Unit>()
-        downloads.enqueue(listOf(model), modelsDir, cacheDir) {
+        downloads.enqueue(emptyList(), temp.newFolder("models"), temp.newFolder("cache")) {
             finished.complete(Unit)
         }
 
-        kotlinx.coroutines.withTimeout(5000) {
+        withTimeout(5000) {
             finished.await()
         }
+        assertEquals(0, fake.downloadCallCount)
+    }
+
+    @Test
+    fun `enqueue skips already installed models`() = runBlocking {
+        val fake = FakeDownloader(installedResult = true)
+        val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
+        val finished = CompletableDeferred<Unit>()
+
+        downloads.enqueue(listOf(LocalModelCatalog.default), temp.newFolder("models"), temp.newFolder("cache")) {
+            finished.complete(Unit)
+        }
+
+        withTimeout(5000) {
+            finished.await()
+        }
+        assertEquals(0, fake.downloadCallCount)
         assertFalse(downloads.busy)
     }
 
     @Test
-    fun `start does not deadlock onFinished when busy`() = runTest {
-        val testScope = TestScope(StandardTestDispatcher(testScheduler))
-        val downloads = ModelDownloads(testScope)
+    fun `enqueue downloads uninstalled models sequentially`() = runBlocking {
+        val fake = FakeDownloader(installedResult = false)
+        val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
+        val finished = CompletableDeferred<Unit>()
+
+        downloads.enqueue(listOf(LocalModelCatalog.default), temp.newFolder("models"), temp.newFolder("cache")) {
+            finished.complete(Unit)
+        }
+
+        withTimeout(5000) {
+            finished.await()
+        }
+        assertEquals(1, fake.downloadCallCount)
+    }
+
+    @Test
+    fun `start does not deadlock onFinished when busy`() = runBlocking {
+        val fake = FakeDownloader()
+        val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
         val modelsDir = temp.newFolder("models")
         val cacheDir = temp.newFolder("cache")
 
         // First start
-        var firstFinished = false
-        downloads.start(LocalModelCatalog.default, modelsDir, cacheDir) {
-            firstFinished = true
-        }
-
+        downloads.start(LocalModelCatalog.default, modelsDir, cacheDir) {}
         assertTrue(downloads.busy)
 
         // Second start while busy
-        var secondFinished = false
+        val secondFinished = CompletableDeferred<Unit>()
         downloads.start(LocalModelCatalog.default, modelsDir, cacheDir) {
-            secondFinished = true
+            secondFinished.complete(Unit)
         }
 
         // Second start should immediately call onFinished and return
-        assertTrue(secondFinished)
+        withTimeout(5000) {
+            secondFinished.await()
+        }
     }
 }
