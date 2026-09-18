@@ -350,8 +350,10 @@ fun OnboardingDialog(
                                     waitingForSttDownload = false
                                 }
                                 if (choice == SttEngineChoice.LOCAL) {
-                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                    DictationService.instance?.reloadLocalModel()
+                                    if (isModelInstalled) {
+                                        settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                        DictationService.instance?.reloadLocalModel()
+                                    }
                                 } else {
                                     settings.sttModelId = "groq/whisper-large-v3-turbo"
                                 }
@@ -398,8 +400,10 @@ fun OnboardingDialog(
                                         settings.polishModelId = "rules/basic"
                                     }
                                     PolishModeChoice.LOCAL_SLM -> {
-                                        settings.polishEnabled = true
-                                        settings.polishModelId = defaultSlmModel.id
+                                        if (isSlmInstalled) {
+                                            settings.polishEnabled = true
+                                            settings.polishModelId = defaultSlmModel.id
+                                        }
                                     }
                                     PolishModeChoice.CLOUD -> {
                                         settings.polishEnabled = true
@@ -611,8 +615,10 @@ fun OnboardingDialog(
                             onClick = {
                                 selectedLocalModel = model
                                 selectedSttChoice = SttEngineChoice.LOCAL
-                                settings.sttModelId = "local/${model.dirName}"
-                                DictationService.instance?.reloadLocalModel()
+                                if (downloads.isInstalled(model, AppGraph.localModelsDir)) {
+                                    settings.sttModelId = "local/${model.dirName}"
+                                    DictationService.instance?.reloadLocalModel()
+                                }
                                 showOtherModelsDialog = false
                             },
                             shape = RoundedCornerShape(12.dp),
@@ -632,8 +638,10 @@ fun OnboardingDialog(
                                     onClick = {
                                         selectedLocalModel = model
                                         selectedSttChoice = SttEngineChoice.LOCAL
-                                        settings.sttModelId = "local/${model.dirName}"
-                                        DictationService.instance?.reloadLocalModel()
+                                        if (downloads.isInstalled(model, AppGraph.localModelsDir)) {
+                                            settings.sttModelId = "local/${model.dirName}"
+                                            DictationService.instance?.reloadLocalModel()
+                                        }
                                         showOtherModelsDialog = false
                                     },
                                 )
