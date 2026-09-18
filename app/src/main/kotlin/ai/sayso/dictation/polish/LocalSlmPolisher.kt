@@ -43,8 +43,9 @@ object LocalSlmPolisher : PolishProvider {
         val transcript = CleanupPolicy.extractTranscript(userMessage)
             ?: return PolishResult.Failure("Malformed cleanup payload")
 
-        if (!isModelInstalled(modelName) && !isModelInstalled(LocalSlmCatalog.qwen05b.id) && !isModelInstalled(LocalSlmCatalog.phi3Mini.id)) {
-            val requestedName = LocalSlmCatalog.byId(modelName)?.displayName ?: "SLM"
+        val info = LocalSlmCatalog.byId(modelName)
+        if (info == null || !isModelInstalled(info.id)) {
+            val requestedName = info?.displayName ?: "SLM"
             return PolishResult.Failure("$requestedName is not downloaded yet. Download it in Cleanup settings.")
         }
 
