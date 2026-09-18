@@ -223,4 +223,12 @@ class CleanupPolicyTest {
         assertEquals(CleanupPolicy.AppContextCategory.DOCS_NOTES, CleanupPolicy.AppContextCategory.fromPackage("com.google.android.keep"))
         assertEquals(CleanupPolicy.AppContextCategory.GENERAL, CleanupPolicy.AppContextCategory.fromPackage("com.android.calculator2"))
     }
+
+    @Test
+    fun `system prompt injects transliteration directives with Tanglish and Hinglish`() {
+        val prompt = CleanupPolicy.systemPrompt(transliterateIndicToLatin = true)
+        assertTrue(prompt.contains("Transliteration directive:"))
+        assertTrue(prompt.contains("Tanglish, Hinglish, Manglish"))
+        assertTrue(prompt.contains("English letters"))
+    }
 }
