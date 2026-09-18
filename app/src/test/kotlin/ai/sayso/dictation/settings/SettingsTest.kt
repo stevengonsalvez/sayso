@@ -34,6 +34,10 @@ class SettingsTest {
         assertTrue(settings.historyEnabled)
         assertEquals(-1, settings.bubbleX)
         assertEquals(-1, settings.bubbleY)
+        assertTrue(settings.autoStopSilenceEnabled)
+        assertEquals(1.8f, settings.silenceTimeoutSeconds, 0.01f)
+        assertFalse(settings.transliterateIndicToLatin)
+        assertFalse(settings.autoLanguageRoutingEnabled)
     }
 
     @Test
@@ -51,6 +55,10 @@ class SettingsTest {
         settings.historyEnabled = false
         settings.bubbleX = 42
         settings.bubbleY = 1337
+        settings.autoStopSilenceEnabled = false
+        settings.silenceTimeoutSeconds = 2.5f
+        settings.transliterateIndicToLatin = true
+        settings.autoLanguageRoutingEnabled = true
 
         val reloaded = Settings(prefs)
         assertEquals("openai/gpt-4o-mini-transcribe", reloaded.sttModelId)
@@ -66,6 +74,10 @@ class SettingsTest {
         assertFalse(reloaded.historyEnabled)
         assertEquals(42, reloaded.bubbleX)
         assertEquals(1337, reloaded.bubbleY)
+        assertFalse(reloaded.autoStopSilenceEnabled)
+        assertEquals(2.5f, reloaded.silenceTimeoutSeconds, 0.01f)
+        assertTrue(reloaded.transliterateIndicToLatin)
+        assertTrue(reloaded.autoLanguageRoutingEnabled)
     }
 
     @Test
