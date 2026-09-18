@@ -131,4 +131,53 @@ class EarlyLidRouterTest {
         assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(0)))
         assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(1000)))
     }
+
+    @Test
+    fun `english detected falls back to default when English model not installed`() {
+        val fakeClip = AudioClip(ByteArray(64000), sampleRate)
+        val installed = setOf(EarlyLidRouter.MODEL_TAMIL)
+
+        val decision = EarlyLidRouter.route(
+            clip = fakeClip,
+            installedModelIds = installed,
+            defaultModelId = EarlyLidRouter.MODEL_TAMIL,
+            overrideLanguage = DetectedLanguage.ENGLISH,
+        )
+
+        assertEquals(DetectedLanguage.ENGLISH, decision.language)
+        assertEquals(EarlyLidRouter.MODEL_TAMIL, decision.recommendedModelId)
+        assertNull(decision.notice)
+    }
+
+    @Test
+    fun `unknown language preserves default model`() {
+        val fakeClip = AudioClip(ByteArray(64000), sampleRate)
+        val installed = setOf(defaultEnglishModel)
+
+        val decision = EarlyLidRouter.route(
+            clip = fakeClip,
+            installedModelIds = installed,
+            defaultModelId = defaultEnglishModel,
+            overrideLanguage = DetectedLanguage.UNKNOWN,
+        )
+
+        assertEquals(DetectedLanguage.UNKNOWN, decision.language)
+        assertEquals(defaultEnglishModel, decision.recommendedModelId)
+        assertNull(decision.notice)
+    }
+
+    @Test
+    fun `windowBytes scales proportionally with sample rate`() {
+        assertEquals(48000, EarlyLidRouter.windowBytesForSampleRate(16000))
+        assertEquals(144000, EarlyLidRouter.windowBytesForSampleRate(48000))
+    }
+
+    @Test
+    fun `DetectedLanguage fromCode resolves known and unknown codes`() {
+        assertEquals(DetectedLanguage.TAMIL, DetectedLanguage.fromCode("ta"))
+        assertEquals(DetectedLanguage.HINDI, DetectedLanguage.fromCode("hi"))
+        assertEquals(DetectedLanguage.MALAYALAM, DetectedLanguage.fromCode("ml"))
+        assertEquals(DetectedLanguage.ENGLISH, DetectedLanguage.fromCode("en"))
+        assertEquals(DetectedLanguage.UNKNOWN, DetectedLanguage.fromCode("xyz"))
+    }
 }
