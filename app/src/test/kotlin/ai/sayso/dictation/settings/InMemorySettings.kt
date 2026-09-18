@@ -23,4 +23,5 @@ class InMemorySettings(
     override var appContextAwarenessEnabled: Boolean = true,
     override var smartDictationModesEnabled: Boolean = true,
     override var hasCompletedOnboarding: Boolean = false,
+    override var autoLanguageRoutingEnabled: Boolean = false,
 ) : SettingsStore

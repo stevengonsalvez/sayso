@@ -16,10 +16,10 @@ class FakeSttProvider(
     override val needsApiKey: Boolean,
     private val result: TranscriptionResult = TranscriptionResult.Success("hello"),
     private val throws: Boolean = false,
+    override val models: List<SttModel> = listOf(SttModel("$id/model", "$id model")),
 ) : TranscriptionProvider {
     override val displayName = id
     override val apiKeyUrl: String? = if (needsApiKey) "https://example.test/keys" else null
-    override val models = listOf(SttModel("$id/model", "$id model"))
 
     var calls = 0
         private set
