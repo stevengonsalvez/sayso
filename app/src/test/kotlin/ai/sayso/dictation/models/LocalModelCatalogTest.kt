@@ -65,4 +65,14 @@ class LocalModelCatalogTest {
         assertEquals("Whisper Multilingual Tiny", LocalModelCatalog.byDirName("sherpa-onnx-whisper-tiny")?.displayName)
         assertNull(LocalModelCatalog.byDirName("sherpa-onnx-not-shipped"))
     }
+
+    @Test
+    fun `indicModels contains all AI4Bharat models for language routing`() {
+        val indic = LocalModelCatalog.indicModels
+        assertEquals(3, indic.size)
+        val dirNames = indic.map { it.dirName }.toSet()
+        assertTrue(dirNames.contains("ai4bharat-indicconformer-ta"))
+        assertTrue(dirNames.contains("ai4bharat-indicconformer-hi"))
+        assertTrue(dirNames.contains("ai4bharat-indicconformer-ml"))
+    }
 }
