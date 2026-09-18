@@ -137,7 +137,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     }
 
     // Reading directory and settings off main thread
-    LaunchedEffect(resumeTick, downloads.state, settings.sttModelId) {
+    LaunchedEffect(resumeTick, downloads.busy, settings.sttModelId) {
         val (stt, cleanup, readyStt) = withContext(Dispatchers.IO) {
             Triple(
                 sttSummary(),
@@ -334,16 +334,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 onDismiss = { showLanguageDownloadDialog = false },
                 onDownloadSelected = { selectedModels ->
                     showLanguageDownloadDialog = false
-                    scope.launch {
-                        for (model in selectedModels) {
-                            if (!downloads.isInstalled(model, modelsDir)) {
-                                val done = CompletableDeferred<Unit>()
-                                downloads.start(model, modelsDir, context.cacheDir) {
-                                    done.complete(Unit)
-                                }
-                                done.await()
-                            }
-                        }
+                    downloads.enqueue(selectedModels, modelsDir, context.cacheDir) {
                         resumeTick++
                     }
                 },
@@ -1309,8 +1300,14 @@ private fun LanguageRoutingDownloadDialog(
                 model.dirName !in installedDirNames && selectedDirNames[model.dirName] == true
             }
             Button(
-                onClick = { onDownloadSelected(toDownload) },
-                enabled = !isDownloading && toDownload.isNotEmpty(),
+                onClick = {
+                    if (toDownload.isEmpty()) {
+                        onDismiss()
+                    } else {
+                        onDownloadSelected(toDownload)
+                    }
+                },
+                enabled = !isDownloading,
             ) {
                 Text(if (toDownload.isEmpty()) "Done" else "Download (${toDownload.sumOf { it.sizeMb }} MB)")
             }
