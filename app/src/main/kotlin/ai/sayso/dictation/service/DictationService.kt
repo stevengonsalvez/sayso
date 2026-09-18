@@ -237,13 +237,18 @@ class DictationService : AccessibilityService() {
             return
         }
 
-        val recorder = AudioCapture(AppGraph.settings.maxRecordingSeconds)
+        val settings = AppGraph.settings
+        val recorder = AudioCapture(
+            maxSeconds = settings.maxRecordingSeconds,
+            autoStopSilence = settings.autoStopSilenceEnabled,
+            silenceTimeoutMs = (settings.silenceTimeoutSeconds * 1000).toLong(),
+        )
         capture = recorder
         enter(State.RECORDING)
         sounds?.start()
 
         scope.launch {
-            val result = recorder.record(onAutoStop = { scope.launch { onAutoStop() } })
+            val result = recorder.record(onAutoStop = { reason -> scope.launch { onAutoStop(reason) } })
             handle(result)
         }
     }
@@ -253,9 +258,12 @@ class DictationService : AccessibilityService() {
         enterBusy()
     }
 
-    private fun onAutoStop() {
+    private fun onAutoStop(reason: AutoStopReason) {
+        if (state != State.RECORDING) return
         enterBusy()
-        feedback(getString(R.string.feedback_max_length))
+        if (reason == AutoStopReason.MAX_DURATION) {
+            feedback(getString(R.string.feedback_max_length))
+        }
     }
 
     /** Idempotent so that a tap and a hit time limit can both trigger it. */

@@ -114,6 +114,22 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getBoolean(KEY_HAS_COMPLETED_ONBOARDING, false)
         set(value) = prefs.edit().putBoolean(KEY_HAS_COMPLETED_ONBOARDING, value).apply()
 
+    override var autoStopSilenceEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_STOP_SILENCE, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_STOP_SILENCE, value).apply()
+
+    override var silenceTimeoutSeconds: Float
+        get() = prefs.getFloat(KEY_SILENCE_TIMEOUT_SECONDS, 1.8f)
+        set(value) = prefs.edit().putFloat(KEY_SILENCE_TIMEOUT_SECONDS, value).apply()
+
+    override var transliterateIndicToLatin: Boolean
+        get() = prefs.getBoolean(KEY_TRANSLITERATE_INDIC_TO_LATIN, false)
+        set(value) = prefs.edit().putBoolean(KEY_TRANSLITERATE_INDIC_TO_LATIN, value).apply()
+
+    override var autoLanguageRoutingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_LANGUAGE_ROUTING, false)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_LANGUAGE_ROUTING, value).apply()
+
     private fun optionalString(key: String): String? =
         prefs.getString(key, null)?.takeIf { it.isNotBlank() }
 
@@ -190,6 +206,18 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** Whether the user has completed or dismissed first-run onboarding. */
         const val KEY_HAS_COMPLETED_ONBOARDING = "has_completed_onboarding"
+
+        /** Whether hands-free recording automatically ends after sustained silence. */
+        const val KEY_AUTO_STOP_SILENCE = "auto_stop_silence"
+
+        /** Sustained silence duration in seconds before auto-stopping recording. */
+        const val KEY_SILENCE_TIMEOUT_SECONDS = "silence_timeout_seconds"
+
+        /** Whether Indic transcripts (ta, hi, ml) are phonetically transliterated into Latin script. */
+        const val KEY_TRANSLITERATE_INDIC_TO_LATIN = "transliterate_indic_to_latin"
+
+        /** Whether early audio (first 1.5s) is classified to automatically route English vs Indic models. */
+        const val KEY_AUTO_LANGUAGE_ROUTING = "auto_language_routing"
 
         /** Derived from the catalog so retiring the recommended model cannot leave this stale. */
         val DEFAULT_STT_MODEL_ID = "local/${LocalModelCatalog.default.dirName}"

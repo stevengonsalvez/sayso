@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -80,7 +81,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import ai.sayso.dictation.AppGraph
 import ai.sayso.dictation.R
 import ai.sayso.dictation.models.DownloadState
+import ai.sayso.dictation.models.LocalModel
 import ai.sayso.dictation.models.LocalModelCatalog
+import ai.sayso.dictation.polish.SlmModelInfo
 import ai.sayso.dictation.service.DictationService
 import ai.sayso.dictation.service.WakeWordService
 import kotlinx.coroutines.Dispatchers
@@ -107,6 +110,31 @@ fun OnboardingDialog(
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var isModelInstalled by remember { mutableStateOf(false) }
+
+    val initialIsCloud = settings.sttModelId.substringBefore('/') != "local"
+    var selectedSttChoice by remember {
+        mutableStateOf(if (initialIsCloud) SttEngineChoice.CLOUD else SttEngineChoice.LOCAL)
+    }
+    var selectedLocalModel by remember {
+        mutableStateOf(
+            LocalModelCatalog.byDirName(settings.sttModelId.removePrefix("local/")) ?: LocalModelCatalog.default
+        )
+    }
+    var showOtherModelsDialog by remember { mutableStateOf(false) }
+
+    val slmDownloads = AppGraph.slmDownloads
+    val slmStorageDir = remember { ai.sayso.dictation.polish.LocalSlmPolisher.storageDir }
+    val defaultSlmModel = remember { ai.sayso.dictation.polish.LocalSlmCatalog.default }
+    var isSlmInstalled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(slmDownloads.state) {
+        if (slmStorageDir != null) {
+            isSlmInstalled = withContext(Dispatchers.IO) {
+                slmDownloads.isInstalled(defaultSlmModel, slmStorageDir)
+            }
+        }
+    }
+
     var selectedPolishMode by remember {
         mutableStateOf(
             when {
@@ -135,9 +163,9 @@ fun OnboardingDialog(
     }
 
     // Refresh model installed check
-    LaunchedEffect(downloads.state) {
+    LaunchedEffect(downloads.state, selectedLocalModel) {
         isModelInstalled = withContext(Dispatchers.IO) {
-            downloads.isInstalled(defaultModel, AppGraph.localModelsDir)
+            downloads.isInstalled(selectedLocalModel, AppGraph.localModelsDir)
         }
     }
 
@@ -265,18 +293,40 @@ fun OnboardingDialog(
                 ) { step ->
                     when (step) {
                         0 -> StepOneSttEngine(
+                            selectedChoice = selectedSttChoice,
+                            onSelectChoice = { choice ->
+                                selectedSttChoice = choice
+                                if (choice == SttEngineChoice.LOCAL) {
+                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                    DictationService.instance?.reloadLocalModel()
+                                } else {
+                                    settings.sttModelId = "groq/whisper-large-v3-turbo"
+                                }
+                            },
+                            selectedLocalModel = selectedLocalModel,
+                            onOpenOtherModels = { showOtherModelsDialog = true },
                             isModelInstalled = isModelInstalled,
                             downloadState = downloads.state,
-                            isDownloading = downloads.busy,
+                            isDownloading = downloads.busy && downloads.activeDirName == selectedLocalModel.dirName,
                             onStartDownload = {
-                                downloads.start(defaultModel, AppGraph.localModelsDir, context.cacheDir) {
-                                    settings.sttModelId = "local/${defaultModel.dirName}"
+                                selectedSttChoice = SttEngineChoice.LOCAL
+                                downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
+                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
                                     DictationService.instance?.reloadLocalModel()
                                 }
                             },
                         )
                         1 -> StepTwoPostProcessing(
                             selected = selectedPolishMode,
+                            isSlmInstalled = isSlmInstalled,
+                            isSlmDownloading = slmDownloads.busy && slmDownloads.activeModelId == defaultSlmModel.id,
+                            slmDownloadState = slmDownloads.state,
+                            defaultSlmModel = defaultSlmModel,
+                            onStartSlmDownload = {
+                                if (slmStorageDir != null) {
+                                    slmDownloads.start(defaultSlmModel, slmStorageDir) {}
+                                }
+                            },
                             onSelect = { mode ->
                                 selectedPolishMode = mode
                                 when (mode) {
@@ -286,7 +336,7 @@ fun OnboardingDialog(
                                     }
                                     PolishModeChoice.LOCAL_SLM -> {
                                         settings.polishEnabled = true
-                                        settings.polishModelId = ai.sayso.dictation.polish.LocalSlmCatalog.default.id
+                                        settings.polishModelId = defaultSlmModel.id
                                     }
                                     PolishModeChoice.CLOUD -> {
                                         settings.polishEnabled = true
@@ -392,18 +442,101 @@ fun OnboardingDialog(
             onDismiss = { showAccessibilityDisclosure = false },
         )
     }
+
+    if (showOtherModelsDialog) {
+        AlertDialog(
+            onDismissRequest = { showOtherModelsDialog = false },
+            title = {
+                Text(
+                    text = "Select On-Device Model",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (model in LocalModelCatalog.all) {
+                        val isSelected = selectedLocalModel.dirName == model.dirName
+                        Surface(
+                            onClick = {
+                                selectedLocalModel = model
+                                selectedSttChoice = SttEngineChoice.LOCAL
+                                settings.sttModelId = "local/${model.dirName}"
+                                DictationService.instance?.reloadLocalModel()
+                                showOtherModelsDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                            border = BorderStroke(
+                                if (isSelected) 1.5.dp else 1.dp,
+                                if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                androidx.compose.material3.RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        selectedLocalModel = model
+                                        selectedSttChoice = SttEngineChoice.LOCAL
+                                        settings.sttModelId = "local/${model.dirName}"
+                                        DictationService.instance?.reloadLocalModel()
+                                        showOtherModelsDialog = false
+                                    },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = model.displayName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = "${model.note} · ${model.sizeMb} MB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showOtherModelsDialog = false }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+}
+
+enum class SttEngineChoice {
+    LOCAL,
+    CLOUD,
 }
 
 /** Step 1: Voice Engine selection and 1-tap download CTA */
 @Composable
 private fun StepOneSttEngine(
+    selectedChoice: SttEngineChoice,
+    onSelectChoice: (SttEngineChoice) -> Unit,
+    selectedLocalModel: LocalModel,
+    onOpenOtherModels: () -> Unit,
     isModelInstalled: Boolean,
     downloadState: DownloadState?,
     isDownloading: Boolean,
     onStartDownload: () -> Unit,
 ) {
-    val defaultModel = LocalModelCatalog.default
-
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Column {
             Text(
@@ -419,19 +552,36 @@ private fun StepOneSttEngine(
         }
 
         // Card 1: On-Device Model (Recommended)
+        val isLocalSelected = selectedChoice == SttEngineChoice.LOCAL
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+                containerColor = if (isLocalSelected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                },
             ),
-            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)),
-            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(
+                if (isLocalSelected) 1.5.dp else 1.dp,
+                if (isLocalSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectChoice(SttEngineChoice.LOCAL) },
         ) {
             Column(Modifier.padding(16.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    Icon(
+                        imageVector = if (isLocalSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (isLocalSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
                             .size(32.dp)
@@ -454,7 +604,7 @@ private fun StepOneSttEngine(
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = defaultModel.displayName,
+                            text = selectedLocalModel.displayName,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
@@ -485,7 +635,29 @@ private fun StepOneSttEngine(
                     lineHeight = 18.sp,
                 )
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "${selectedLocalModel.note} · ${selectedLocalModel.sizeMb} MB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onOpenOtherModels) {
+                        Text(
+                            text = "See other models",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
 
                 if (isModelInstalled) {
                     Surface(
@@ -505,7 +677,7 @@ private fun StepOneSttEngine(
                                 modifier = Modifier.size(20.dp),
                             )
                             Text(
-                                text = stringResource(R.string.onboarding_stt_installed),
+                                text = "${selectedLocalModel.displayName} installed",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF15803D),
@@ -529,7 +701,7 @@ private fun StepOneSttEngine(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
                                     Text(
-                                        text = "Downloading model...",
+                                        text = "Downloading ${selectedLocalModel.displayName}...",
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold,
                                     )
@@ -587,7 +759,7 @@ private fun StepOneSttEngine(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = stringResource(R.string.onboarding_stt_download_cta, defaultModel.sizeMb),
+                            text = "Download ${selectedLocalModel.displayName} (${selectedLocalModel.sizeMb} MB)",
                             fontWeight = FontWeight.Bold,
                         )
                     }
@@ -596,29 +768,46 @@ private fun StepOneSttEngine(
         }
 
         // Card 2: Cloud Speech (Alternative)
+        val isCloudSelected = selectedChoice == SttEngineChoice.CLOUD
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                containerColor = if (isCloudSelected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                },
             ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(
+                if (isCloudSelected) 1.5.dp else 1.dp,
+                if (isCloudSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelectChoice(SttEngineChoice.CLOUD) },
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(14.dp),
             ) {
+                Icon(
+                    imageVector = if (isCloudSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isCloudSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .background(if (isCloudSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         Icons.Default.Cloud,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (isCloudSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
                     )
                 }
@@ -652,6 +841,11 @@ private enum class PolishModeChoice {
 @Composable
 private fun StepTwoPostProcessing(
     selected: PolishModeChoice,
+    isSlmInstalled: Boolean,
+    isSlmDownloading: Boolean,
+    slmDownloadState: DownloadState?,
+    defaultSlmModel: SlmModelInfo,
+    onStartSlmDownload: () -> Unit,
     onSelect: (PolishModeChoice) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -755,6 +949,101 @@ private fun StepTwoPostProcessing(
             badge = stringResource(R.string.onboarding_cleanup_option_slm_badge),
             selected = selected == PolishModeChoice.LOCAL_SLM,
             onClick = { onSelect(PolishModeChoice.LOCAL_SLM) },
+            extraContent = if (selected == PolishModeChoice.LOCAL_SLM) {
+                {
+                    if (isSlmInstalled) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFFDCFCE7),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = Color(0xFF16A34A),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = "${defaultSlmModel.displayName} installed",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D),
+                                )
+                            }
+                        }
+                    } else if (isSlmDownloading) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            val progress = (slmDownloadState as? DownloadState.Downloading)?.progress ?: 0f
+                            val pct = (progress * 100).roundToInt()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    text = "Downloading ${defaultSlmModel.displayName}...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = "$pct%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                            )
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            if (slmDownloadState is DownloadState.Error) {
+                                Text(
+                                    text = "Download failed: ${slmDownloadState.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            Button(
+                                onClick = onStartSlmDownload,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            ) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Download ${defaultSlmModel.displayName} (${defaultSlmModel.quantizedSizeMb} MB)",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                }
+            } else null,
         )
 
         // Option 3: Cloud LLM
@@ -784,6 +1073,7 @@ private fun PolishOptionCard(
     badge: String?,
     selected: Boolean,
     onClick: () -> Unit,
+    extraContent: (@Composable () -> Unit)? = null,
 ) {
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -802,52 +1092,58 @@ private fun PolishOptionCard(
             .fillMaxWidth()
             .clickable(onClick = onClick),
     ) {
-        Row(
-            verticalAlignment = Alignment.Top,
-            modifier = Modifier.padding(14.dp),
-        ) {
-            Icon(
-                imageVector = if (selected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                contentDescription = null,
-                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .size(20.dp)
-                    .padding(top = 2.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (badge != null) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xFFDCFCE7),
-                        ) {
-                            Text(
-                                text = badge.uppercase(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF15803D),
-                                fontSize = 9.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    imageVector = if (selected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .padding(top = 2.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        if (badge != null) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFDCFCE7),
+                            ) {
+                                Text(
+                                    text = badge.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D),
+                                    fontSize = 9.sp,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
                         }
                     }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 16.sp,
+                    )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 16.sp,
-                )
+            }
+            if (extraContent != null) {
+                Spacer(Modifier.height(10.dp))
+                extraContent()
             }
         }
     }

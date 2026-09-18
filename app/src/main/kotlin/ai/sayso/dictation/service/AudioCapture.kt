@@ -12,6 +12,9 @@ import java.io.ByteArrayOutputStream
 /** Why a recording produced nothing; the service turns these into user-facing text. */
 enum class CaptureError { PERMISSION, UNAVAILABLE }
 
+/** Why an ongoing recording was automatically terminated. */
+enum class AutoStopReason { MAX_DURATION, SILENCE }
+
 /** Outcome of one recording. [clip] is empty whenever [error] is set. */
 class Capture(val clip: AudioClip, val error: CaptureError? = null)
 
@@ -21,7 +24,11 @@ class Capture(val clip: AudioClip, val error: CaptureError? = null)
  * A capture instance records once. Call [record] from a coroutine and [stop] from
  * anywhere to end it; [record] returns as soon as the reader loop notices.
  */
-class AudioCapture(private val maxSeconds: Int) {
+class AudioCapture(
+    private val maxSeconds: Int,
+    private val autoStopSilence: Boolean = false,
+    private val silenceTimeoutMs: Long = 1800L,
+) {
 
     @Volatile private var recording = true
 
@@ -31,10 +38,9 @@ class AudioCapture(private val maxSeconds: Int) {
     }
 
     /**
-     * Records until [stop] is called or [maxSeconds] elapses, in which case
-     * [onAutoStop] fires on the recording thread just before returning.
+     * Records until [stop] is called, sustained silence is detected, or [maxSeconds] elapses.
      */
-    suspend fun record(onAutoStop: () -> Unit = {}): Capture = withContext(Dispatchers.IO) {
+    suspend fun record(onAutoStop: (AutoStopReason) -> Unit = {}): Capture = withContext(Dispatchers.IO) {
         val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING)
         val bufferBytes = maxOf(minBuffer, SAMPLE_RATE * BYTES_PER_SAMPLE / 10)
 
@@ -71,13 +77,18 @@ class AudioCapture(private val maxSeconds: Int) {
         }
     }
 
-    private fun read(recorder: AudioRecord, bufferBytes: Int, onAutoStop: () -> Unit): AudioClip {
+    private fun read(recorder: AudioRecord, bufferBytes: Int, onAutoStop: (AutoStopReason) -> Unit): AudioClip {
         // ponytail: 300 s at 32 kB/s is ~9.6 MB in memory, which a modern phone carries fine.
         // Stream to a file instead if the cap ever grows past a few minutes.
         val maxBytes = maxSeconds * SAMPLE_RATE * BYTES_PER_SAMPLE
         val collected = ByteArrayOutputStream(minOf(maxBytes, INITIAL_BUFFER_BYTES))
         val buffer = ByteArray(bufferBytes)
-        var autoStopped = false
+        var autoStopReason: AutoStopReason? = null
+        var hasDetectedSpeech = false
+        val startMs = android.os.SystemClock.elapsedRealtime()
+        var lastSpeechMs = startMs
+        val minSpeechBytes = SAMPLE_RATE * BYTES_PER_SAMPLE / 2 // At least 500 ms audio before silence can trigger
+        val initialSilenceTimeoutMs = 4000L // 4 seconds without speech at start ends recording
 
         while (recording) {
             val read = recorder.read(buffer, 0, buffer.size)
@@ -87,13 +98,44 @@ class AudioCapture(private val maxSeconds: Int) {
             }
             val room = maxBytes - collected.size()
             collected.write(buffer, 0, minOf(read, room))
+
+            if (autoStopSilence) {
+                var sumSquares = 0.0
+                var samplesCount = 0
+                var i = 0
+                while (i + 1 < read) {
+                    val sample = ((buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)).toShort()
+                    sumSquares += sample.toDouble() * sample.toDouble()
+                    samplesCount++
+                    i += 2
+                }
+                val rms = if (samplesCount > 0) kotlin.math.sqrt(sumSquares / samplesCount) else 0.0
+                val isSpeech = rms > 350.0
+
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (isSpeech) {
+                    hasDetectedSpeech = true
+                    lastSpeechMs = now
+                } else if (hasDetectedSpeech && collected.size() >= minSpeechBytes) {
+                    if (now - lastSpeechMs >= silenceTimeoutMs) {
+                        Log.d(TAG, "Auto-stopping recording after $silenceTimeoutMs ms of silence")
+                        autoStopReason = AutoStopReason.SILENCE
+                        recording = false
+                    }
+                } else if (!hasDetectedSpeech && (now - startMs >= initialSilenceTimeoutMs)) {
+                    Log.d(TAG, "Auto-stopping recording after initial silence timeout")
+                    autoStopReason = AutoStopReason.SILENCE
+                    recording = false
+                }
+            }
+
             if (collected.size() >= maxBytes) {
-                autoStopped = true
+                autoStopReason = AutoStopReason.MAX_DURATION
                 recording = false
             }
         }
 
-        if (autoStopped) onAutoStop()
+        autoStopReason?.let(onAutoStop)
         return AudioClip(collected.toByteArray(), SAMPLE_RATE)
     }
 

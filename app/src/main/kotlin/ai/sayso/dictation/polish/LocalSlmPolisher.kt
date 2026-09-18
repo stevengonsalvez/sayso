@@ -17,6 +17,7 @@ object LocalSlmPolisher : PolishProvider {
     override val supportsCustomPrompt = true
     override val models = listOf(
         PolishModel(LocalSlmCatalog.qwen05b.id, LocalSlmCatalog.qwen05b.displayName),
+        PolishModel(LocalSlmCatalog.phi3Mini.id, LocalSlmCatalog.phi3Mini.displayName),
     )
 
     var storageDir: File? = null
@@ -42,12 +43,19 @@ object LocalSlmPolisher : PolishProvider {
         val transcript = CleanupPolicy.extractTranscript(userMessage)
             ?: return PolishResult.Failure("Malformed cleanup payload")
 
-        if (!isModelInstalled(modelName) && !isModelInstalled(LocalSlmCatalog.qwen05b.id)) {
-            return PolishResult.Failure("Qwen SLM is not downloaded yet. Download it in Cleanup settings.")
+        val info = LocalSlmCatalog.byId(modelName)
+        if (info == null || !isModelInstalled(info.id)) {
+            val requestedName = info?.displayName ?: "SLM"
+            return PolishResult.Failure("$requestedName is not downloaded yet. Download it in Cleanup settings.")
         }
 
         // Format and clean text with smart rules baseline
-        val cleaned = LocalRulesPolisher.clean(transcript)
+        val baseCleaned = if (systemPrompt.contains("Transliteration directive") && IndicTransliterator.hasIndicCharacters(transcript)) {
+            IndicTransliterator.transliterate(transcript)
+        } else {
+            transcript
+        }
+        val cleaned = LocalRulesPolisher.clean(baseCleaned)
         return PolishResult.Success(cleaned)
     }
 }

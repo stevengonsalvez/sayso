@@ -67,7 +67,7 @@ class DefaultDictationPipeline(
     private suspend fun process(clip: AudioClip, previous: HistoryEntry?, targetPackage: String? = null): PipelineResult {
         if (clip.isEmpty) return finish(clip, previous, error = "No audio captured")
 
-        val model = resolveStt()
+        val model = resolveStt(clip)
             ?: return finish(clip, previous, error = "No transcription model is set up")
 
         val notice = model.notice
@@ -129,13 +129,25 @@ class DefaultDictationPipeline(
      * saved key, falls back to the installed local model; a missing key is the case the user
      * can act on, so that one carries a notice.
      */
-    private fun resolveStt(): Resolved? {
+    private fun resolveStt(clip: AudioClip? = null): Resolved? {
+        val targetModelId = if (settings.autoLanguageRoutingEnabled && clip != null && !clip.isEmpty) {
+            val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
+                .map { "local/${it.dirName}" }
+                .filter { stt.find(it) != null }
+                .toSet()
+            val decision = ai.sayso.dictation.models.EarlyLidRouter.route(clip, installedIds, settings.sttModelId)
+            decision.recommendedModelId
+        } else {
+            settings.sttModelId
+        }
+
         var keyless: TranscriptionProvider? = null
-        val configured = stt.find(settings.sttModelId)
+        val configured = stt.find(targetModelId)
         if (configured != null) {
             val (provider, model) = configured
-            if (!provider.needsApiKey) return Resolved(provider, model, null)
-            key(provider.id)?.let { return Resolved(provider, model, it) }
+            val routingNotice = if (targetModelId != settings.sttModelId) "Auto-routed to ${model.displayName}" else null
+            if (!provider.needsApiKey) return Resolved(provider, model, null, routingNotice)
+            key(provider.id)?.let { return Resolved(provider, model, it, routingNotice) }
             keyless = provider
         }
         val fallbackId = stt.localFallbackModelId ?: return null
@@ -191,6 +203,7 @@ class DefaultDictationPipeline(
                     lexicon = settings.lexicon,
                     appContext = appContext,
                     enableSmartDictation = settings.smartDictationModesEnabled,
+                    transliterateIndicToLatin = settings.transliterateIndicToLatin,
                 ),
                 userMessage = CleanupPolicy.userMessage(raw),
                 modelName = model.modelName,
