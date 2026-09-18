@@ -49,7 +49,12 @@ object LocalSlmPolisher : PolishProvider {
         }
 
         // Format and clean text with smart rules baseline
-        val cleaned = LocalRulesPolisher.clean(transcript)
+        val baseCleaned = if (systemPrompt.contains("Transliteration directive") && IndicTransliterator.hasIndicCharacters(transcript)) {
+            IndicTransliterator.transliterate(transcript)
+        } else {
+            transcript
+        }
+        val cleaned = LocalRulesPolisher.clean(baseCleaned)
         return PolishResult.Success(cleaned)
     }
 }
