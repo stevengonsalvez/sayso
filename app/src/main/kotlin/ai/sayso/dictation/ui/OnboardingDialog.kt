@@ -180,12 +180,12 @@ fun OnboardingDialog(
     var waitingForSlmDownload by remember { mutableStateOf(false) }
 
     // Latch waiting state when active model download begins
-    LaunchedEffect(downloads.busy) {
+    LaunchedEffect(downloads.busy, currentStep, selectedSttChoice) {
         if (downloads.busy && selectedSttChoice == SttEngineChoice.LOCAL && currentStep == 0) {
             waitingForSttDownload = true
         }
     }
-    LaunchedEffect(slmDownloads.busy) {
+    LaunchedEffect(slmDownloads.busy, currentStep, selectedPolishMode) {
         if (slmDownloads.busy && selectedPolishMode == PolishModeChoice.LOCAL_SLM && currentStep == 1) {
             waitingForSlmDownload = true
         }
@@ -350,8 +350,10 @@ fun OnboardingDialog(
                                     waitingForSttDownload = false
                                 }
                                 if (choice == SttEngineChoice.LOCAL) {
-                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                    DictationService.instance?.reloadLocalModel()
+                                    if (isModelInstalled) {
+                                        settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                        DictationService.instance?.reloadLocalModel()
+                                    }
                                 } else {
                                     settings.sttModelId = "groq/whisper-large-v3-turbo"
                                 }
@@ -364,8 +366,10 @@ fun OnboardingDialog(
                             onStartDownload = {
                                 selectedSttChoice = SttEngineChoice.LOCAL
                                 downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
-                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                    DictationService.instance?.reloadLocalModel()
+                                    if (downloads.state is DownloadState.Done && selectedSttChoice == SttEngineChoice.LOCAL) {
+                                        settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                        DictationService.instance?.reloadLocalModel()
+                                    }
                                 }
                             },
                         )
@@ -378,8 +382,10 @@ fun OnboardingDialog(
                             onStartSlmDownload = {
                                 if (slmStorageDir != null) {
                                     slmDownloads.start(defaultSlmModel, slmStorageDir) {
-                                        settings.polishEnabled = true
-                                        settings.polishModelId = defaultSlmModel.id
+                                        if (slmDownloads.state is DownloadState.Done && selectedPolishMode == PolishModeChoice.LOCAL_SLM) {
+                                            settings.polishEnabled = true
+                                            settings.polishModelId = defaultSlmModel.id
+                                        }
                                     }
                                 }
                             },
@@ -394,8 +400,10 @@ fun OnboardingDialog(
                                         settings.polishModelId = "rules/basic"
                                     }
                                     PolishModeChoice.LOCAL_SLM -> {
-                                        settings.polishEnabled = true
-                                        settings.polishModelId = defaultSlmModel.id
+                                        if (isSlmInstalled) {
+                                            settings.polishEnabled = true
+                                            settings.polishModelId = defaultSlmModel.id
+                                        }
                                     }
                                     PolishModeChoice.CLOUD -> {
                                         settings.polishEnabled = true
@@ -474,8 +482,10 @@ fun OnboardingDialog(
                                         waitingForSttDownload = true
                                         if (!downloads.busy) {
                                             downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
-                                                settings.sttModelId = "local/${selectedLocalModel.dirName}"
-                                                DictationService.instance?.reloadLocalModel()
+                                                if (downloads.state is DownloadState.Done && selectedSttChoice == SttEngineChoice.LOCAL) {
+                                                    settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                                    DictationService.instance?.reloadLocalModel()
+                                                }
                                             }
                                         }
                                     }
@@ -483,8 +493,10 @@ fun OnboardingDialog(
                                         waitingForSlmDownload = true
                                         if (!slmDownloads.busy && slmStorageDir != null) {
                                             slmDownloads.start(defaultSlmModel, slmStorageDir) {
-                                                settings.polishEnabled = true
-                                                settings.polishModelId = defaultSlmModel.id
+                                                if (slmDownloads.state is DownloadState.Done && selectedPolishMode == PolishModeChoice.LOCAL_SLM) {
+                                                    settings.polishEnabled = true
+                                                    settings.polishModelId = defaultSlmModel.id
+                                                }
                                             }
                                         }
                                     }
@@ -603,8 +615,10 @@ fun OnboardingDialog(
                             onClick = {
                                 selectedLocalModel = model
                                 selectedSttChoice = SttEngineChoice.LOCAL
-                                settings.sttModelId = "local/${model.dirName}"
-                                DictationService.instance?.reloadLocalModel()
+                                if (downloads.isInstalled(model, AppGraph.localModelsDir)) {
+                                    settings.sttModelId = "local/${model.dirName}"
+                                    DictationService.instance?.reloadLocalModel()
+                                }
                                 showOtherModelsDialog = false
                             },
                             shape = RoundedCornerShape(12.dp),
@@ -624,8 +638,10 @@ fun OnboardingDialog(
                                     onClick = {
                                         selectedLocalModel = model
                                         selectedSttChoice = SttEngineChoice.LOCAL
-                                        settings.sttModelId = "local/${model.dirName}"
-                                        DictationService.instance?.reloadLocalModel()
+                                        if (downloads.isInstalled(model, AppGraph.localModelsDir)) {
+                                            settings.sttModelId = "local/${model.dirName}"
+                                            DictationService.instance?.reloadLocalModel()
+                                        }
                                         showOtherModelsDialog = false
                                     },
                                 )

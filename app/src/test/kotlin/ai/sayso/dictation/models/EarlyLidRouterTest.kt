@@ -127,6 +127,24 @@ class EarlyLidRouterTest {
     }
 
     @Test
+    fun `indic default model preserved when no explicit English override is provided`() {
+        val fakeClip = AudioClip(ByteArray(64000), sampleRate)
+        val installed = setOf(
+            EarlyLidRouter.MODEL_TAMIL,
+            EarlyLidRouter.MODEL_ENGLISH_DEFAULT,
+        )
+
+        val decision = EarlyLidRouter.route(
+            clip = fakeClip,
+            installedModelIds = installed,
+            defaultModelId = EarlyLidRouter.MODEL_TAMIL,
+            overrideLanguage = null,
+        )
+
+        assertEquals(EarlyLidRouter.MODEL_TAMIL, decision.recommendedModelId)
+    }
+
+    @Test
     fun `classifyAudioSnippet returns English for short or empty input`() {
         assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(0)))
         assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(1000)))

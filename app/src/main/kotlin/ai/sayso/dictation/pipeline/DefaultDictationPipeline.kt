@@ -131,12 +131,40 @@ class DefaultDictationPipeline(
      */
     private fun resolveStt(clip: AudioClip? = null): Resolved? {
         val targetModelId = if (settings.autoLanguageRoutingEnabled && clip != null && !clip.isEmpty) {
-            val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
-                .map { "local/${it.dirName}" }
-                .filter { stt.find(it) != null }
-                .toSet()
-            val decision = ai.sayso.dictation.models.EarlyLidRouter.route(clip, installedIds, settings.sttModelId)
-            decision.recommendedModelId
+            val userLang = settings.language?.trim()?.lowercase()
+            if (!userLang.isNullOrEmpty()) {
+                when (userLang) {
+                    "ta" -> if (stt.find(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL) != null) {
+                        ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL
+                    } else settings.sttModelId
+                    "hi" -> if (stt.find(ai.sayso.dictation.models.EarlyLidRouter.MODEL_HINDI) != null) {
+                        ai.sayso.dictation.models.EarlyLidRouter.MODEL_HINDI
+                    } else settings.sttModelId
+                    "ml" -> if (stt.find(ai.sayso.dictation.models.EarlyLidRouter.MODEL_MALAYALAM) != null) {
+                        ai.sayso.dictation.models.EarlyLidRouter.MODEL_MALAYALAM
+                    } else settings.sttModelId
+                    "en" -> if (settings.sttModelId.contains("indic") || settings.sttModelId.contains("ai4bharat")) {
+                        if (stt.find(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT) != null) {
+                            ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT
+                        } else settings.sttModelId
+                    } else settings.sttModelId
+                    else -> settings.sttModelId
+                }
+            } else if (settings.sttModelId.contains("indic") || settings.sttModelId.contains("ai4bharat")) {
+                settings.sttModelId
+            } else {
+                val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
+                    .map { "local/${it.dirName}" }
+                    .filter { stt.find(it) != null }
+                    .toSet()
+                val decision = ai.sayso.dictation.models.EarlyLidRouter.route(
+                    clip = clip,
+                    installedModelIds = installedIds,
+                    defaultModelId = settings.sttModelId,
+                    overrideLanguage = null,
+                )
+                decision.recommendedModelId
+            }
         } else {
             settings.sttModelId
         }
