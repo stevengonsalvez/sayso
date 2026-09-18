@@ -2,7 +2,7 @@ package ai.sayso.dictation.polish
 
 /**
  * Lightweight deterministic transliterator for Indic scripts (Tamil, Devanagari, Malayalam)
- * to colloquial Latin script (Tanglish, Hinglish, Manglish).
+ * to Tanglish, Hinglish, and Manglish using English letters.
  *
  * Provides immediate phonetic rendering when offline or operating in rules-only mode,
  * preserving natural spoken phonetics and English loan words.
