@@ -17,9 +17,10 @@ import java.io.File
  * composition so that leaving the screen, or rotating the phone, does not cancel a transfer
  * half way through 500 MB, and so a second tap cannot start a parallel one.
  */
-class ModelDownloads(private val scope: CoroutineScope) {
-    private val downloader = LocalModelDownloader()
-
+class ModelDownloads(
+    private val scope: CoroutineScope,
+    private val downloader: LocalModelDownloader = LocalModelDownloader(),
+) {
     var activeDirName by mutableStateOf<String?>(null)
         private set
     var state by mutableStateOf<DownloadState?>(null)
@@ -36,8 +37,13 @@ class ModelDownloads(private val scope: CoroutineScope) {
         activeDirName = model.dirName
         state = DownloadState.Downloading(0f)
         scope.launch {
-            downloader.download(model, modelsDir, cacheDir).collect { state = it }
-            onFinished()
+            try {
+                downloader.download(model, modelsDir, cacheDir).collect { state = it }
+            } catch (t: Throwable) {
+                state = DownloadState.Error(t.message ?: "Download failed")
+            } finally {
+                onFinished()
+            }
         }
     }
 
@@ -55,21 +61,18 @@ class ModelDownloads(private val scope: CoroutineScope) {
             onAllFinished()
             return
         }
-        scope.launch(Dispatchers.IO) {
+        scope.launch {
             for (model in models) {
-                if (!isInstalled(model, modelsDir)) {
+                val alreadyInstalled = withContext(Dispatchers.IO) { isInstalled(model, modelsDir) }
+                if (!alreadyInstalled) {
                     val done = CompletableDeferred<Unit>()
-                    withContext(Dispatchers.Main) {
-                        start(model, modelsDir, cacheDir) {
-                            done.complete(Unit)
-                        }
+                    start(model, modelsDir, cacheDir) {
+                        done.complete(Unit)
                     }
                     done.await()
                 }
             }
-            withContext(Dispatchers.Main) {
-                onAllFinished()
-            }
+            onAllFinished()
         }
     }
 
