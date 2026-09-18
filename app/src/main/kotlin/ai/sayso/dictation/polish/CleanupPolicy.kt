@@ -137,6 +137,7 @@ object CleanupPolicy {
         lexicon: List<LexiconRule> = emptyList(),
         appContext: AppContextCategory? = null,
         enableSmartDictation: Boolean = false,
+        transliterateIndicToLatin: Boolean = false,
     ): String {
         val sections = mutableListOf(base.trim())
 
@@ -144,6 +145,15 @@ object CleanupPolicy {
 
         if (enableSmartDictation) {
             sections += SMART_DICTATION_DIRECTIVES
+        }
+
+        if (transliterateIndicToLatin) {
+            sections += """
+                Transliteration directive:
+                - If the input transcript contains Indic characters (Tamil, Devanagari/Hindi, Malayalam), phonetically transliterate them into colloquial Latin script (Tanglish, Hinglish, Manglish).
+                - Preserve colloquial grammar, loanwords, and pronunciation faithfully; do not translate words into English definitions.
+                - Keep any existing English words in Latin alphabet.
+            """.trimIndent()
         }
 
         if (appContext != null && appContext != AppContextCategory.GENERAL) {
