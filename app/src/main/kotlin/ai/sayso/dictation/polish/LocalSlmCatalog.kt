@@ -37,5 +37,5 @@ object LocalSlmCatalog {
 
     val default: SlmModelInfo = qwen05b
 
-    fun byId(id: String): SlmModelInfo? = all.firstOrNull { it.id == id }
+    fun byId(id: String): SlmModelInfo? = all.firstOrNull { it.id == id || it.id.substringAfter('/') == id }
 }
