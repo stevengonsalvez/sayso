@@ -150,9 +150,9 @@ object CleanupPolicy {
         if (transliterateIndicToLatin) {
             sections += """
                 Transliteration directive:
-                - If the input transcript contains Indic characters (Tamil, Devanagari/Hindi, Malayalam), phonetically transliterate them into colloquial Latin script (Tanglish, Hinglish, Manglish).
-                - Preserve colloquial grammar, loanwords, and pronunciation faithfully; do not translate words into English definitions.
-                - Keep any existing English words in Latin alphabet.
+                - If the input transcript contains Indic characters (Tamil, Devanagari/Hindi, Malayalam), phonetically transliterate them into English letters (Tanglish, Hinglish, Manglish).
+                - Preserve conversational grammar, loanwords, and pronunciation faithfully; do not translate words into English definitions.
+                - Keep any existing English words in English letters.
             """.trimIndent()
         }
 
