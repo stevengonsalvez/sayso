@@ -191,6 +191,7 @@ class DefaultDictationPipeline(
                     lexicon = settings.lexicon,
                     appContext = appContext,
                     enableSmartDictation = settings.smartDictationModesEnabled,
+                    transliterateIndicToLatin = settings.transliterateIndicToLatin,
                 ),
                 userMessage = CleanupPolicy.userMessage(raw),
                 modelName = model.modelName,
