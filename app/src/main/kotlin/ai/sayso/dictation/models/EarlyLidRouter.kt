@@ -51,14 +51,14 @@ object EarlyLidRouter {
         installedModelIds: Set<String>,
         defaultModelId: String,
     ): RoutingDecision {
-        if (clip.isEmpty || clip.bytes.isEmpty()) {
+        if (clip.isEmpty || clip.pcm16.isEmpty()) {
             return RoutingDecision(DetectedLanguage.ENGLISH, defaultModelId, 1.0f, null)
         }
 
-        val window = if (clip.bytes.size > minWindowBytes) {
-            clip.bytes.sliceArray(0 until minWindowBytes)
+        val window = if (clip.pcm16.size > minWindowBytes) {
+            clip.pcm16.sliceArray(0 until minWindowBytes)
         } else {
-            clip.bytes
+            clip.pcm16
         }
 
         val detected = classifyAudioSnippet(window)
