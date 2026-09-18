@@ -448,4 +448,100 @@ class DefaultDictationPipelineTest {
         assertTrue(polisher.lastSystemPrompt!!.contains("Application context: Target app is a messaging client"))
         assertTrue(polisher.lastSystemPrompt!!.contains("Smart dictation & task formatting:"))
     }
+
+    @Test
+    fun `auto-routing with explicit tamil language routes to tamil model when installed`() = runTest {
+        val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localWithModels = FakeSttProvider(
+            "local",
+            needsApiKey = false,
+            result = TranscriptionResult.Success("வணக்கம்"),
+            models = listOf(tamilModel, englishModel),
+        )
+
+        val settings = InMemorySettings(
+            sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT,
+            autoLanguageRoutingEnabled = true,
+            language = "ta",
+        )
+
+        val result = pipeline(
+            settings,
+            stt = FakeSttCatalog(listOf(localWithModels), localFallbackModelId = englishModel.id),
+        ).run(clip)
+
+        assertEquals("வணக்கம்", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+    }
+
+    @Test
+    fun `auto-routing with explicit english language preserves cloud stt model`() = runTest {
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localProvider = FakeSttProvider("local", needsApiKey = false, models = listOf(englishModel))
+        val cloudProvider = FakeSttProvider("cloud", needsApiKey = true, result = TranscriptionResult.Success("cloud english"))
+
+        val settings = InMemorySettings(
+            sttModelId = "cloud/model",
+            autoLanguageRoutingEnabled = true,
+            language = "en",
+        )
+
+        val result = pipeline(
+            settings,
+            secrets = InMemorySecretStore(mapOf("cloud" to "sk-cloud")),
+            stt = FakeSttCatalog(listOf(localProvider, cloudProvider), localFallbackModelId = englishModel.id),
+        ).run(clip)
+
+        assertEquals("cloud english", result.text)
+        assertEquals("cloud/model", result.entry.sttModelId)
+    }
+
+    @Test
+    fun `auto-routing with explicit non-indic language preserves chosen model without lid routing`() = runTest {
+        val spanishClip = AudioClip(ByteArray(16_000 * 2))
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val cloudProvider = FakeSttProvider("cloud", needsApiKey = true, result = TranscriptionResult.Success("hola"))
+
+        val settings = InMemorySettings(
+            sttModelId = "cloud/model",
+            autoLanguageRoutingEnabled = true,
+            language = "es",
+        )
+
+        val result = pipeline(
+            settings,
+            secrets = InMemorySecretStore(mapOf("cloud" to "sk-cloud")),
+            stt = FakeSttCatalog(listOf(cloudProvider), localFallbackModelId = englishModel.id),
+        ).run(spanishClip)
+
+        assertEquals("hola", result.text)
+        assertEquals("cloud/model", result.entry.sttModelId)
+    }
+
+    @Test
+    fun `auto-routing preserves selected indic model when language is auto-detect`() = runTest {
+        val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localProvider = FakeSttProvider(
+            "local",
+            needsApiKey = false,
+            result = TranscriptionResult.Success("தமிழ் உரை"),
+            models = listOf(tamilModel, englishModel),
+        )
+
+        val settings = InMemorySettings(
+            sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL,
+            autoLanguageRoutingEnabled = true,
+            language = null,
+        )
+
+        val result = pipeline(
+            settings,
+            stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
+        ).run(clip)
+
+        assertEquals("தமிழ் உரை", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+    }
 }
