@@ -37,15 +37,21 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Spellcheck
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +73,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -166,6 +173,49 @@ fun OnboardingDialog(
     LaunchedEffect(downloads.state, selectedLocalModel) {
         isModelInstalled = withContext(Dispatchers.IO) {
             downloads.isInstalled(selectedLocalModel, AppGraph.localModelsDir)
+        }
+    }
+
+    var waitingForSttDownload by remember { mutableStateOf(false) }
+    var waitingForSlmDownload by remember { mutableStateOf(false) }
+
+    // Latch waiting state when active model download begins
+    LaunchedEffect(downloads.busy) {
+        if (downloads.busy && selectedSttChoice == SttEngineChoice.LOCAL && currentStep == 0) {
+            waitingForSttDownload = true
+        }
+    }
+    LaunchedEffect(slmDownloads.busy) {
+        if (slmDownloads.busy && selectedPolishMode == PolishModeChoice.LOCAL_SLM && currentStep == 1) {
+            waitingForSlmDownload = true
+        }
+    }
+
+    // Auto-advance Step 0 when local STT model completes download
+    LaunchedEffect(isModelInstalled, waitingForSttDownload, currentStep) {
+        if (waitingForSttDownload && isModelInstalled && currentStep == 0) {
+            waitingForSttDownload = false
+            currentStep = 1
+        }
+    }
+
+    // Auto-advance Step 1 when local SLM model completes download
+    LaunchedEffect(isSlmInstalled, waitingForSlmDownload, currentStep) {
+        if (waitingForSlmDownload && isSlmInstalled && currentStep == 1) {
+            waitingForSlmDownload = false
+            currentStep = 2
+        }
+    }
+
+    // Reset waiting flags on error so user can retry or switch option
+    LaunchedEffect(downloads.state) {
+        if (downloads.state is DownloadState.Error) {
+            waitingForSttDownload = false
+        }
+    }
+    LaunchedEffect(slmDownloads.state) {
+        if (slmDownloads.state is DownloadState.Error) {
+            waitingForSlmDownload = false
         }
     }
 
@@ -296,6 +346,9 @@ fun OnboardingDialog(
                             selectedChoice = selectedSttChoice,
                             onSelectChoice = { choice ->
                                 selectedSttChoice = choice
+                                if (choice != SttEngineChoice.LOCAL) {
+                                    waitingForSttDownload = false
+                                }
                                 if (choice == SttEngineChoice.LOCAL) {
                                     settings.sttModelId = "local/${selectedLocalModel.dirName}"
                                     DictationService.instance?.reloadLocalModel()
@@ -324,11 +377,17 @@ fun OnboardingDialog(
                             defaultSlmModel = defaultSlmModel,
                             onStartSlmDownload = {
                                 if (slmStorageDir != null) {
-                                    slmDownloads.start(defaultSlmModel, slmStorageDir) {}
+                                    slmDownloads.start(defaultSlmModel, slmStorageDir) {
+                                        settings.polishEnabled = true
+                                        settings.polishModelId = defaultSlmModel.id
+                                    }
                                 }
                             },
                             onSelect = { mode ->
                                 selectedPolishMode = mode
+                                if (mode != PolishModeChoice.LOCAL_SLM) {
+                                    waitingForSlmDownload = false
+                                }
                                 when (mode) {
                                     PolishModeChoice.RULES -> {
                                         settings.polishEnabled = true
@@ -377,7 +436,11 @@ fun OnboardingDialog(
                 ) {
                     if (currentStep > 0) {
                         OutlinedButton(
-                            onClick = { currentStep-- },
+                            onClick = {
+                                waitingForSttDownload = false
+                                waitingForSlmDownload = false
+                                currentStep--
+                            },
                             shape = RoundedCornerShape(12.dp),
                         ) {
                             Icon(
@@ -393,20 +456,93 @@ fun OnboardingDialog(
                     }
 
                     if (currentStep < 2) {
+                        val isSttStep = currentStep == 0
+                        val isSlmStep = currentStep == 1
+
+                        val isSttActiveDownloading = isSttStep && selectedSttChoice == SttEngineChoice.LOCAL && !isModelInstalled && downloads.busy
+                        val isSlmActiveDownloading = isSlmStep && selectedPolishMode == PolishModeChoice.LOCAL_SLM && !isSlmInstalled && slmDownloads.busy
+
+                        val isSttWaiting = isSttStep && selectedSttChoice == SttEngineChoice.LOCAL && !isModelInstalled
+                        val isSlmWaiting = isSlmStep && selectedPolishMode == PolishModeChoice.LOCAL_SLM && !isSlmInstalled
+
+                        val isDownloading = isSttActiveDownloading || isSlmActiveDownloading || (isSttStep && waitingForSttDownload) || (isSlmStep && waitingForSlmDownload)
+
                         Button(
-                            onClick = { currentStep++ },
+                            onClick = {
+                                when {
+                                    isSttWaiting -> {
+                                        waitingForSttDownload = true
+                                        if (!downloads.busy) {
+                                            downloads.start(selectedLocalModel, AppGraph.localModelsDir, context.cacheDir) {
+                                                settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                                DictationService.instance?.reloadLocalModel()
+                                            }
+                                        }
+                                    }
+                                    isSlmWaiting -> {
+                                        waitingForSlmDownload = true
+                                        if (!slmDownloads.busy && slmStorageDir != null) {
+                                            slmDownloads.start(defaultSlmModel, slmStorageDir) {
+                                                settings.polishEnabled = true
+                                                settings.polishModelId = defaultSlmModel.id
+                                            }
+                                        }
+                                    }
+                                    else -> {
+                                        currentStep++
+                                    }
+                                }
+                            },
+                            enabled = !isDownloading,
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                             ),
                         ) {
-                            Text(stringResource(R.string.onboarding_next), fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(6.dp))
-                            Icon(
-                                Icons.AutoMirrored.Filled.ArrowForward,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
+                            if (isDownloading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                val label = if (isSttStep) {
+                                    when (val state = downloads.state) {
+                                        is DownloadState.Extracting -> stringResource(R.string.onboarding_next_extracting)
+                                        is DownloadState.Downloading -> {
+                                            val pct = (state.progress * 100).roundToInt()
+                                            stringResource(R.string.onboarding_next_downloading, pct)
+                                        }
+                                        else -> stringResource(R.string.onboarding_next_downloading, 0)
+                                    }
+                                } else {
+                                    when (val state = slmDownloads.state) {
+                                        is DownloadState.Extracting -> stringResource(R.string.onboarding_next_extracting_slm)
+                                        is DownloadState.Downloading -> {
+                                            val pct = (state.progress * 100).roundToInt()
+                                            stringResource(R.string.onboarding_next_downloading_slm, pct)
+                                        }
+                                        else -> stringResource(R.string.onboarding_next_downloading_slm, 0)
+                                    }
+                                }
+                                Text(label, fontWeight = FontWeight.Bold)
+                            } else if (isSttWaiting || isSlmWaiting) {
+                                Icon(
+                                    Icons.Default.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.onboarding_next_download), fontWeight = FontWeight.Bold)
+                            } else {
+                                Text(stringResource(R.string.onboarding_next), fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                         }
                     } else {
                         Button(
@@ -1190,6 +1326,146 @@ private fun StepThreePermissions(
             onAction = onOpenAccessibility,
             actionLabel = stringResource(R.string.onboarding_perm_enable),
         )
+
+        // Customization Cues Guide Card
+        QuickSettingsGuideCard()
+    }
+}
+
+@Composable
+private fun QuickSettingsGuideCard() {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        ),
+        border = BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+        ),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = stringResource(R.string.onboarding_guide_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            Text(
+                text = stringResource(R.string.onboarding_guide_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 16.sp,
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+
+            GuideItemRow(
+                icon = Icons.Default.Translate,
+                title = stringResource(R.string.onboarding_guide_routing_title),
+                locationBadge = stringResource(R.string.onboarding_guide_routing_badge),
+                description = stringResource(R.string.onboarding_guide_routing_desc),
+            )
+
+            GuideItemRow(
+                icon = Icons.Default.Spellcheck,
+                title = stringResource(R.string.onboarding_guide_translit_title),
+                locationBadge = stringResource(R.string.onboarding_guide_translit_badge),
+                description = stringResource(R.string.onboarding_guide_translit_desc),
+            )
+
+            GuideItemRow(
+                icon = Icons.Default.Tune,
+                title = stringResource(R.string.onboarding_guide_models_title),
+                locationBadge = stringResource(R.string.onboarding_guide_models_badge),
+                description = stringResource(R.string.onboarding_guide_models_desc),
+            )
+
+            GuideItemRow(
+                icon = Icons.Default.Hearing,
+                title = stringResource(R.string.onboarding_guide_wake_title),
+                locationBadge = stringResource(R.string.onboarding_guide_wake_badge),
+                description = stringResource(R.string.onboarding_guide_wake_desc),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GuideItemRow(
+    icon: ImageVector,
+    title: String,
+    locationBadge: String,
+    description: String,
+) {
+    Row(
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                ) {
+                    Text(
+                        text = locationBadge,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 15.sp,
+            )
+        }
     }
 }
 
