@@ -159,6 +159,8 @@ interface SettingsStore {
     var appContextAwarenessEnabled: Boolean get() = true; set(_) {}
     var smartDictationModesEnabled: Boolean get() = true; set(_) {}
     var hasCompletedOnboarding: Boolean get() = false; set(_) {}
+    var autoStopSilenceEnabled: Boolean get() = true; set(_) {}
+    var silenceTimeoutSeconds: Float get() = 1.8f; set(_) {}
 }
 
 data class HistoryEntry(
