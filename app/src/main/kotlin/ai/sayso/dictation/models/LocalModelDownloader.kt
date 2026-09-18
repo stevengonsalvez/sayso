@@ -43,9 +43,9 @@ sealed class DownloadState {
  * lands in the cache first so a failure part way through never leaves a usable
  * looking but incomplete model folder behind.
  */
-class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
+open class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
 
-    fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> = flow {
+    open fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> = flow {
         val archive = File(cacheDir, "${model.dirName}.tar.bz2")
         val target = File(modelsDir, model.dirName)
         // Unpacked beside the installed copy, never over it: a download that fails, or that the
@@ -129,12 +129,12 @@ class LocalModelDownloader(private val client: OkHttpClient = downloadClient) {
         }
     }.flowOn(Dispatchers.IO)
 
-    fun isInstalled(model: LocalModel, modelsDir: File): Boolean {
+    open fun isInstalled(model: LocalModel, modelsDir: File): Boolean {
         val dir = File(modelsDir, model.dirName)
         return dir.isDirectory && dir.listFiles().orEmpty().any { it.name.endsWith(".onnx") }
     }
 
-    fun delete(model: LocalModel, modelsDir: File): Boolean =
+    open fun delete(model: LocalModel, modelsDir: File): Boolean =
         File(modelsDir, model.dirName).deleteRecursively()
 
     /** Streams the archive to disk and returns its SHA-256, hashed as it goes. */
