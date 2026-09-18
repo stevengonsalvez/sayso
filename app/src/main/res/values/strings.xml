@@ -257,9 +257,9 @@
     <string name="onboarding_guide_routing_title">Language Routing</string>
     <string name="onboarding_guide_routing_badge">Home Screen</string>
     <string name="onboarding_guide_routing_desc">Auto-detects English vs Indic languages and switches local speech models.</string>
-    <string name="onboarding_guide_translit_title">Transliteration</string>
+    <string name="onboarding_guide_translit_title">Tanglish / Hinglish</string>
     <string name="onboarding_guide_translit_badge">Post-Processing</string>
-    <string name="onboarding_guide_translit_desc">Converts spoken Tamil, Hindi, or Malayalam into Latin script (Tanglish/Hinglish).</string>
+    <string name="onboarding_guide_translit_desc">Converts spoken Tamil, Hindi, or Malayalam into Tanglish, Hinglish, or Manglish using English letters.</string>
     <string name="onboarding_guide_models_title">Speech &amp; SLM Models</string>
     <string name="onboarding_guide_models_badge">Voice Engine</string>
     <string name="onboarding_guide_models_desc">Download or switch between Whisper, Parakeet, Indic, and on-device SLMs.</string>
