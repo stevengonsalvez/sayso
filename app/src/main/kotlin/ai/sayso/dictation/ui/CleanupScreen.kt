@@ -136,7 +136,7 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
     var pendingDeleteSlm by remember { mutableStateOf<ai.sayso.dictation.polish.SlmModelInfo?>(null) }
     var previewPromptPreset by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    LaunchedEffect(slmRefreshTrigger, slmDownloads.state) {
+    LaunchedEffect(slmRefreshTrigger, slmDownloads.busy) {
         if (slmStorageDir != null) {
             installedSlmIds = withContext(Dispatchers.IO) {
                 LocalSlmCatalog.all.filter { slmDownloads.isInstalled(it, slmStorageDir) }.map { it.id }.toSet()
@@ -596,6 +596,8 @@ fun CleanupScreen(modifier: Modifier = Modifier) {
                 },
                 outputLanguage = outputLanguage.takeIf { it.isNotBlank() },
                 lexicon = settings.lexicon,
+                enableSmartDictation = smartDictation,
+                transliterateIndicToLatin = transliterateIndic,
             )
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
