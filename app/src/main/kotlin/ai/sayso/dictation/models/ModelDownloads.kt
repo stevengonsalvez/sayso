@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import ai.sayso.dictation.core.SettingsStore
 import ai.sayso.dictation.settings.Settings
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -16,9 +17,10 @@ import java.io.File
  * composition so that leaving the screen, or rotating the phone, does not cancel a transfer
  * half way through 500 MB, and so a second tap cannot start a parallel one.
  */
-class ModelDownloads(private val scope: CoroutineScope) {
-    private val downloader = LocalModelDownloader()
-
+class ModelDownloads(
+    private val scope: CoroutineScope,
+    private val downloader: LocalModelDownloader = LocalModelDownloader(),
+) {
     var activeDirName by mutableStateOf<String?>(null)
         private set
     var state by mutableStateOf<DownloadState?>(null)
@@ -28,12 +30,49 @@ class ModelDownloads(private val scope: CoroutineScope) {
         get() = state is DownloadState.Downloading || state is DownloadState.Extracting
 
     fun start(model: LocalModel, modelsDir: File, cacheDir: File, onFinished: () -> Unit) {
-        if (busy) return
+        if (busy) {
+            onFinished()
+            return
+        }
         activeDirName = model.dirName
         state = DownloadState.Downloading(0f)
         scope.launch {
-            downloader.download(model, modelsDir, cacheDir).collect { state = it }
-            onFinished()
+            try {
+                downloader.download(model, modelsDir, cacheDir).collect { state = it }
+            } catch (t: Throwable) {
+                state = DownloadState.Error(t.message ?: "Download failed")
+            } finally {
+                onFinished()
+            }
+        }
+    }
+
+    /**
+     * Downloads a sequence of models sequentially, skipping any already installed.
+     * Runs on the long-lived scope so navigating away does not abort queue.
+     */
+    fun enqueue(
+        models: List<LocalModel>,
+        modelsDir: File,
+        cacheDir: File,
+        onAllFinished: () -> Unit = {},
+    ) {
+        if (models.isEmpty()) {
+            onAllFinished()
+            return
+        }
+        scope.launch {
+            for (model in models) {
+                val alreadyInstalled = withContext(Dispatchers.IO) { isInstalled(model, modelsDir) }
+                if (!alreadyInstalled) {
+                    val done = CompletableDeferred<Unit>()
+                    start(model, modelsDir, cacheDir) {
+                        done.complete(Unit)
+                    }
+                    done.await()
+                }
+            }
+            onAllFinished()
         }
     }
 

@@ -155,5 +155,7 @@ object LocalModelCatalog {
 
     val default: LocalModel = all.first { it.recommended }
 
+    val indicModels: List<LocalModel> = all.filter { it.dirName.startsWith("ai4bharat-") }
+
     fun byDirName(dirName: String): LocalModel? = all.firstOrNull { it.dirName == dirName }
 }
