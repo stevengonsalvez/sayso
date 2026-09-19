@@ -118,4 +118,38 @@ class LocalRulesPolisherTest {
         assertEquals("- Meeting concluded early", LocalRulesPolisher.clean("summarize: meeting concluded early"))
         assertEquals("- First key point", LocalRulesPolisher.clean("in bullets: first key point"))
     }
+
+    @Test
+    fun `polish applies Indic transliteration when directive is enabled`() = runTest {
+        val transcript = "வணக்கம்"
+        val systemPrompt = CleanupPolicy.systemPrompt(transliterateIndicToLatin = true)
+        val result = LocalRulesPolisher.polish(
+            systemPrompt = systemPrompt,
+            userMessage = CleanupPolicy.userMessage(transcript),
+            modelName = "basic",
+            apiKey = null,
+        )
+
+        assertTrue(result is PolishResult.Success)
+        val text = (result as PolishResult.Success).text
+        assertFalse(IndicTransliterator.hasIndicCharacters(text))
+        assertTrue(text.contains("vanakkam", ignoreCase = true))
+    }
+
+    @Test
+    fun `polish preserves native Indic script when transliteration directive is disabled`() = runTest {
+        val transcript = "வணக்கம்"
+        val systemPrompt = CleanupPolicy.systemPrompt(transliterateIndicToLatin = false)
+        val result = LocalRulesPolisher.polish(
+            systemPrompt = systemPrompt,
+            userMessage = CleanupPolicy.userMessage(transcript),
+            modelName = "basic",
+            apiKey = null,
+        )
+
+        assertTrue(result is PolishResult.Success)
+        val text = (result as PolishResult.Success).text
+        assertTrue(IndicTransliterator.hasIndicCharacters(text))
+        assertEquals("வணக்கம்", text)
+    }
 }
