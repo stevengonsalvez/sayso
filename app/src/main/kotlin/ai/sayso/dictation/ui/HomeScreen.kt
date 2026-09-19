@@ -231,7 +231,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                                 Brush.linearGradient(
                                     listOf(
                                         MaterialTheme.colorScheme.primary,
-                                        Color(0xFF0284C7),
+                                        SaysoBrandAmber,
                                     ),
                                 ),
                             ),
@@ -429,7 +429,7 @@ private fun HomeInsightsWidget(
                             Brush.linearGradient(
                                 listOf(
                                     MaterialTheme.colorScheme.primary,
-                                    Color(0xFF0284C7),
+                                    SaysoBrandAmber,
                                 ),
                             ),
                         ),
@@ -510,7 +510,7 @@ private fun HomeInsightsWidget(
                                 .clip(CircleShape)
                                 .background(
                                     Brush.verticalGradient(
-                                        listOf(Color(0xFF2563EB), Color(0xFF38BDF8)),
+                                        listOf(SaysoBrandAmber, Color(0xFFFBBF24)),
                                     ),
                                 ),
                         )
@@ -1219,7 +1219,7 @@ private fun LanguageRoutingDownloadDialog(
                         Brush.linearGradient(
                             listOf(
                                 MaterialTheme.colorScheme.primary,
-                                Color(0xFF0284C7),
+                                SaysoBrandAmber,
                             ),
                         ),
                     ),
@@ -1395,8 +1395,8 @@ private fun CapabilitiesCard(
                     title = stringResource(R.string.home_setup_wizard_cta),
                     subtitle = stringResource(R.string.home_setup_wizard_subtitle),
                     icon = Icons.Default.AutoFixHigh,
-                    iconBg = Color(0xFFE0F2FE),
-                    iconTint = Color(0xFF0284C7),
+                    iconBg = Color(0xFFFEF3C7),
+                    iconTint = SaysoBrandAmber,
                     onClick = onOpenOnboarding,
                 )
                 HorizontalDivider(

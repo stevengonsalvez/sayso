@@ -7,35 +7,38 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// Sonic Cobalt primary & Energetic Amber secondary brand anchors
-private val SonicCobaltLight = Color(0xFF2563EB)
-private val SonicCobaltDark = Color(0xFF60A5FA)
-private val CobaltContainerLight = Color(0xFFDBEAFE)
-private val CobaltContainerDark = Color(0xFF1E3A8A)
-private val OnCobaltContainerLight = Color(0xFF1E40AF)
-private val OnCobaltContainerDark = Color(0xFFDBEAFE)
+// Sayso Brand anchors from logo: Deep Navy (#1E2A44) & Golden Amber (#F4B942)
+val SaysoBrandNavy = Color(0xFF1E2A44)
+val SaysoBrandAmber = Color(0xFFF4B942)
 
-private val AmberLight = Color(0xFFF59E0B)
-private val AmberDark = Color(0xFFFBBF24)
-private val AmberContainerLight = Color(0xFFFEF3C7)
-private val AmberContainerDark = Color(0xFF78350F)
+private val BrandNavy = SaysoBrandNavy
+private val BrandNavyDark = Color(0xFF0C1322)
+private val BrandNavySurface = Color(0xFF151F33)
+private val BrandNavyElevated = Color(0xFF1E2A44)
+private val BrandNavyContainer = Color(0xFF263654)
+private val BrandNavyLight = Color(0xFFE8EDF5)
+
+private val BrandAmber = SaysoBrandAmber
+private val BrandAmberDark = Color(0xFFD99B26)
+private val BrandAmberContainerLight = Color(0xFFFEF3C7)
+private val BrandAmberContainerDark = Color(0xFF453006)
 private val OnAmberContainerLight = Color(0xFF92400E)
-private val OnAmberContainerDark = Color(0xFFFEF3C7)
+private val OnAmberContainerDark = Color(0xFFFDE68A)
 
 private val CrimsonLight = Color(0xFFEF4444)
 private val CrimsonDark = Color(0xFFF87171)
 
 private val LightScheme = lightColorScheme(
-    primary = SonicCobaltLight,
+    primary = BrandNavy,
     onPrimary = Color.White,
-    primaryContainer = CobaltContainerLight,
-    onPrimaryContainer = OnCobaltContainerLight,
-    secondary = AmberLight,
+    primaryContainer = BrandNavyLight,
+    onPrimaryContainer = BrandNavy,
+    secondary = BrandAmberDark,
     onSecondary = Color.White,
-    secondaryContainer = AmberContainerLight,
+    secondaryContainer = BrandAmberContainerLight,
     onSecondaryContainer = OnAmberContainerLight,
-    tertiary = Color(0xFF0284C7),
-    onTertiary = Color.White,
+    tertiary = BrandAmber,
+    onTertiary = BrandNavy,
     error = CrimsonLight,
     onError = Color.White,
     background = Color(0xFFF8FAFC),
@@ -49,31 +52,31 @@ private val LightScheme = lightColorScheme(
 )
 
 private val DarkScheme = darkColorScheme(
-    primary = SonicCobaltDark,
-    onPrimary = Color(0xFF0B0F17),
-    primaryContainer = CobaltContainerDark,
-    onPrimaryContainer = OnCobaltContainerDark,
-    secondary = AmberDark,
-    onSecondary = Color(0xFF451A03),
-    secondaryContainer = AmberContainerDark,
-    onSecondaryContainer = OnAmberContainerDark,
-    tertiary = Color(0xFF38BDF8),
-    onTertiary = Color(0xFF082F49),
+    primary = BrandAmber,
+    onPrimary = BrandNavyDark,
+    primaryContainer = BrandAmberContainerDark,
+    onPrimaryContainer = OnAmberContainerDark,
+    secondary = Color(0xFF8EA7DC),
+    onSecondary = BrandNavyDark,
+    secondaryContainer = BrandNavyContainer,
+    onSecondaryContainer = Color(0xFFDCE5F5),
+    tertiary = BrandAmberDark,
+    onTertiary = Color.White,
     error = CrimsonDark,
     onError = Color(0xFF450A0A),
-    background = Color(0xFF0B0F17),
+    background = BrandNavyDark,
     onBackground = Color(0xFFF8FAFC),
-    surface = Color(0xFF131B2A),
+    surface = BrandNavySurface,
     onSurface = Color(0xFFF8FAFC),
-    surfaceVariant = Color(0xFF1E293B),
+    surfaceVariant = BrandNavyElevated,
     onSurfaceVariant = Color(0xFF94A3B8),
-    outline = Color(0xFF334155),
-    outlineVariant = Color(0xFF1E293B),
+    outline = Color(0xFF334668),
+    outlineVariant = Color(0xFF1E2A44),
 )
 
 /**
  * Material 3 wrapper for every Sayso screen. Enforces Sayso's signature
- * Sonic Cobalt brand theme consistently across all Android versions.
+ * Deep Navy & Golden Amber brand theme consistently across all Android versions.
  */
 @Composable
 fun SaysoTheme(

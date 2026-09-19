@@ -127,7 +127,7 @@ fun SaysoApp() {
                                         Brush.linearGradient(
                                             listOf(
                                                 MaterialTheme.colorScheme.primary,
-                                                Color(0xFF0284C7),
+                                                SaysoBrandAmber,
                                             ),
                                         ),
                                     ),
