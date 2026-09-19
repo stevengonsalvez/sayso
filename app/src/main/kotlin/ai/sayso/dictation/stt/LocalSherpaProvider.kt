@@ -71,7 +71,10 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
         }
 
     /** Frees the native recogniser, for example when the user picks a cloud provider. */
-    suspend fun unload() = mutex.withLock { release() }
+    suspend fun unload() = mutex.withLock {
+        release()
+        ai.sayso.dictation.models.EarlyLidRouter.releaseLid()
+    }
 
     private fun transcribeLocked(modelName: String, clip: AudioClip, language: String? = null): TranscriptionResult {
         if (clip.isEmpty) return TranscriptionResult.Failure("No audio recorded")

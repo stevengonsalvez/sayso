@@ -68,6 +68,7 @@ object AppGraph {
                 override fun find(modelId: String): Pair<PolishProvider, PolishModel>? = polish.find(modelId)
             },
             history = history,
+            modelsDir = localModelsDir,
         )
         corrections = ai.sayso.dictation.correction.AutoCorrectionEngine.open(app, settings)
         downloads = ModelDownloads(CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
