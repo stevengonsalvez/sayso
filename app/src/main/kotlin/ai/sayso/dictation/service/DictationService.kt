@@ -176,6 +176,7 @@ class DictationService : AccessibilityService() {
         bubble?.hide()
         bubble = null
         sounds?.release()
+        ai.sayso.dictation.models.EarlyLidRouter.releaseLid()
         scope.cancel()
         super.onDestroy()
     }

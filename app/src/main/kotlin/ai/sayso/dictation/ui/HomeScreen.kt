@@ -146,7 +146,8 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             )
         }
         val indicInstalled = withContext(Dispatchers.IO) {
-            LocalModelCatalog.indicModels
+            val routingModels = listOfNotNull(LocalModelCatalog.byDirName("sherpa-onnx-whisper-tiny")) + LocalModelCatalog.indicModels
+            routingModels
                 .filter { downloads.isInstalled(it, modelsDir) }
                 .map { it.dirName }
                 .toSet()
@@ -1199,11 +1200,13 @@ private fun LanguageRoutingDownloadDialog(
     onDismiss: () -> Unit,
     onDownloadSelected: (List<LocalModel>) -> Unit,
 ) {
-    val indicModels = remember { LocalModelCatalog.indicModels }
-    val selectedDirNames = remember {
+    val routingModels = remember {
+        listOfNotNull(LocalModelCatalog.byDirName("sherpa-onnx-whisper-tiny")) + LocalModelCatalog.indicModels
+    }
+    val selectedDirNames = remember(installedDirNames) {
         mutableStateMapOf<String, Boolean>().apply {
-            indicModels.forEach { model ->
-                put(model.dirName, true)
+            routingModels.forEach { model ->
+                put(model.dirName, model.dirName !in installedDirNames)
             }
         }
     }
@@ -1244,7 +1247,7 @@ private fun LanguageRoutingDownloadDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Select Indic language models to download. Automatic routing will classify your speech and switch to these models seamlessly with English.",
+                    text = "Select models to download for automatic routing. Whisper Multilingual Tiny classifies your speech in real-time to switch seamlessly between English and Indic models.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1256,7 +1259,7 @@ private fun LanguageRoutingDownloadDialog(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                        indicModels.forEach { model ->
+                        routingModels.forEach { model ->
                             val isInstalled = model.dirName in installedDirNames
                             val isChecked = selectedDirNames[model.dirName] == true
 
@@ -1296,7 +1299,7 @@ private fun LanguageRoutingDownloadDialog(
             }
         },
         confirmButton = {
-            val toDownload = indicModels.filter { model ->
+            val toDownload = routingModels.filter { model ->
                 model.dirName !in installedDirNames && selectedDirNames[model.dirName] == true
             }
             Button(

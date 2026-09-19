@@ -29,7 +29,8 @@ class DefaultDictationPipelineTest {
         stt: SttCatalog = FakeSttCatalog(listOf(local, cloud), localFallbackModelId = "local/model"),
         polish: PolishCatalog = FakePolishCatalog(emptyList()),
         history: FakeHistory? = null,
-    ) = DefaultDictationPipeline(settings, secrets, stt, polish, history)
+        modelsDir: java.io.File? = null,
+    ) = DefaultDictationPipeline(settings, secrets, stt, polish, history, modelsDir)
 
     @Test
     fun `happy path transcribes applies the lexicon and polishes`() = runTest {
@@ -543,5 +544,77 @@ class DefaultDictationPipelineTest {
 
         assertEquals("தமிழ் உரை", result.text)
         assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+    }
+
+    @Test
+    fun `auto-routing with parakeet default model routes to installed tamil model on voiced speech`() = runTest {
+        val pcm = ByteArray(32000)
+        for (i in 0 until 16000) {
+            val t = i.toDouble() / 16000.0
+            val v = (Math.sin(2.0 * Math.PI * 200.0 * t) * 10000.0 + Math.sin(2.0 * Math.PI * 800.0 * t) * 6000.0).toInt().toShort()
+            pcm[i * 2] = (v.toInt() and 0xFF).toByte()
+            pcm[i * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
+        }
+        val voicedClip = AudioClip(pcm, 16000)
+
+        val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localProvider = FakeSttProvider(
+            "local",
+            needsApiKey = false,
+            result = TranscriptionResult.Success("வணக்கம்"),
+            models = listOf(tamilModel, englishModel),
+        )
+
+        val settings = InMemorySettings(
+            sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT,
+            autoLanguageRoutingEnabled = true,
+            language = "auto",
+        )
+
+        val result = pipeline(
+            settings,
+            stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
+        ).run(voicedClip)
+
+        assertEquals("வணக்கம்", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+    }
+
+    @Test
+    fun `auto-routing with parakeet default model retains english on english speech even if previous language was ta`() = runTest {
+        // Generate high-frequency audio (e.g. English fricatives / high ZCR > 0.08)
+        val pcm = ByteArray(32000)
+        for (i in 0 until 16000) {
+            val t = i.toDouble() / 16000.0
+            val v = (Math.sin(2.0 * Math.PI * 2500.0 * t) * 10000.0).toInt().toShort()
+            pcm[i * 2] = (v.toInt() and 0xFF).toByte()
+            pcm[i * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
+        }
+        val englishClip = AudioClip(pcm, 16000)
+
+        val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localProvider = FakeSttProvider(
+            "local",
+            needsApiKey = false,
+            result = TranscriptionResult.Success("Hello world"),
+            models = listOf(tamilModel, englishModel),
+        )
+
+        // User had language="ta" from manual mode earlier, but now enabled auto routing
+        val settings = InMemorySettings(
+            sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT,
+            autoLanguageRoutingEnabled = true,
+            language = "ta",
+        )
+
+        val result = pipeline(
+            settings,
+            stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
+        ).run(englishClip)
+
+        assertEquals("Hello world", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, result.entry.sttModelId)
     }
 }

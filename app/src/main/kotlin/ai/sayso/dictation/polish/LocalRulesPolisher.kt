@@ -26,7 +26,12 @@ object LocalRulesPolisher : PolishProvider {
     ): PolishResult {
         val transcript = CleanupPolicy.extractTranscript(userMessage)
             ?: return PolishResult.Failure("Malformed cleanup payload")
-        return PolishResult.Success(clean(transcript))
+        val baseCleaned = if (systemPrompt.contains("Transliteration directive") && IndicTransliterator.hasIndicCharacters(transcript)) {
+            IndicTransliterator.transliterate(transcript)
+        } else {
+            transcript
+        }
+        return PolishResult.Success(clean(baseCleaned))
     }
 
     /** Trims transcription markers and normalises spacing, casing and the final full stop. */

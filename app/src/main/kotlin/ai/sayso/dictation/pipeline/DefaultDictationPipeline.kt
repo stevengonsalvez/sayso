@@ -46,6 +46,7 @@ class DefaultDictationPipeline(
     private val stt: SttCatalog,
     private val polish: PolishCatalog,
     private val history: HistoryRepository? = null,
+    private val modelsDir: java.io.File? = null,
 ) : DictationPipeline {
 
     // The pipeline owns its dispatcher. Every step blocks (sockets, on-device inference, the
@@ -81,7 +82,7 @@ class DefaultDictationPipeline(
                 TranscriptionRequest(
                     clip = clip,
                     modelName = model.model.modelName,
-                    language = settings.language,
+                    language = if (settings.autoLanguageRoutingEnabled) null else settings.language,
                     hints = dictationHints,
                 ),
                 model.apiKey,
@@ -132,7 +133,28 @@ class DefaultDictationPipeline(
     private fun resolveStt(clip: AudioClip? = null): Resolved? {
         val targetModelId = if (settings.autoLanguageRoutingEnabled && clip != null && !clip.isEmpty) {
             val userLang = settings.language?.trim()?.lowercase()
-            if (!userLang.isNullOrEmpty()) {
+            val fallbackLang = when (userLang) {
+                "ta" -> ai.sayso.dictation.models.DetectedLanguage.TAMIL
+                "hi" -> ai.sayso.dictation.models.DetectedLanguage.HINDI
+                "ml" -> ai.sayso.dictation.models.DetectedLanguage.MALAYALAM
+                "en" -> ai.sayso.dictation.models.DetectedLanguage.ENGLISH
+                else -> null
+            }
+            val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
+                .map { "local/${it.dirName}" }
+                .filter { stt.find(it) != null }
+                .toSet()
+            val decision = ai.sayso.dictation.models.EarlyLidRouter.route(
+                clip = clip,
+                installedModelIds = installedIds,
+                defaultModelId = settings.sttModelId,
+                overrideLanguage = fallbackLang,
+                modelsDir = modelsDir,
+            )
+            decision.recommendedModelId
+        } else {
+            val userLang = settings.language?.trim()?.lowercase()
+            if (!userLang.isNullOrEmpty() && userLang != "auto") {
                 when (userLang) {
                     "ta" -> if (stt.find(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL) != null) {
                         ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL
@@ -150,23 +172,9 @@ class DefaultDictationPipeline(
                     } else settings.sttModelId
                     else -> settings.sttModelId
                 }
-            } else if (settings.sttModelId.contains("indic") || settings.sttModelId.contains("ai4bharat")) {
-                settings.sttModelId
             } else {
-                val installedIds = ai.sayso.dictation.models.LocalModelCatalog.all
-                    .map { "local/${it.dirName}" }
-                    .filter { stt.find(it) != null }
-                    .toSet()
-                val decision = ai.sayso.dictation.models.EarlyLidRouter.route(
-                    clip = clip,
-                    installedModelIds = installedIds,
-                    defaultModelId = settings.sttModelId,
-                    overrideLanguage = null,
-                )
-                decision.recommendedModelId
+                settings.sttModelId
             }
-        } else {
-            settings.sttModelId
         }
 
         var keyless: TranscriptionProvider? = null
