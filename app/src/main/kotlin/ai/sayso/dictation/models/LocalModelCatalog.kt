@@ -158,4 +158,32 @@ object LocalModelCatalog {
     val indicModels: List<LocalModel> = all.filter { it.dirName.startsWith("ai4bharat-") }
 
     fun byDirName(dirName: String): LocalModel? = all.firstOrNull { it.dirName == dirName }
+
+    /**
+     * Resolves the recommended on-device speech model based on user language preferences.
+     * Foreign languages or multilingual Indian selection route to Whisper Multilingual Tiny.
+     * Specific Indian languages route to dedicated colloquial AI4Bharat IndicConformer models.
+     * Default English-only preference routes to Parakeet 110M.
+     */
+    fun resolveForLanguages(
+        interestedInIndianLanguages: Boolean,
+        interestedInForeignLanguages: Boolean,
+        primaryIndicLanguage: String = "ta",
+    ): LocalModel {
+        return when {
+            interestedInForeignLanguages -> {
+                byDirName("sherpa-onnx-whisper-tiny") ?: default
+            }
+            interestedInIndianLanguages -> {
+                when (primaryIndicLanguage.lowercase()) {
+                    "ta", "tamil" -> byDirName("ai4bharat-indicconformer-ta") ?: default
+                    "hi", "hindi" -> byDirName("ai4bharat-indicconformer-hi") ?: default
+                    "ml", "malayalam" -> byDirName("ai4bharat-indicconformer-ml") ?: default
+                    else -> byDirName("sherpa-onnx-whisper-tiny") ?: default
+                }
+            }
+            else -> default
+        }
+    }
 }
+
