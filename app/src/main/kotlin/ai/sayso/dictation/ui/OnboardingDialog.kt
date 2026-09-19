@@ -169,10 +169,6 @@ fun OnboardingDialog(
         )
     }
 
-    LaunchedEffect(recommendedSttModel) {
-        selectedLocalModel = recommendedSttModel
-    }
-
     var showOtherModelsDialog by remember { mutableStateOf(false) }
 
     val slmDownloads = AppGraph.slmDownloads
@@ -191,6 +187,7 @@ fun OnboardingDialog(
     var selectedPolishMode by remember {
         mutableStateOf(
             when {
+                !settings.hasCompletedOnboarding -> PolishModeChoice.RULES
                 !settings.polishEnabled -> PolishModeChoice.OFF
                 settings.polishModelId.startsWith("rules/") -> PolishModeChoice.RULES
                 settings.polishModelId.startsWith("local-slm/") -> PolishModeChoice.LOCAL_SLM
@@ -391,11 +388,20 @@ fun OnboardingDialog(
                     when (step) {
                         0 -> StepZeroLanguages(
                             interestedInIndianLanguages = interestedInIndianLanguages,
-                            onToggleIndianLanguages = { interestedInIndianLanguages = it },
+                            onToggleIndianLanguages = {
+                                interestedInIndianLanguages = it
+                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(it, interestedInForeignLanguages, selectedIndicLanguage)
+                            },
                             interestedInForeignLanguages = interestedInForeignLanguages,
-                            onToggleForeignLanguages = { interestedInForeignLanguages = it },
+                            onToggleForeignLanguages = {
+                                interestedInForeignLanguages = it
+                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(interestedInIndianLanguages, it, selectedIndicLanguage)
+                            },
                             selectedIndicLanguage = selectedIndicLanguage,
-                            onSelectIndicLanguage = { selectedIndicLanguage = it },
+                            onSelectIndicLanguage = {
+                                selectedIndicLanguage = it
+                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(interestedInIndianLanguages, interestedInForeignLanguages, it)
+                            },
                             transliterateToLatin = transliterateToLatin,
                             onToggleTransliteration = { transliterateToLatin = it },
                             recommendedModel = recommendedSttModel,
@@ -584,6 +590,39 @@ fun OnboardingDialog(
                                                 }
                                             }
                                         }
+                                    }
+                                    isSttStep -> {
+                                        if (selectedSttChoice == SttEngineChoice.LOCAL) {
+                                            settings.sttModelId = "local/${selectedLocalModel.dirName}"
+                                            DictationService.instance?.reloadLocalModel()
+                                        } else {
+                                            settings.sttModelId = "groq/whisper-large-v3-turbo"
+                                        }
+                                        currentStep = 2
+                                    }
+                                    isSlmStep -> {
+                                        when (selectedPolishMode) {
+                                            PolishModeChoice.RULES -> {
+                                                settings.polishEnabled = true
+                                                settings.polishModelId = "rules/basic"
+                                            }
+                                            PolishModeChoice.CLOUD -> {
+                                                settings.polishEnabled = true
+                                                if (settings.polishModelId.startsWith("rules/") || settings.polishModelId.startsWith("local-slm/")) {
+                                                    settings.polishModelId = "openai/gpt-4o-mini"
+                                                }
+                                            }
+                                            PolishModeChoice.OFF -> {
+                                                settings.polishEnabled = false
+                                            }
+                                            PolishModeChoice.LOCAL_SLM -> {
+                                                if (isSlmInstalled) {
+                                                    settings.polishEnabled = true
+                                                    settings.polishModelId = defaultSlmModel.id
+                                                }
+                                            }
+                                        }
+                                        currentStep = 3
                                     }
                                     else -> {
                                         currentStep++
@@ -804,14 +843,15 @@ private fun StepZeroLanguages(
                 if (interestedInIndianLanguages) 1.5.dp else 1.dp,
                 if (interestedInIndianLanguages) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
             ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onToggleIndianLanguages(!interestedInIndianLanguages) },
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(14.dp)) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onToggleIndianLanguages(!interestedInIndianLanguages) },
                 ) {
                     Checkbox(
                         checked = interestedInIndianLanguages,
@@ -864,33 +904,63 @@ private fun StepZeroLanguages(
                     )
                     Spacer(Modifier.height(8.dp))
 
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        listOf(
+                        val allChips = listOf(
                             "ta" to stringResource(R.string.onboarding_lang_tamil),
                             "hi" to stringResource(R.string.onboarding_lang_hindi),
                             "ml" to stringResource(R.string.onboarding_lang_malayalam),
                             "all" to stringResource(R.string.onboarding_lang_all_indic),
-                        ).forEach { (code, label) ->
-                            val isSelected = selectedIndicLanguage == code
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { onSelectIndicLanguage(code) },
-                                label = {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    )
-                                },
-                                modifier = Modifier.weight(1f),
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                ),
-                            )
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            allChips.take(2).forEach { (code, label) ->
+                                val isSelected = selectedIndicLanguage == code
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onSelectIndicLanguage(code) },
+                                    label = {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                                    ),
+                                )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            allChips.drop(2).forEach { (code, label) ->
+                                val isSelected = selectedIndicLanguage == code
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { onSelectIndicLanguage(code) },
+                                    label = {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                                    ),
+                                )
+                            }
                         }
                     }
 
@@ -1072,13 +1142,15 @@ private fun StepZeroLanguages(
                 if (interestedInForeignLanguages) 1.5.dp else 1.dp,
                 if (interestedInForeignLanguages) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
             ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onToggleForeignLanguages(!interestedInForeignLanguages) },
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable { onToggleForeignLanguages(!interestedInForeignLanguages) }
+                    .padding(14.dp),
             ) {
                 Checkbox(
                     checked = interestedInForeignLanguages,
@@ -2102,7 +2174,7 @@ private fun AccessibilityDisclosureDialog(
                         Brush.linearGradient(
                             listOf(
                                 MaterialTheme.colorScheme.primary,
-                                Color(0xFF0284C7),
+                                SaysoBrandAmber,
                             ),
                         ),
                     ),

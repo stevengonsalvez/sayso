@@ -459,10 +459,10 @@ private fun HomeInsightsWidget(
                 Spacer(Modifier.weight(1f))
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = if (summary != null && summary.sessions > 0) Color(0xFFDBEAFE) else Color(0xFFF1F5F9),
+                    color = if (summary != null && summary.sessions > 0) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                     border = BorderStroke(
                         1.dp,
-                        if (summary != null && summary.sessions > 0) Color(0xFFBFDBFE) else Color(0xFFE2E8F0),
+                        if (summary != null && summary.sessions > 0) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.outlineVariant,
                     ),
                 ) {
                     Text(
@@ -819,7 +819,7 @@ private fun EngineStatusCard(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFFDBEAFE)),
+                        .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -1349,7 +1349,7 @@ private fun ActiveModelsCard(
                     title = stringResource(R.string.home_stt_title),
                     subtitle = sttSummary,
                     icon = Icons.Default.Mic,
-                    iconBg = Color(0xFFDBEAFE),
+                    iconBg = MaterialTheme.colorScheme.primaryContainer,
                     iconTint = MaterialTheme.colorScheme.primary,
                     onClick = onOpenTranscription,
                 )
