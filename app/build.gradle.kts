@@ -54,8 +54,8 @@ android {
         applicationId = "ai.sayso.dictation"
         minSdk = 30
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.0.21"
+        versionCode = 23
+        versionName = "1.0.22"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
