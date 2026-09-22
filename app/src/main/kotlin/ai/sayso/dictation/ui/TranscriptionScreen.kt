@@ -331,6 +331,9 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 ) { Text(stringResource(R.string.transcription_local_open)) }
             } else {
                 for (model in localModels) {
+                    val isIndic = model.id.contains("indicconformer")
+                    val isEnglishBest = model.id.contains("parakeet")
+                    val isWhisper = model.id.contains("whisper")
                     RadioRow(
                         title = model.displayName,
                         subtitle = model.note.takeIf { it.isNotBlank() },
@@ -339,6 +342,48 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                             selectedModel = model.id
                             settings.sttModelId = model.id
                             DictationService.instance?.reloadLocalModel()
+                        },
+                        trailing = {
+                            if (isIndic) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFFFEF3C7),
+                                ) {
+                                    Text(
+                                        text = "★ Best for Dialects",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB45309),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            } else if (isEnglishBest) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                ) {
+                                    Text(
+                                        text = "★ Best for English",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            } else if (isWhisper) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                ) {
+                                    Text(
+                                        text = "Multilingual",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
                         },
                     )
                 }
