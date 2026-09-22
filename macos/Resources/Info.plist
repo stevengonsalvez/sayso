@@ -8,6 +8,8 @@
     <string>SaysoNotch</string>
     <key>CFBundleIdentifier</key>
     <string>ai.sayso.notch</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>Sayso Notch</string>
     <key>CFBundlePackageType</key>
