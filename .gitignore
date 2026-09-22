@@ -10,3 +10,9 @@ app/libs/
 *.iml
 .DS_Store
 .agents/
+macos/.build/
+macos/.artifacts/
+macos/.tmux-dev-session.json
+macos/dev-server-*.log
+macos/.swiftpm/xcode/xcuserdata/
+*.xcuserstate
