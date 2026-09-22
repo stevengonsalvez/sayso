@@ -39,7 +39,9 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     }
 
     public var fingerprint: String {
-        [String(processIdentifier), applicationName, windowTitle, focusedRole, isProtected.description]
+        let visibleControls = elements.map { [$0.id, $0.role, $0.title].joined(separator: "\u{1F}") }
+            .joined(separator: "\u{1E}")
+        return [String(processIdentifier), applicationName, windowTitle, focusedRole, isProtected.description, visibleControls]
             .joined(separator: "|")
     }
 }
@@ -53,8 +55,14 @@ public enum DesktopAction: Codable, Equatable, Sendable {
     case press(elementID: String, expectedFingerprint: String)
 
     public var isDestructive: Bool {
-        if case .quit = self { return true }
-        return false
+        switch self {
+        case .quit:
+            return true
+        case let .press(elementID, _):
+            return ControlPolicy.isDestructiveControlTitle(elementID.split(separator: "|", maxSplits: 1).last.map(String.init) ?? "")
+        default:
+            return false
+        }
     }
 }
 
@@ -95,9 +103,22 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
 
 public enum ControlPolicy {
     public static let minimumConfidence = 0.60
+    private static let destructiveWords = [
+        "quit", "close", "delete", "remove", "trash", "empty", "discard", "clear",
+        "send", "submit", "post", "share", "publish", "pay", "purchase", "order", "transfer"
+    ]
 
     public static func canAutoRun(_ step: ControlPlanStep) -> Bool {
-        step.confidence >= minimumConfidence
+        step.confidence >= minimumConfidence && !requiresConfirmation(step)
+    }
+
+    public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
+        step.action.isDestructive
+    }
+
+    public static func isDestructiveControlTitle(_ title: String) -> Bool {
+        let normalized = title.lowercased()
+        return destructiveWords.contains { normalized.contains($0) }
     }
 }
 
@@ -175,9 +196,9 @@ public actor ControlAuditStore {
 public final class AXDesktopController: @unchecked Sendable {
     public init() {}
 
-    public func capture() throws -> DesktopSnapshot {
+    public func capture(application targetApplication: NSRunningApplication? = nil) throws -> DesktopSnapshot {
         guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
-        guard let app = NSWorkspace.shared.frontmostApplication else {
+        guard let app = targetApplication ?? NSWorkspace.shared.frontmostApplication else {
             throw SaysoError.unavailable("Frontmost application")
         }
         let application = AXUIElementCreateApplication(app.processIdentifier)
@@ -195,17 +216,24 @@ public final class AXDesktopController: @unchecked Sendable {
         )
     }
 
-    public func execute(_ step: ControlPlanStep) async throws -> ControlAuditEntry {
-        guard ControlPolicy.canAutoRun(step) else {
+    public func execute(
+        _ step: ControlPlanStep,
+        approved: Bool = false,
+        targetApplication: NSRunningApplication? = nil
+    ) async throws -> ControlAuditEntry {
+        guard step.confidence >= ControlPolicy.minimumConfidence else {
             throw SaysoError.invalidAction("Confidence below Sayso control threshold")
         }
-        let before = try capture()
+        guard approved || !ControlPolicy.requiresConfirmation(step) else {
+            throw SaysoError.invalidAction("Review required before this action can run")
+        }
+        let before = try capture(application: targetApplication)
         guard !before.isProtected else { throw SaysoError.protectedTarget }
 
         switch step.action {
         case let .type(text, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
-            try setFocusedText(text)
+            try setFocusedText(text, in: before.processIdentifier)
         case let .open(url):
             NSWorkspace.shared.open(url)
         case let .activate(bundleIdentifier):
@@ -220,6 +248,10 @@ public final class AXDesktopController: @unchecked Sendable {
             app.terminate()
         case let .scroll(lines, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
+                throw SaysoError.unavailable(before.applicationName)
+            }
+            target.activate()
             guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: Int32(lines), wheel2: 0, wheel3: 0) else {
                 throw SaysoError.unavailable("Scroll event")
             }
@@ -230,7 +262,7 @@ public final class AXDesktopController: @unchecked Sendable {
                   let element = interactiveElements(in: window).first(where: { $0.id == elementID }) else {
                 throw SaysoError.staleTarget
             }
-            try press(element)
+            try press(element, in: before.processIdentifier)
         }
 
         let after = try? capture()
@@ -250,9 +282,9 @@ public final class AXDesktopController: @unchecked Sendable {
         return current
     }
 
-    private func setFocusedText(_ text: String) throws {
-        let systemWide = AXUIElementCreateSystemWide()
-        guard let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: systemWide) else {
+    private func setFocusedText(_ text: String, in processIdentifier: Int32) throws {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        guard let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: application) else {
             throw SaysoError.unavailable("Focused text field")
         }
         let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: focused) as? String
@@ -272,9 +304,8 @@ public final class AXDesktopController: @unchecked Sendable {
         }
     }
 
-    private func press(_ descriptor: DesktopElement) throws {
-        guard let app = NSWorkspace.shared.frontmostApplication else { throw SaysoError.unavailable("Frontmost application") }
-        let application = AXUIElementCreateApplication(app.processIdentifier)
+    private func press(_ descriptor: DesktopElement, in processIdentifier: Int32) throws {
+        let application = AXUIElementCreateApplication(processIdentifier)
         guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application),
               let target = descendants(of: window, depth: 4).first(where: {
                   let role = copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String ?? ""
