@@ -30,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -119,7 +120,19 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                         modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
-                    ) { Text(stringResource(R.string.local_models_recommended)) }
+                    ) { Text("★ Recommended for English") }
+                } else if (model.dirName.startsWith("ai4bharat-")) {
+                    Badge(
+                        containerColor = Color(0xFFFEF3C7),
+                        contentColor = Color(0xFFB45309),
+                        modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+                    ) { Text("★ Recommended: Best for Indian Dialects & Tanglish") }
+                } else if (model.dirName.contains("whisper")) {
+                    Badge(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+                    ) { Text("Multilingual · Lower dialect accuracy than AI4Bharat") }
                 }
 
                 if (active) {
