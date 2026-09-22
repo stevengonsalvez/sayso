@@ -38,7 +38,7 @@ object LocalModelCatalog {
             dirName = "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8",
             displayName = "Parakeet 110M",
             sizeMb = 104,
-            note = "English, fast, good default",
+            note = "English, fast, good default (Recommended for English)",
             sha256 = "17f945007b52ccd8b7200ffc7c5652e9e8e961dfdf479cefcabd06cf5703630b",
             recommended = true,
         ),
@@ -46,21 +46,21 @@ object LocalModelCatalog {
             dirName = "sherpa-onnx-whisper-tiny",
             displayName = "Whisper Multilingual Tiny",
             sizeMb = 111,
-            note = "Standard multilingual: Hindi, Tamil, Malayalam, English",
+            note = "Multilingual (English + Indic). Note: Lower dialect accuracy than AI4Bharat",
             sha256 = "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1",
         ),
         LocalModel(
             dirName = "sherpa-onnx-whisper-base",
             displayName = "Whisper Multilingual Base",
             sizeMb = 198,
-            note = "Standard multilingual: Higher accuracy Hindi, Tamil, Malayalam",
+            note = "Multilingual (English + Indic). Higher Whisper accuracy, but lower dialect accuracy than AI4Bharat",
             sha256 = "911b2083efd7c0dca2ac3b358b75222660dc09fb716d64fbfc417ba6c99ff3de",
         ),
         LocalModel(
             dirName = "ai4bharat-indicconformer-ta",
             displayName = "AI4Bharat Tamil (Colloquial)",
             sizeMb = 189,
-            note = "Colloquial and conversational Tamil (AI4Bharat IndicConformer)",
+            note = "Best accuracy for colloquial Tamil, Tanglish, and dialects (Recommended for Tamil)",
             files = listOf(
                 ModelFile(
                     url = "$AI4BHARAT_BASE/ta/model.int8.onnx",
@@ -80,7 +80,7 @@ object LocalModelCatalog {
             dirName = "ai4bharat-indicconformer-hi",
             displayName = "AI4Bharat Hindi (Colloquial)",
             sizeMb = 189,
-            note = "Colloquial and conversational Hindi (AI4Bharat IndicConformer)",
+            note = "Best accuracy for colloquial Hindi, Hinglish, and dialects (Recommended for Hindi)",
             files = listOf(
                 ModelFile(
                     url = "$AI4BHARAT_BASE/hi/model.int8.onnx",
@@ -100,7 +100,7 @@ object LocalModelCatalog {
             dirName = "ai4bharat-indicconformer-ml",
             displayName = "AI4Bharat Malayalam (Colloquial)",
             sizeMb = 189,
-            note = "Colloquial and conversational Malayalam (AI4Bharat IndicConformer)",
+            note = "Best accuracy for colloquial Malayalam and dialects (Recommended for Malayalam)",
             files = listOf(
                 ModelFile(
                     url = "$AI4BHARAT_BASE/ml/model.int8.onnx",
@@ -171,17 +171,31 @@ object LocalModelCatalog {
         primaryIndicLanguage: String = "ta",
     ): LocalModel {
         return when {
-            interestedInForeignLanguages -> {
-                byDirName("sherpa-onnx-whisper-tiny") ?: default
-            }
             interestedInIndianLanguages -> {
                 when (primaryIndicLanguage.lowercase()) {
                     "ta", "tamil" -> byDirName("ai4bharat-indicconformer-ta") ?: default
                     "hi", "hindi" -> byDirName("ai4bharat-indicconformer-hi") ?: default
                     "ml", "malayalam" -> byDirName("ai4bharat-indicconformer-ml") ?: default
-                    else -> byDirName("sherpa-onnx-whisper-tiny") ?: default
+                    "all" -> if (interestedInForeignLanguages) (byDirName("sherpa-onnx-whisper-tiny") ?: default) else (byDirName("ai4bharat-indicconformer-ta") ?: default)
+                    else -> byDirName("ai4bharat-indicconformer-ta") ?: default
                 }
             }
+            interestedInForeignLanguages -> {
+                byDirName("sherpa-onnx-whisper-tiny") ?: default
+            }
+            else -> default
+        }
+    }
+
+    /**
+     * Resolves model for a direct language selection ("en", "ta", "hi", "ml", "multi").
+     */
+    fun modelForLanguage(languageCode: String): LocalModel {
+        return when (languageCode.lowercase().trim()) {
+            "ta", "tamil" -> byDirName("ai4bharat-indicconformer-ta") ?: default
+            "hi", "hindi" -> byDirName("ai4bharat-indicconformer-hi") ?: default
+            "ml", "malayalam" -> byDirName("ai4bharat-indicconformer-ml") ?: default
+            "multi", "multilingual", "auto" -> byDirName("sherpa-onnx-whisper-tiny") ?: default
             else -> default
         }
     }
