@@ -24,7 +24,7 @@ done
 iconutil --convert icns "$iconset_dir" --output "$app_dir/Contents/Resources/AppIcon.icns"
 
 signing_identity=${SAYSO_CODESIGN_IDENTITY:--}
-codesign --force --options runtime --timestamp --sign "$signing_identity" "$app_dir"
+codesign --force --options runtime --timestamp --entitlements "$root_dir/Resources/SaysoNotch.entitlements" --sign "$signing_identity" "$app_dir"
 
 if [[ -n "${SAYSO_NOTARY_PROFILE:-}" ]]; then
   ditto -c -k --keepParent "$app_dir" "$root_dir/.artifacts/Sayso-Notch.zip"
