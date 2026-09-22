@@ -82,6 +82,16 @@ final class SaysoAppModel: ObservableObject {
 
     private func startDictation() async -> Bool {
         notch.show()
+        await permissions.request(.microphone)
+        guard permissions.states[.microphone] == .granted else {
+            notice = "Microphone access is required before Sayso can listen."
+            return false
+        }
+        await permissions.request(.speechRecognition)
+        guard permissions.states[.speechRecognition] == .granted else {
+            notice = "Speech Recognition access is required before Sayso can transcribe."
+            return false
+        }
         let started = await transcriber.start(
                 language: settings.language,
                 route: settings.route,
