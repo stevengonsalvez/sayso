@@ -102,6 +102,7 @@ import ai.sayso.dictation.service.DictationService
 import ai.sayso.dictation.service.WakeWordService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -128,11 +129,14 @@ fun OnboardingDialog(
     var selectedPrimaryLanguage by remember {
         mutableStateOf(
             when {
-                settings.language == "en" -> "en"
                 settings.language == "hi" || settings.sttModelId.contains("-hi") -> "hi"
                 settings.language == "ml" || settings.sttModelId.contains("-ml") -> "ml"
                 settings.language == "ta" || settings.sttModelId.contains("-ta") -> "ta"
-                settings.language == "auto" || settings.autoLanguageRoutingEnabled -> "multi"
+                settings.language == "en" || settings.sttModelId.contains("parakeet") -> "en"
+                settings.autoLanguageRoutingEnabled || settings.sttModelId.contains("whisper") -> "multi"
+                Locale.getDefault().language == "hi" -> "hi"
+                Locale.getDefault().language == "ml" -> "ml"
+                Locale.getDefault().language == "ta" -> "ta"
                 else -> "ta"
             }
         )
@@ -528,7 +532,7 @@ fun OnboardingDialog(
                                                 settings.autoLanguageRoutingEnabled = false
                                             }
                                             "multi" -> {
-                                                settings.language = "auto"
+                                                settings.language = null
                                                 settings.autoLanguageRoutingEnabled = true
                                             }
                                             else -> {

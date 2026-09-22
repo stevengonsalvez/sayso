@@ -122,11 +122,17 @@ fun LocalModelsScreen(modifier: Modifier = Modifier) {
                         modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
                     ) { Text("★ Recommended for English") }
                 } else if (model.dirName.startsWith("ai4bharat-")) {
+                    val langSpecific = when {
+                        model.dirName.contains("-ta") -> "Tamil Dialects & Tanglish"
+                        model.dirName.contains("-hi") -> "Hindi Dialects & Hinglish"
+                        model.dirName.contains("-ml") -> "Malayalam Dialects & Manglish"
+                        else -> "Indian Dialects"
+                    }
                     Badge(
                         containerColor = Color(0xFFFEF3C7),
                         contentColor = Color(0xFFB45309),
                         modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
-                    ) { Text("★ Recommended: Best for Indian Dialects & Tanglish") }
+                    ) { Text("★ Recommended: Best for $langSpecific") }
                 } else if (model.dirName.contains("whisper")) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,

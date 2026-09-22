@@ -368,19 +368,26 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             activeDownloadingDir = downloads.activeDirName,
             downloadState = downloads.state,
             onSelectLanguage = { langCode, targetModel ->
+                val routingEnabled = langCode == "multi"
                 if (targetModel.dirName in installedModelDirNames) {
                     settings.language = if (langCode == "multi") null else langCode
                     settings.sttModelId = "local/${targetModel.dirName}"
+                    settings.autoLanguageRoutingEnabled = routingEnabled
+                    autoLanguageRouting = routingEnabled
                     currentLanguage = settings.language
                     currentSttModelId = settings.sttModelId
                     DictationService.instance?.reloadLocalModel()
                 } else {
                     downloads.start(targetModel, modelsDir, context.cacheDir) {
-                        settings.language = if (langCode == "multi") null else langCode
-                        settings.sttModelId = "local/${targetModel.dirName}"
-                        currentLanguage = settings.language
-                        currentSttModelId = settings.sttModelId
-                        DictationService.instance?.reloadLocalModel()
+                        if (downloads.state is DownloadState.Done) {
+                            settings.language = if (langCode == "multi") null else langCode
+                            settings.sttModelId = "local/${targetModel.dirName}"
+                            settings.autoLanguageRoutingEnabled = routingEnabled
+                            autoLanguageRouting = routingEnabled
+                            currentLanguage = settings.language
+                            currentSttModelId = settings.sttModelId
+                            DictationService.instance?.reloadLocalModel()
+                        }
                         resumeTick++
                     }
                 }
@@ -1143,8 +1150,10 @@ private fun LanguageQuickSwitcherCard(
     onTransliterationChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val activeOption = remember(currentSttModelId, currentLanguage) {
+    val isCloud = !currentSttModelId.startsWith("local/")
+    val activeOption = remember(currentSttModelId, currentLanguage, isCloud) {
         when {
+            isCloud -> null
             currentSttModelId.contains("indicconformer-ta") || currentLanguage == "ta" -> QUICK_LANG_OPTIONS.first { it.code == "ta" }
             currentSttModelId.contains("indicconformer-hi") || currentLanguage == "hi" -> QUICK_LANG_OPTIONS.first { it.code == "hi" }
             currentSttModelId.contains("indicconformer-ml") || currentLanguage == "ml" -> QUICK_LANG_OPTIONS.first { it.code == "ml" }
@@ -1153,8 +1162,8 @@ private fun LanguageQuickSwitcherCard(
         }
     }
 
-    var selectedLangCode by remember(activeOption) { mutableStateOf(activeOption.code) }
-    val selectedOption = QUICK_LANG_OPTIONS.firstOrNull { it.code == selectedLangCode } ?: activeOption
+    var selectedLangCode by remember(activeOption) { mutableStateOf(activeOption?.code ?: "en") }
+    val selectedOption = QUICK_LANG_OPTIONS.firstOrNull { it.code == selectedLangCode } ?: (activeOption ?: QUICK_LANG_OPTIONS.first())
     val targetModel = LocalModelCatalog.byDirName(selectedOption.modelDir) ?: LocalModelCatalog.default
     val isTargetInstalled = targetModel.dirName in installedModelDirNames
     val isDownloadingThis = isDownloading && activeDownloadingDir == targetModel.dirName
@@ -1185,13 +1194,18 @@ private fun LanguageQuickSwitcherCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column {
+                        val headerTitle = when {
+                            isCloud -> "Active: Cloud Model (${currentSttModelId.substringBefore('/')})"
+                            activeOption != null && selectedOption.code == activeOption.code -> "Active: ${activeOption.label} (${activeOption.nativeScript})"
+                            else -> "Selected: ${selectedOption.label} (${selectedOption.nativeScript})"
+                        }
                         Text(
-                            text = "Active: ${selectedOption.label} (${selectedOption.nativeScript})",
+                            text = headerTitle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = stringResource(R.string.home_quick_language_desc),
+                            text = if (isCloud) "Tap any on-device language below to switch to private offline dictation" else stringResource(R.string.home_quick_language_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1206,7 +1220,7 @@ private fun LanguageQuickSwitcherCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     for (opt in QUICK_LANG_OPTIONS) {
-                        val isSelected = opt.code == selectedOption.code
+                        val isSelected = (!isCloud && opt.code == activeOption?.code && selectedOption.code == opt.code) || (isCloud && opt.code == selectedLangCode) || (!isTargetInstalled && opt.code == selectedOption.code)
                         val isInstalled = opt.modelDir in installedModelDirNames
                         FilterChip(
                             selected = isSelected,
