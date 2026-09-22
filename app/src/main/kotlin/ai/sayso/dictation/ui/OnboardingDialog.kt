@@ -125,24 +125,14 @@ fun OnboardingDialog(
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var isModelInstalled by remember { mutableStateOf(false) }
 
-    var interestedInIndianLanguages by remember {
-        mutableStateOf(
-            settings.language in listOf("ta", "hi", "ml") ||
-                settings.sttModelId.contains("indicconformer") ||
-                settings.transliterateIndicToLatin
-        )
-    }
-    var interestedInForeignLanguages by remember {
-        mutableStateOf(
-            settings.language == "auto" || settings.autoLanguageRoutingEnabled
-        )
-    }
-    var selectedIndicLanguage by remember {
+    var selectedPrimaryLanguage by remember {
         mutableStateOf(
             when {
+                settings.language == "en" -> "en"
                 settings.language == "hi" || settings.sttModelId.contains("-hi") -> "hi"
                 settings.language == "ml" || settings.sttModelId.contains("-ml") -> "ml"
-                settings.language == "auto" -> "all"
+                settings.language == "ta" || settings.sttModelId.contains("-ta") -> "ta"
+                settings.language == "auto" || settings.autoLanguageRoutingEnabled -> "multi"
                 else -> "ta"
             }
         )
@@ -151,12 +141,8 @@ fun OnboardingDialog(
         mutableStateOf(if (settings.hasCompletedOnboarding) settings.transliterateIndicToLatin else true)
     }
 
-    val recommendedSttModel = remember(interestedInIndianLanguages, interestedInForeignLanguages, selectedIndicLanguage) {
-        LocalModelCatalog.resolveForLanguages(
-            interestedInIndianLanguages = interestedInIndianLanguages,
-            interestedInForeignLanguages = interestedInForeignLanguages,
-            primaryIndicLanguage = selectedIndicLanguage,
-        )
+    val recommendedSttModel = remember(selectedPrimaryLanguage) {
+        LocalModelCatalog.modelForLanguage(selectedPrimaryLanguage)
     }
 
     val initialIsCloud = settings.sttModelId.substringBefore('/') != "local"
@@ -387,20 +373,10 @@ fun OnboardingDialog(
                 ) { step ->
                     when (step) {
                         0 -> StepZeroLanguages(
-                            interestedInIndianLanguages = interestedInIndianLanguages,
-                            onToggleIndianLanguages = {
-                                interestedInIndianLanguages = it
-                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(it, interestedInForeignLanguages, selectedIndicLanguage)
-                            },
-                            interestedInForeignLanguages = interestedInForeignLanguages,
-                            onToggleForeignLanguages = {
-                                interestedInForeignLanguages = it
-                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(interestedInIndianLanguages, it, selectedIndicLanguage)
-                            },
-                            selectedIndicLanguage = selectedIndicLanguage,
-                            onSelectIndicLanguage = {
-                                selectedIndicLanguage = it
-                                selectedLocalModel = LocalModelCatalog.resolveForLanguages(interestedInIndianLanguages, interestedInForeignLanguages, it)
+                            selectedLanguage = selectedPrimaryLanguage,
+                            onSelectLanguage = { lang ->
+                                selectedPrimaryLanguage = lang
+                                selectedLocalModel = LocalModelCatalog.modelForLanguage(lang)
                             },
                             transliterateToLatin = transliterateToLatin,
                             onToggleTransliteration = { transliterateToLatin = it },
@@ -544,25 +520,23 @@ fun OnboardingDialog(
                             onClick = {
                                 when {
                                     isLangStep -> {
-                                        settings.transliterateIndicToLatin = if (interestedInIndianLanguages) transliterateToLatin else false
-                                        when {
-                                            interestedInIndianLanguages && interestedInForeignLanguages -> {
+                                        val isIndic = selectedPrimaryLanguage in listOf("ta", "hi", "ml", "multi")
+                                        settings.transliterateIndicToLatin = if (isIndic) transliterateToLatin else false
+                                        when (selectedPrimaryLanguage) {
+                                            "ta", "hi", "ml" -> {
+                                                settings.language = selectedPrimaryLanguage
+                                                settings.autoLanguageRoutingEnabled = false
+                                            }
+                                            "multi" -> {
                                                 settings.language = "auto"
                                                 settings.autoLanguageRoutingEnabled = true
-                                            }
-                                            interestedInForeignLanguages -> {
-                                                settings.language = "auto"
-                                                settings.autoLanguageRoutingEnabled = true
-                                            }
-                                            interestedInIndianLanguages -> {
-                                                settings.language = if (selectedIndicLanguage == "all") "auto" else selectedIndicLanguage
-                                                settings.autoLanguageRoutingEnabled = (selectedIndicLanguage == "all")
                                             }
                                             else -> {
                                                 settings.language = "en"
                                                 settings.autoLanguageRoutingEnabled = false
                                             }
                                         }
+                                        selectedLocalModel = recommendedSttModel
                                         if (isModelInstalled && selectedSttChoice == SttEngineChoice.LOCAL) {
                                             settings.sttModelId = "local/${selectedLocalModel.dirName}"
                                             DictationService.instance?.reloadLocalModel()
@@ -803,418 +777,299 @@ enum class SttEngineChoice {
 
 /** Step 0: Language selection and transliteration preferences */
 @OptIn(ExperimentalMaterial3Api::class)
+private data class OnboardingLanguageOption(
+    val code: String,
+    val name: String,
+    val nativeScript: String,
+    val dialectName: String,
+    val badge: String,
+    val isIndic: Boolean,
+)
+
+/** Step 0: Primary Language selection and transliteration preferences */
 @Composable
 private fun StepZeroLanguages(
-    interestedInIndianLanguages: Boolean,
-    onToggleIndianLanguages: (Boolean) -> Unit,
-    interestedInForeignLanguages: Boolean,
-    onToggleForeignLanguages: (Boolean) -> Unit,
-    selectedIndicLanguage: String,
-    onSelectIndicLanguage: (String) -> Unit,
+    selectedLanguage: String,
+    onSelectLanguage: (String) -> Unit,
     transliterateToLatin: Boolean,
     onToggleTransliteration: (Boolean) -> Unit,
     recommendedModel: LocalModel,
 ) {
+    val options = remember {
+        listOf(
+            OnboardingLanguageOption(
+                code = "ta",
+                name = "Tamil",
+                nativeScript = "தமிழ்",
+                dialectName = "Tanglish",
+                badge = "★ Recommended: AI4Bharat is superior for Tamil & Tanglish",
+                isIndic = true,
+            ),
+            OnboardingLanguageOption(
+                code = "hi",
+                name = "Hindi",
+                nativeScript = "हिंदी",
+                dialectName = "Hinglish",
+                badge = "★ Recommended: AI4Bharat is superior for Hindi & Hinglish",
+                isIndic = true,
+            ),
+            OnboardingLanguageOption(
+                code = "ml",
+                name = "Malayalam",
+                nativeScript = "മലയാളം",
+                dialectName = "Manglish",
+                badge = "★ Recommended: AI4Bharat is superior for Malayalam",
+                isIndic = true,
+            ),
+            OnboardingLanguageOption(
+                code = "en",
+                name = "English",
+                nativeScript = "English",
+                dialectName = "",
+                badge = "★ Recommended for English (Parakeet 110M)",
+                isIndic = false,
+            ),
+            OnboardingLanguageOption(
+                code = "multi",
+                name = "English + Indian",
+                nativeScript = "Multilingual",
+                dialectName = "Multi",
+                badge = "Multilingual (Whisper). Note: Lower dialect accuracy than AI4Bharat",
+                isIndic = true,
+            ),
+        )
+    }
+
+    val selectedOption = options.firstOrNull { it.code == selectedLanguage } ?: options.first()
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Column {
             Text(
-                text = stringResource(R.string.onboarding_lang_title),
+                text = stringResource(R.string.onboarding_lang_primary_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text = stringResource(R.string.onboarding_lang_subtitle),
+                text = stringResource(R.string.onboarding_lang_primary_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        // Card 1: Indian Languages
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (interestedInIndianLanguages) {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                },
-            ),
-            border = BorderStroke(
-                if (interestedInIndianLanguages) 1.5.dp else 1.dp,
-                if (interestedInIndianLanguages) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(14.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onToggleIndianLanguages(!interestedInIndianLanguages) },
+        // Primary Language Cards
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { option ->
+                val isSelected = option.code == selectedLanguage
+                Surface(
+                    onClick = { onSelectLanguage(option.code) },
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isSelected) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    },
+                    border = BorderStroke(
+                        if (isSelected) 1.5.dp else 1.dp,
+                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Checkbox(
-                        checked = interestedInIndianLanguages,
-                        onCheckedChange = { onToggleIndianLanguages(it) },
-                        colors = CheckboxDefaults.colors(
-                            checkedColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (interestedInIndianLanguages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                            ),
-                        contentAlignment = Alignment.Center,
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            Icons.Default.Language,
+                            imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
                             contentDescription = null,
-                            tint = if (interestedInIndianLanguages) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
+                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
                         )
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = stringResource(R.string.onboarding_lang_indic_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = stringResource(R.string.onboarding_lang_indic_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                if (interestedInIndianLanguages) {
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Spacer(Modifier.height(12.dp))
-
-                    Text(
-                        text = stringResource(R.string.onboarding_lang_select_primary),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Spacer(Modifier.height(8.dp))
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        val allChips = listOf(
-                            "ta" to stringResource(R.string.onboarding_lang_tamil),
-                            "hi" to stringResource(R.string.onboarding_lang_hindi),
-                            "ml" to stringResource(R.string.onboarding_lang_malayalam),
-                            "all" to stringResource(R.string.onboarding_lang_all_indic),
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            allChips.take(2).forEach { (code, label) ->
-                                val isSelected = selectedIndicLanguage == code
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { onSelectIndicLanguage(code) },
-                                    label = {
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        )
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                    ),
-                                )
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            allChips.drop(2).forEach { (code, label) ->
-                                val isSelected = selectedIndicLanguage == code
-                                FilterChip(
-                                    selected = isSelected,
-                                    onClick = { onSelectIndicLanguage(code) },
-                                    label = {
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        )
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primary,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                                    ),
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    // Transliteration Section
-                    Text(
-                        text = stringResource(R.string.onboarding_translit_title),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = stringResource(R.string.onboarding_translit_subtitle),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-
-                    val exampleSpoken = when (selectedIndicLanguage) {
-                        "hi" -> "नमस्ते, आप कैसे हैं?"
-                        "ml" -> "നമസ്കാരം, സുഖമാണോ?"
-                        "all" -> "வணக்கம் / नमस्ते / നമസ്കാരം"
-                        else -> "வணக்கம், எப்படி இருக்கீங்க?"
-                    }
-                    val exampleLatin = when (selectedIndicLanguage) {
-                        "hi" -> "Namaste, aap kaise hain?"
-                        "ml" -> "Namaskaram, sugamano?"
-                        "all" -> "Vanakkam / Namaste / Namaskaram"
-                        else -> "Vanakkam, eppadi irukkeenga?"
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        // Option 1: Tanglish / Hinglish / Manglish
-                        Surface(
-                            onClick = { onToggleTransliteration(true) },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (transliterateToLatin) {
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
-                            },
-                            border = BorderStroke(
-                                if (transliterateToLatin) 1.5.dp else 1.dp,
-                                if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                            ),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Column(Modifier.padding(10.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = if (transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                                        contentDescription = null,
-                                        tint = if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        text = when (selectedIndicLanguage) {
-                                            "hi" -> "Hinglish"
-                                            "ml" -> "Manglish"
-                                            "ta" -> "Tanglish"
-                                            else -> "Tanglish / Hinglish"
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "English letters",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontSize = 11.sp,
+                                    text = option.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "(${option.nativeScript})",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                                Spacer(Modifier.height(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(Modifier.padding(6.dp)) {
-                                        Text(
-                                            text = "Example:",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                        Text(
-                                            text = "\"$exampleLatin\"",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            fontStyle = FontStyle.Italic,
-                                        )
-                                    }
-                                }
                             }
-                        }
-
-                        // Option 2: Native Script
-                        Surface(
-                            onClick = { onToggleTransliteration(false) },
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (!transliterateToLatin) {
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
-                            },
-                            border = BorderStroke(
-                                if (!transliterateToLatin) 1.5.dp else 1.dp,
-                                if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
-                            ),
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Column(Modifier.padding(10.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = if (!transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
-                                        contentDescription = null,
-                                        tint = if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(
-                                        text = stringResource(R.string.onboarding_translit_native_title),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = "Native script",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(Modifier.padding(6.dp)) {
-                                        Text(
-                                            text = "Example:",
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                        Text(
-                                            text = "\"$exampleSpoken\"",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Medium,
-                                        )
-                                    }
-                                }
-                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = option.badge,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (isSelected && option.isIndic) SaysoBrandAmber else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
             }
         }
 
-        // Card 2: Foreign Languages
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (interestedInForeignLanguages) {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                },
-            ),
-            border = BorderStroke(
-                if (interestedInForeignLanguages) 1.5.dp else 1.dp,
-                if (interestedInForeignLanguages) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.outlineVariant,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onToggleForeignLanguages(!interestedInForeignLanguages) }
-                    .padding(14.dp),
-            ) {
-                Checkbox(
-                    checked = interestedInForeignLanguages,
-                    onCheckedChange = { onToggleForeignLanguages(it) },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = MaterialTheme.colorScheme.primary,
-                    ),
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (interestedInForeignLanguages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.Public,
-                        contentDescription = null,
-                        tint = if (interestedInForeignLanguages) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.onboarding_lang_foreign_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = stringResource(R.string.onboarding_lang_foreign_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
+        // Transliteration Section for Indian Languages
+        if (selectedOption.isIndic) {
+            Text(
+                text = stringResource(R.string.onboarding_translit_title),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = stringResource(R.string.onboarding_translit_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-        // Note: English Default
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
+            val exampleSpoken = when (selectedOption.code) {
+                "hi" -> "नमस्ते, आप कैसे हैं?"
+                "ml" -> "നമസ്കാരം, സുഖമാണോ?"
+                "multi" -> "வணக்கம் / नमस्ते / നമസ്കാരം"
+                else -> "வணக்கம், எப்படி இருக்கீங்க?"
+            }
+            val exampleLatin = when (selectedOption.code) {
+                "hi" -> "Namaste, aap kaise hain?"
+                "ml" -> "Namaskaram, sugamano?"
+                "multi" -> "Vanakkam / Namaste / Namaskaram"
+                else -> "Vanakkam, eppadi irukkeenga?"
+            }
+
             Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Icon(
-                    Icons.Default.Info,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    text = stringResource(R.string.onboarding_lang_english_default),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Option 1: Tanglish / Hinglish / Manglish
+                Surface(
+                    onClick = { onToggleTransliteration(true) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (transliterateToLatin) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    },
+                    border = BorderStroke(
+                        if (transliterateToLatin) 1.5.dp else 1.dp,
+                        if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = when (selectedOption.code) {
+                                    "hi" -> "Hinglish"
+                                    "ml" -> "Manglish"
+                                    "ta" -> "Tanglish"
+                                    else -> "Tanglish / Hinglish"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "English letters",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(6.dp)) {
+                                Text(
+                                    text = "Example:",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = "\"$exampleLatin\"",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontStyle = FontStyle.Italic,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Option 2: Native Script
+                Surface(
+                    onClick = { onToggleTransliteration(false) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (!transliterateToLatin) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    },
+                    border = BorderStroke(
+                        if (!transliterateToLatin) 1.5.dp else 1.dp,
+                        if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (!transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.onboarding_translit_native_title),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Native script",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(6.dp)) {
+                                Text(
+                                    text = "Example:",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = "\"$exampleSpoken\"",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1237,7 +1092,7 @@ private fun StepZeroLanguages(
                         color = SaysoBrandAmber,
                     ) {
                         Text(
-                            text = "RECOMMENDED MODEL",
+                            text = if (selectedOption.isIndic && selectedOption.code != "multi") "★ RECOMMENDED: AI4BHARAT" else "RECOMMENDED MODEL",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = SaysoBrandNavy,
@@ -1259,7 +1114,11 @@ private fun StepZeroLanguages(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = recommendedModel.note,
+                    text = if (selectedOption.isIndic && selectedOption.code != "multi") {
+                        "AI4Bharat IndicConformer is the most superior on-device model for Indian dialects and conversational Tanglish/Hinglish speech."
+                    } else {
+                        recommendedModel.note
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
