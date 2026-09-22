@@ -11,6 +11,13 @@ import Testing
     #expect(DictationLanguage.kannada.localeIdentifier == "kn-IN")
 }
 
+@Test func permissionRequestsOpenTheirExactPrivacyPanes() {
+    #expect(PermissionKind.microphone.settingsURL.absoluteString.contains("Privacy_Microphone"))
+    #expect(PermissionKind.speechRecognition.settingsURL.absoluteString.contains("Privacy_SpeechRecognition"))
+    #expect(PermissionKind.accessibility.settingsURL.absoluteString.contains("Privacy_Accessibility"))
+    #expect(PermissionKind.inputMonitoring.settingsURL.absoluteString.contains("Privacy_ListenEvent"))
+}
+
 @Test func lexiconCorrectionsApplyBeforeOutput() {
     #expect(LexiconCorrections.apply("Ship say so", replacements: ["say so": "Sayso"]) == "Ship Sayso")
 }
