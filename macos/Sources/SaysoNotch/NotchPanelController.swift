@@ -15,9 +15,9 @@ final class NotchPanelController {
     private let state = NotchPresentationState()
     private weak var model: SaysoAppModel?
 
-    private let expandedSize = NSSize(width: 560, height: 176)
+    private let expandedHeight: CGFloat = 176
     private let collapsedHeight: CGFloat = 42
-    private let notchShoulder: CGFloat = 118
+    private let notchShoulder: CGFloat = 42
 
     init() {
         panel = NSPanel(
@@ -99,7 +99,7 @@ final class NotchPanelController {
         }
         let size = state.isCollapsed
             ? NSSize(width: state.compactWidth, height: collapsedHeight)
-            : expandedSize
+            : NSSize(width: state.compactWidth, height: expandedHeight)
         let panelFrame: NSRect
         if model?.settings.overlayPresentation == .floating {
             let visibleFrame = screen.visibleFrame
@@ -137,7 +137,6 @@ private struct NotchHUD: View {
                 HStack(spacing: 10) {
                     Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
                         .foregroundStyle(SaysoPalette.amber)
-                    Text(model.transcriber.phase == .listening ? "Listening" : "Sayso")
                     if model.transcriber.phase == .listening { Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7) }
                 }
                 .font(.caption.weight(.bold))
@@ -159,14 +158,6 @@ private struct NotchHUD: View {
                             .font(.caption.weight(.bold))
                     }
                     .frame(width: 28, height: 28)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Sayso")
-                            .font(.system(size: 15, weight: .bold))
-                        Text(model.settings.mode == .dictation ? "Dictation" : "Desktop control")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(SaysoPalette.muted)
-                    }
 
                     Spacer(minLength: 8)
                     NotchIconButton("macwindow", label: "Open Sayso", action: openApp)
@@ -208,7 +199,7 @@ private struct NotchHUD: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
-            .frame(width: 560, height: 176)
+            .frame(width: state.compactWidth, height: 176)
             .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
             .gesture(TapGesture().onEnded(toggle), including: .gesture)
             .background {
