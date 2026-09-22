@@ -423,52 +423,111 @@ private struct ControlWorkspace: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                VStack(alignment: .leading) {
-                    Text("Desktop control").font(.largeTitle.bold())
-                    Text("Ground. Act. Verify.").foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    Image(systemName: "cursorarrow.click.2")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(SaysoPalette.cobalt, in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Desktop control").font(.largeTitle.bold())
+                        Text("Ground. Act. Verify.").foregroundStyle(SaysoPalette.muted)
+                    }
                 }
                 Spacer()
                 ModePicker(model: model)
             }
             HStack(spacing: 12) {
-                Button("Capture desktop") { model.captureDesktop() }.buttonStyle(.borderedProminent)
-                Button("Verify focused target") { model.runSafeDemoControl() }
+                Button {
+                    model.captureDesktop()
+                } label: {
+                    Label("Capture desktop", systemImage: "viewfinder")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SaysoPalette.cobalt)
+                Button {
+                    model.runSafeDemoControl()
+                } label: {
+                    Label("Verify target", systemImage: "checkmark.shield")
+                }
+                .buttonStyle(.bordered)
+                .tint(SaysoPalette.amber)
             }
-            HStack {
+            HStack(spacing: 12) {
                 TextField("Type, scroll down, or open https://…", text: $command)
                     .onSubmit { model.runControl(command) }
-                Button("Run") { model.runControl(command) }
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    model.runControl(command)
+                } label: {
+                    Label("Run", systemImage: "arrow.up.right")
+                }
                     .buttonStyle(.borderedProminent)
+                    .tint(SaysoPalette.cobalt)
             }
-            GroupBox("Control status") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Control status", systemImage: "scope")
+                        .font(.headline)
+                        .foregroundStyle(statusTint)
+                    Spacer()
+                    Text(model.currentSnapshot == nil ? "Awaiting capture" : "Grounded")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5)
+                        .background(statusTint, in: Capsule())
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     Text(model.controlStatus)
+                        .font(.body.weight(.medium))
                     if let snapshot = model.currentSnapshot {
-                        Text("\(snapshot.applicationName)  •  \(snapshot.windowTitle)")
-                        Text(snapshot.isProtected ? "Protected target, blocked" : "Target eligible for verified actions")
-                            .foregroundStyle(snapshot.isProtected ? SaysoPalette.crimson : .secondary)
+                        Label("\(snapshot.applicationName)  •  \(snapshot.windowTitle)", systemImage: "macwindow")
+                            .foregroundStyle(SaysoPalette.muted)
+                        Label(
+                            snapshot.isProtected ? "Protected target, blocked" : "Target eligible for verified actions",
+                            systemImage: snapshot.isProtected ? "xmark.shield" : "checkmark.shield"
+                        )
+                        .foregroundStyle(snapshot.isProtected ? SaysoPalette.crimson : SaysoPalette.amber)
                         if !snapshot.elements.isEmpty {
                             Text("Visible controls: \(snapshot.elements.prefix(4).map(\.title).joined(separator: ", "))")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(SaysoPalette.muted)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .padding(16)
+            .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(statusTint, lineWidth: 1)
+            }
             if !model.controlEntries.isEmpty {
-                GroupBox("Recent verified actions") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Recent verified actions", systemImage: "checkmark.seal")
+                        .font(.headline)
+                        .foregroundStyle(SaysoPalette.amber)
                     ForEach(model.controlEntries.prefix(3)) { entry in
                         Text("\(entry.timestamp.formatted(date: .omitted, time: .shortened))  \(entry.result)")
                             .font(.caption)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(16)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
             }
-            Text("Say “type hello”, “click Send”, “scroll down”, or “open https://…”. Secure fields, stale targets, and low-confidence plans are rejected.")
-                .foregroundStyle(.secondary)
+            Label("Say “type hello”, “click Send”, “scroll down”, or “open https://…”. Secure fields, stale targets, and low-confidence plans are rejected.", systemImage: "lock.shield")
+                .font(.caption)
+                .foregroundStyle(SaysoPalette.muted)
             Spacer()
         }
         .padding(32)
+    }
+
+    private var statusTint: Color {
+        if model.currentSnapshot?.isProtected == true { return SaysoPalette.crimson }
+        return model.currentSnapshot == nil ? SaysoPalette.amber : SaysoPalette.cobalt
     }
 }
 
