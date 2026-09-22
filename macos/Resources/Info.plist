@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>Sayso Notch</string>
+    <key>CFBundleExecutable</key>
+    <string>SaysoNotch</string>
+    <key>CFBundleIdentifier</key>
+    <string>ai.sayso.notch</string>
+    <key>CFBundleName</key>
+    <string>Sayso Notch</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.2</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sayso uses Automation only for desktop-control actions you request.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sayso captures your voice for dictation.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Sayso converts your voice into text.</string>
+    <key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
+    <false/>
+</dict>
+</plist>
