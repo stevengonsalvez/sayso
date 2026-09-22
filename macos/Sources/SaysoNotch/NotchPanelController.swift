@@ -15,7 +15,7 @@ final class NotchPanelController {
     private let state = NotchPresentationState()
     private weak var model: SaysoAppModel?
 
-    private let expandedHeight: CGFloat = 176
+    private let expandedHeight: CGFloat = 210
     private let collapsedHeight: CGFloat = 42
     private let notchShoulder: CGFloat = 42
 
@@ -149,8 +149,8 @@ private struct NotchHUD: View {
             }
             .buttonStyle(.plain)
         } else {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
                             .fill(SaysoPalette.cobalt)
@@ -167,39 +167,32 @@ private struct NotchHUD: View {
                     NotchIconButton("power", label: "Quit Sayso", tint: SaysoPalette.crimson, action: quit)
                 }
 
-                HStack(spacing: 10) {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
-                            .frame(width: 8, height: 8)
-                        Text(model.transcriber.phase == .listening ? "Live transcription" : "Ready when you are")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(SaysoPalette.surfaceRaised, in: Capsule())
-
+                HStack {
                     ModePicker(model: model)
-                        .frame(width: 180)
                     Spacer()
                 }
 
-                HStack(alignment: .bottom, spacing: 16) {
+                HStack(alignment: .bottom, spacing: 12) {
                     Text(model.transcriber.partialText.isEmpty ? "Live words appear here." : model.transcriber.partialText)
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 15, weight: .medium))
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(model.transcriber.phase == .listening ? "Stop" : "Start") {
+                    Button {
                         model.startOrStopDictation()
+                    } label: {
+                        Label(
+                            model.transcriber.phase == .listening ? "Stop" : "Start",
+                            systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
+                        )
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .frame(width: state.compactWidth, height: 176)
+            .padding(.horizontal, 16)
+            .padding(.top, 38)
+            .padding(.bottom, 14)
+            .frame(width: state.compactWidth, height: 210)
             .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
             .gesture(TapGesture().onEnded(toggle), including: .gesture)
             .background {
