@@ -178,7 +178,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func openSettings() {
-        selectedTab = 3
+        selectedTab = 5
         showMainWindow()
     }
 
@@ -389,7 +389,11 @@ private struct SettingsHome: View {
                     Label("Speak", systemImage: "waveform").tag(0)
                     Label("Control", systemImage: "cursorarrow.click").tag(1)
                     Label("History", systemImage: "clock.arrow.circlepath").tag(2)
-                    Label("Settings", systemImage: "gearshape").tag(3)
+                    Section("Voice") {
+                        Label("Languages", systemImage: "character.bubble").tag(3)
+                        Label("Models", systemImage: "cpu").tag(4)
+                    }
+                    Label("Settings", systemImage: "gearshape").tag(5)
                 }
                 .listStyle(.sidebar)
 
@@ -409,6 +413,8 @@ private struct SettingsHome: View {
             case 0: DictationWorkspace(model: model)
             case 1: ControlWorkspace(model: model)
             case 2: HistoryWorkspace(model: model)
+            case 3: LanguageWorkspace(model: model)
+            case 4: ModelsWorkspace(model: model)
             default: SaysoSettingsView(model: model)
             }
         }
@@ -633,6 +639,94 @@ private struct HistoryWorkspace: View {
             Button("Clear", role: .destructive) { Task { await model.history.clear(); entries = [] } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts from this Mac.") }
+    }
+}
+
+private struct LanguageWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        List {
+            Section("Dictation language") {
+                Picker("Speak", selection: $model.settings.language) {
+                    ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
+                }
+                Text("Choose Automatic for macOS detection, or lock Sayso to one language.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Translation") {
+                Toggle("Translate final text", isOn: $model.settings.translationEnabled)
+                Picker("Output language", selection: $model.settings.outputLanguage) {
+                    ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
+                }
+                if model.settings.translationEnabled && !model.settings.cloudConsentGranted {
+                    Label("Translation stays off until cloud consent and provider setup.", systemImage: "lock.fill")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.amber)
+                }
+            }
+            Section("Language coverage") {
+                ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { language in
+                    HStack {
+                        Text(language.displayName)
+                        Spacer()
+                        Label(
+                            SpeechCapabilities.supports(language) ? "Available" : "Needs cloud route",
+                            systemImage: SpeechCapabilities.supports(language) ? "checkmark.circle.fill" : "cloud"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SpeechCapabilities.supports(language) ? SaysoPalette.cobalt : SaysoPalette.muted)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Languages")
+        .onChange(of: model.settings) { _, _ in model.save() }
+    }
+}
+
+private struct ModelsWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var apiKey = ""
+
+    var body: some View {
+        Form {
+            Section("Speech route") {
+                Picker("Active route", selection: $model.settings.route) {
+                    ForEach(ProviderRoute.allCases) { route in
+                        Text(route.displayName).tag(route)
+                    }
+                }
+                ForEach(ProviderRoute.allCases) { route in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(route.displayName).fontWeight(.semibold)
+                            Text(route == .local ? "Private, runs on this Mac." : "Uses Apple or your selected provider.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if route == model.settings.route {
+                            Text("Active")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        }
+                    }
+                }
+            }
+            Section("Your provider") {
+                Text("Optional. Used only after explicit cloud consent. API key stays in Keychain.")
+                    .font(.caption).foregroundStyle(.secondary)
+                TextField("Base URL", text: $model.settings.byokBaseURL)
+                TextField("Translation model", text: $model.settings.byokTranslationModel)
+                SecureField("API key", text: $apiKey)
+                Button("Store key") { model.saveBYOKKey(apiKey); apiKey = "" }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Models")
+        .onChange(of: model.settings) { _, _ in model.save() }
     }
 }
 
