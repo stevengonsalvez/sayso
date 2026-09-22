@@ -17,7 +17,7 @@ final class NotchPanelController {
 
     private let expandedSize = NSSize(width: 560, height: 176)
     private let collapsedHeight: CGFloat = 42
-    private let leftNotchExtension: CGFloat = 118
+    private let notchShoulder: CGFloat = 118
 
     init() {
         panel = NSPanel(
@@ -93,7 +93,7 @@ final class NotchPanelController {
         } else {
             notchBounds = nil
         }
-        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + leftNotchExtension } ?? 220
+        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
@@ -110,9 +110,9 @@ final class NotchPanelController {
                 height: size.height
             )
         } else {
-            let x = notchBounds.map { $0.upperBound - size.width } ?? frame.midX - size.width / 2
+            let notchCenter = notchBounds.map { ($0.lowerBound + $0.upperBound) / 2 } ?? frame.midX
             panelFrame = NSRect(
-                x: x,
+                x: notchCenter - size.width / 2,
                 y: frame.maxY - size.height,
                 width: size.width,
                 height: size.height
