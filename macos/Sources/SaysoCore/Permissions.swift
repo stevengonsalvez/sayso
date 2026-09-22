@@ -1,5 +1,7 @@
 import AVFoundation
+import AppKit
 import ApplicationServices
+import CoreGraphics
 import Speech
 
 public enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
@@ -18,6 +20,19 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
         case .inputMonitoring: "Input Monitoring"
         }
     }
+
+    public var settingsURL: URL {
+        switch self {
+        case .microphone:
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        case .speechRecognition:
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!
+        case .accessibility:
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        case .inputMonitoring:
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+        }
+    }
 }
 
 public enum PermissionState: Sendable {
@@ -27,12 +42,33 @@ public enum PermissionState: Sendable {
     case unavailable
 }
 
+private final class PermissionRefreshObserver: @unchecked Sendable {
+    let token: NSObjectProtocol
+
+    init(token: NSObjectProtocol) {
+        self.token = token
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
+    }
+}
+
 @MainActor
 public final class PermissionCenter: ObservableObject {
     @Published public private(set) var states: [PermissionKind: PermissionState] = [:]
+    private var didBecomeActiveObserver: PermissionRefreshObserver?
 
     public init() {
         refresh()
+        let token = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        didBecomeActiveObserver = PermissionRefreshObserver(token: token)
     }
 
     public func refresh() {
@@ -48,25 +84,41 @@ public final class PermissionCenter: ObservableObject {
         case .notDetermined: .undetermined
         @unknown default: .unavailable
         }
-        states[.accessibility] = AXIsProcessTrusted() ? .granted : .denied
-        // macOS exposes Input Monitoring only through System Settings. Recording the
-        // trusted result for accessibility keeps onboarding honest without probing input.
-        states[.inputMonitoring] = .undetermined
+        let accessibilityGranted = AXIsProcessTrusted()
+        states[.accessibility] = accessibilityGranted ? .granted : .denied
+        // Accessibility also grants the event-listening capability required by a
+        // global monitor. Otherwise, use the public preflight without prompting.
+        states[.inputMonitoring] = CGPreflightListenEventAccess() || accessibilityGranted ? .granted : .denied
     }
 
     public func request(_ kind: PermissionKind) async {
+        refresh()
         switch kind {
         case .microphone:
-            _ = await AVCaptureDevice.requestAccess(for: .audio)
+            if states[.microphone] == .undetermined {
+                _ = await AVCaptureDevice.requestAccess(for: .audio)
+            } else if states[.microphone] == .denied {
+                openSettings(for: kind)
+            }
         case .speechRecognition:
-            _ = await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
+            if states[.speechRecognition] == .undetermined {
+                _ = await withCheckedContinuation { continuation in
+                    SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
+                }
+            } else if states[.speechRecognition] == .denied {
+                openSettings(for: kind)
             }
         case .accessibility:
             AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            openSettings(for: kind)
         case .inputMonitoring:
-            break
+            _ = CGRequestListenEventAccess()
+            openSettings(for: kind)
         }
         refresh()
+    }
+
+    private func openSettings(for kind: PermissionKind) {
+        NSWorkspace.shared.open(kind.settingsURL)
     }
 }
