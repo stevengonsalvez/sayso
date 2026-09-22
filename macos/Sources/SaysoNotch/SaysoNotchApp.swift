@@ -30,6 +30,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var pendingControlStep: ControlPlanStep?
     @Published var selectedTab = 0
     @Published var notice: String?
+    @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
 
     let permissions = PermissionCenter()
     let transcriber = LiveTranscriber()
@@ -40,6 +41,7 @@ final class SaysoAppModel: ObservableObject {
     let secrets = KeychainSecretStore()
     private let automation = SaysoAutomationServer()
     private let settingsStore = UserDefaultsSettingsStore()
+    private let hotKeyEngine = HotKeyEngine()
     private let notch: NotchPanelController
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
@@ -52,7 +54,12 @@ final class SaysoAppModel: ObservableObject {
             saved.onboardingCompleted = true
         }
         settings = saved
+        dictationHotKey = Self.loadDictationHotKey()
         notch = NotchPanelController()
+        hotKeyEngine.register(gesture: .singleTap) { [weak self] in
+            self?.startOrStopDictation()
+        }
+        hotKeyEngine.start(for: dictationHotKey)
         observeExternalApplications()
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
@@ -61,6 +68,24 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func save() { settingsStore.save(settings) }
+
+    func setDictationHotKey(_ hotKey: HotKey) {
+        dictationHotKey = hotKey
+        if let data = try? JSONEncoder().encode(hotKey) {
+            UserDefaults.standard.set(data, forKey: Self.dictationHotKeyDefaultsKey)
+        }
+        hotKeyEngine.start(for: hotKey)
+    }
+
+    private static let dictationHotKeyDefaultsKey = "sayso.dictation-hotkey"
+
+    private static func loadDictationHotKey() -> HotKey {
+        guard let data = UserDefaults.standard.data(forKey: dictationHotKeyDefaultsKey),
+              let hotKey = try? JSONDecoder().decode(HotKey.self, from: data) else {
+            return .custom(keyCode: 49, modifiers: .option)
+        }
+        return hotKey
+    }
 
     private func permissionSummary(_ kind: PermissionKind) -> String {
         switch permissions.states[kind] ?? .unavailable {
@@ -483,8 +508,13 @@ private struct DictationWorkspace: View {
                 Text(model.transcriber.partialText.isEmpty ? "Tap to start talking" : model.transcriber.partialText)
                     .font(.system(size: 28, weight: .medium, design: .rounded))
                     .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
-                Button(model.transcriber.phase == .listening ? "Stop" : "Start dictation") {
+                Button {
                     model.startOrStopDictation()
+                } label: {
+                    Label(
+                        model.transcriber.phase == .listening ? "Stop" : "Start dictation",
+                        systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
@@ -790,6 +820,15 @@ private struct SaysoSettingsView: View {
                     }
                 }
                 Text("Notch sits beside the camera cutout. Floating places a movable Sayso panel on your desktop.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Dictation shortcut") {
+                HotKeyRecorder("Start or stop dictation", hotKey: Binding(
+                    get: { model.dictationHotKey },
+                    set: { model.setDictationHotKey($0) }
+                ))
+                Text("Default: ⌥ Space. Use any supported global shortcut.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
