@@ -142,6 +142,8 @@ private struct NotchHUD: View {
                 }
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.white)
+                .padding(.leading, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(width: state.compactWidth, height: 42)
                 .background(.black, in: UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18))
                 .overlay { NotchShine(cornerRadius: 18) }
