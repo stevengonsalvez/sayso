@@ -1050,15 +1050,32 @@ struct ModePicker: View {
     @ObservedObject var model: SaysoAppModel
 
     var body: some View {
-        Picker("Mode", selection: Binding(
-            get: { model.settings.mode },
-            set: { model.switchMode($0) }
-        )) {
-            Text("Dictation").tag(SaysoMode.dictation)
-            Text("Control").tag(SaysoMode.control)
+        HStack(spacing: 3) {
+            modeButton(.dictation, title: "Dictation", icon: "waveform")
+            modeButton(.control, title: "Control", icon: "cursorarrow.click")
         }
-        .pickerStyle(.segmented)
-        .frame(width: 210)
+        .padding(3)
+        .background(SaysoPalette.surfaceRaised, in: Capsule())
+        .overlay {
+            Capsule().stroke(SaysoPalette.outline, lineWidth: 1)
+        }
+        .accessibilityLabel("Mode")
+    }
+
+    private func modeButton(_ mode: SaysoMode, title: String, icon: String) -> some View {
+        let isSelected = model.settings.mode == mode
+        return Button {
+            model.switchMode(mode)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? .white : SaysoPalette.muted)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(isSelected ? SaysoPalette.cobalt : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
