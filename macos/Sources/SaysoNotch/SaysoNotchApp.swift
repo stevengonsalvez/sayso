@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SaysoCore
 import SpeakUpstreamBridge
 import SwiftUI
@@ -67,6 +68,16 @@ final class SaysoAppModel: ObservableObject {
         case .denied: "denied"
         case .undetermined: "undetermined"
         case .unavailable: "unavailable"
+        }
+    }
+
+    private var microphoneSystemStatus: String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: "authorized"
+        case .denied: "denied"
+        case .restricted: "restricted"
+        case .notDetermined: "notDetermined"
+        @unknown default: "unknown"
         }
     }
 
@@ -843,7 +854,7 @@ extension SaysoAppModel {
             return .success(
                 id: request.id, command: request.command,
                 result: .init(
-                    model: "\(settings.route.displayName); microphone=\(permissionSummary(.microphone)); speech=\(permissionSummary(.speechRecognition))",
+                    model: "\(settings.route.displayName); microphone=\(permissionSummary(.microphone)); raw=\(microphoneSystemStatus); speech=\(permissionSummary(.speechRecognition))",
                     sessionActive: transcriber.phase == .listening,
                     appVersion: "1.0.0"
                 )
