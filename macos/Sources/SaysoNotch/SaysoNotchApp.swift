@@ -26,6 +26,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var controlStatus = "Ready"
     @Published var currentSnapshot: DesktopSnapshot?
     @Published var controlEntries: [ControlAuditEntry] = []
+    @Published var pendingControlStep: ControlPlanStep?
     @Published var selectedTab = 0
     @Published var notice: String?
 
@@ -40,6 +41,8 @@ final class SaysoAppModel: ObservableObject {
     private let settingsStore = UserDefaultsSettingsStore()
     private let notch: NotchPanelController
     private var mainWindow: NSWindow?
+    private var lastExternalApplication: NSRunningApplication?
+    private var workspaceObserver: NSObjectProtocol?
 
     init() {
         var saved = UserDefaultsSettingsStore().load()
@@ -49,6 +52,7 @@ final class SaysoAppModel: ObservableObject {
         }
         settings = saved
         notch = NotchPanelController()
+        observeExternalApplications()
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
@@ -246,7 +250,7 @@ final class SaysoAppModel: ObservableObject {
 
     func captureDesktop() {
         do {
-            currentSnapshot = try controller.capture()
+            currentSnapshot = try controller.capture(application: controlTarget())
             controlStatus = "Grounded \(currentSnapshot?.applicationName ?? "desktop")"
         } catch {
             controlStatus = error.localizedDescription
@@ -258,7 +262,7 @@ final class SaysoAppModel: ObservableObject {
         guard let snapshot = currentSnapshot else { return }
         Task {
             do {
-                _ = try controller.verify(snapshot)
+                _ = try controller.verify(snapshot, targetApplication: controlTarget())
                 controlStatus = "Verified focused target"
             } catch {
                 controlStatus = error.localizedDescription
@@ -268,22 +272,73 @@ final class SaysoAppModel: ObservableObject {
 
     func runControl(_ command: String) {
         do {
-            let snapshot = try controller.capture()
+            let target = try controlTarget()
+            let snapshot = try controller.capture(application: target)
             currentSnapshot = snapshot
             let step = try ControlPlanner.plan(command: command, snapshot: snapshot)
             controlStatus = "Planned: \(step.reason)"
-            Task {
-                do {
-                    let entry = try await controller.execute(step)
-                    await controlAudit.append(entry)
-                    controlEntries = await controlAudit.entries()
-                    controlStatus = entry.result
-                } catch {
-                    controlStatus = error.localizedDescription
-                }
+            if ControlPolicy.requiresConfirmation(step) {
+                pendingControlStep = step
+                controlStatus = "Review required: \(step.reason)"
+                return
             }
+            execute(step, target: target, approved: false)
         } catch {
             controlStatus = error.localizedDescription
+        }
+    }
+
+    func approvePendingControl() {
+        guard let step = pendingControlStep else { return }
+        pendingControlStep = nil
+        do {
+            try execute(step, target: controlTarget(), approved: true)
+        } catch {
+            controlStatus = error.localizedDescription
+        }
+    }
+
+    func discardPendingControl() {
+        pendingControlStep = nil
+        controlStatus = "Action discarded"
+    }
+
+    private func execute(_ step: ControlPlanStep, target: NSRunningApplication, approved: Bool) {
+        Task {
+            do {
+                let entry = try await controller.execute(step, approved: approved, targetApplication: target)
+                await controlAudit.append(entry)
+                controlEntries = await controlAudit.entries()
+                controlStatus = entry.result
+            } catch {
+                controlStatus = error.localizedDescription
+            }
+        }
+    }
+
+    private func controlTarget() throws -> NSRunningApplication {
+        guard let app = lastExternalApplication else {
+            throw SaysoError.unavailable("Choose another app, then return to Sayso Control")
+        }
+        return app
+    }
+
+    private func observeExternalApplications() {
+        let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        if let app = NSWorkspace.shared.frontmostApplication,
+           app.bundleIdentifier != ownBundleIdentifier {
+            lastExternalApplication = app
+        }
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier != ownBundleIdentifier else { return }
+            Task { @MainActor [weak self] in
+                self?.lastExternalApplication = app
+            }
         }
     }
 }
@@ -502,6 +557,23 @@ private struct ControlWorkspace: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(statusTint, lineWidth: 1)
+            }
+            if let pending = model.pendingControlStep {
+                HStack(spacing: 12) {
+                    Label("Review required: \(pending.reason)", systemImage: "exclamationmark.shield")
+                        .foregroundStyle(SaysoPalette.amber)
+                    Spacer()
+                    Button("Discard") { model.discardPendingControl() }
+                    Button("Approve") { model.approvePendingControl() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SaysoPalette.crimson)
+                }
+                .padding(14)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(SaysoPalette.amber, lineWidth: 1)
+                }
             }
             if !model.controlEntries.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
