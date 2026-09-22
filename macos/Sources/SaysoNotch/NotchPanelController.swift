@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 private final class NotchPresentationState: ObservableObject {
     @Published var isCollapsed = true
+    @Published var compactWidth: CGFloat = 220
 }
 
 @MainActor
@@ -15,7 +16,8 @@ final class NotchPanelController {
     private weak var model: SaysoAppModel?
 
     private let expandedSize = NSSize(width: 560, height: 176)
-    private let collapsedSize = NSSize(width: 220, height: 42)
+    private let collapsedHeight: CGFloat = 42
+    private let leftNotchExtension: CGFloat = 118
 
     init() {
         panel = NSPanel(
@@ -82,18 +84,22 @@ final class NotchPanelController {
     private func reposition() {
         guard let screen = NSScreen.main else { return }
         let frame = screen.frame
-        let leftSafeArea = screen.auxiliaryTopLeftArea
-        let rightSafeArea = screen.auxiliaryTopRightArea
-        let notchCenter: CGFloat
-        if let leftSafeArea,
-           let rightSafeArea,
+        let notchBounds: ClosedRange<CGFloat>?
+        if let leftSafeArea = screen.auxiliaryTopLeftArea,
+           let rightSafeArea = screen.auxiliaryTopRightArea,
            !leftSafeArea.isEmpty,
            !rightSafeArea.isEmpty {
-            notchCenter = (leftSafeArea.maxX + rightSafeArea.minX) / 2
+            notchBounds = leftSafeArea.maxX...rightSafeArea.minX
         } else {
-            notchCenter = frame.midX
+            notchBounds = nil
         }
-        let size = state.isCollapsed ? collapsedSize : expandedSize
+        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + leftNotchExtension } ?? 220
+        if abs(state.compactWidth - compactWidth) > 0.5 {
+            state.compactWidth = compactWidth
+        }
+        let size = state.isCollapsed
+            ? NSSize(width: state.compactWidth, height: collapsedHeight)
+            : expandedSize
         let panelFrame: NSRect
         if model?.settings.overlayPresentation == .floating {
             let visibleFrame = screen.visibleFrame
@@ -104,8 +110,9 @@ final class NotchPanelController {
                 height: size.height
             )
         } else {
+            let x = notchBounds.map { $0.upperBound - size.width } ?? frame.midX - size.width / 2
             panelFrame = NSRect(
-                x: notchCenter - size.width / 2 - 78,
+                x: x,
                 y: frame.maxY - size.height,
                 width: size.width,
                 height: size.height
@@ -135,8 +142,9 @@ private struct NotchHUD: View {
                 }
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.white)
-                .frame(width: 220, height: 42)
+                .frame(width: state.compactWidth, height: 42)
                 .background(.black, in: UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18))
+                .overlay { NotchShine(cornerRadius: 18) }
             }
             .buttonStyle(.plain)
         } else {
@@ -201,8 +209,7 @@ private struct NotchHUD: View {
             .frame(width: 560, height: 176)
             .background(SaysoPalette.obsidian, in: UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
             .overlay {
-                UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
-                    .stroke(SaysoPalette.outline, lineWidth: 1)
+                NotchShine(cornerRadius: 20)
             }
             .foregroundStyle(.white)
             .contentShape(Rectangle())
@@ -210,6 +217,42 @@ private struct NotchHUD: View {
                 TapGesture().onEnded(toggle),
                 including: model.settings.overlayPresentation == .notch ? .gesture : .none
             )
+        }
+    }
+}
+
+private struct NotchShine: View {
+    let cornerRadius: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isShining = false
+
+    var body: some View {
+        ZStack {
+            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+                .stroke(SaysoPalette.outline, lineWidth: 1)
+            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+                .stroke(SaysoPalette.cobalt.opacity(isShining ? 0.76 : 0), lineWidth: 1)
+                .shadow(color: SaysoPalette.cobalt.opacity(isShining ? 0.58 : 0), radius: isShining ? 4 : 0)
+        }
+        .task(id: reduceMotion) {
+            guard !reduceMotion else {
+                isShining = false
+                return
+            }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(10))
+                } catch {
+                    return
+                }
+                withAnimation(.easeInOut(duration: 0.45)) { isShining = true }
+                do {
+                    try await Task.sleep(for: .milliseconds(900))
+                } catch {
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.55)) { isShining = false }
+            }
         }
     }
 }
