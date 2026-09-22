@@ -5,6 +5,20 @@ public enum SaysoMode: String, Codable, CaseIterable, Sendable {
     case control
 }
 
+public enum OverlayPresentation: String, Codable, CaseIterable, Identifiable, Sendable {
+    case notch
+    case floating
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .notch: "Notch"
+        case .floating: "Floating"
+        }
+    }
+}
+
 public enum SessionPhase: String, Codable, Sendable {
     case idle
     case requestingPermission
@@ -100,6 +114,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
 
 public struct SaysoSettings: Codable, Equatable, Sendable {
     public var mode: SaysoMode = .dictation
+    public var overlayPresentation: OverlayPresentation = .notch
     public var language: DictationLanguage = .automatic
     public var route: ProviderRoute = .local
     public var translationEnabled = false
