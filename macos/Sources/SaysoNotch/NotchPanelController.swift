@@ -38,6 +38,7 @@ final class NotchPanelController {
 
     func install(model: SaysoAppModel) {
         self.model = model
+        reposition()
         panel.contentView = NSHostingView(rootView: NotchHUD(
             model: model,
             state: state,
@@ -47,7 +48,6 @@ final class NotchPanelController {
             openSettings: { model.openSettings() },
             quit: { model.quit() }
         ))
-        reposition()
         panel.orderFrontRegardless()
     }
 
