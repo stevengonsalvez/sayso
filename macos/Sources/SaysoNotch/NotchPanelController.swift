@@ -30,6 +30,8 @@ final class NotchPanelController {
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
     }
 
     func install(model: SaysoAppModel) {
@@ -92,11 +94,24 @@ final class NotchPanelController {
             notchCenter = frame.midX
         }
         let size = state.isCollapsed ? collapsedSize : expandedSize
-        panel.setFrame(
-            NSRect(x: notchCenter - size.width / 2, y: frame.maxY - size.height, width: size.width, height: size.height),
-            display: true,
-            animate: true
-        )
+        let panelFrame: NSRect
+        if model?.settings.overlayPresentation == .floating {
+            let visibleFrame = screen.visibleFrame
+            panelFrame = NSRect(
+                x: visibleFrame.maxX - size.width - 24,
+                y: visibleFrame.maxY - size.height - 24,
+                width: size.width,
+                height: size.height
+            )
+        } else {
+            panelFrame = NSRect(
+                x: notchCenter - size.width / 2 - 78,
+                y: frame.maxY - size.height,
+                width: size.width,
+                height: size.height
+            )
+        }
+        panel.setFrame(panelFrame, display: true, animate: true)
     }
 }
 
@@ -191,7 +206,10 @@ private struct NotchHUD: View {
             }
             .foregroundStyle(.white)
             .contentShape(Rectangle())
-            .gesture(TapGesture().onEnded(toggle), including: .gesture)
+            .gesture(
+                TapGesture().onEnded(toggle),
+                including: model.settings.overlayPresentation == .notch ? .gesture : .none
+            )
         }
     }
 }
