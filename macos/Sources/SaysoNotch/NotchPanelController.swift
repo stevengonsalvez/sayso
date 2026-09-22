@@ -1,0 +1,224 @@
+import AppKit
+import SaysoCore
+import SwiftUI
+
+@MainActor
+private final class NotchPresentationState: ObservableObject {
+    @Published var isCollapsed = true
+}
+
+@MainActor
+final class NotchPanelController {
+    private let panel: NSPanel
+    private var hideTask: Task<Void, Never>?
+    private let state = NotchPresentationState()
+    private weak var model: SaysoAppModel?
+
+    private let expandedSize = NSSize(width: 560, height: 176)
+    private let collapsedSize = NSSize(width: 220, height: 42)
+
+    init() {
+        panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 220, height: 42)),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.hidesOnDeactivate = false
+    }
+
+    func install(model: SaysoAppModel) {
+        self.model = model
+        panel.contentView = NSHostingView(rootView: NotchHUD(
+            model: model,
+            state: state,
+            toggle: { [weak self] in self?.toggle() },
+            dismiss: { [weak self] in self?.dismiss() },
+            openApp: { model.showMainWindow() },
+            openSettings: { model.openSettings() },
+            quit: { model.quit() }
+        ))
+        reposition()
+        panel.orderFrontRegardless()
+    }
+
+    func show() {
+        hideTask?.cancel()
+        state.isCollapsed = false
+        reposition()
+        panel.orderFrontRegardless()
+    }
+
+    func hideAfterDelay() {
+        hideTask?.cancel()
+        hideTask = Task { [weak panel] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            panel?.orderFrontRegardless()
+            self.state.isCollapsed = true
+            self.reposition()
+        }
+    }
+
+    private func toggle() {
+        hideTask?.cancel()
+        state.isCollapsed.toggle()
+        reposition()
+    }
+
+    private func dismiss() {
+        hideTask?.cancel()
+        state.isCollapsed = true
+        panel.orderOut(nil)
+    }
+
+    private func reposition() {
+        guard let screen = NSScreen.main else { return }
+        let frame = screen.frame
+        let leftSafeArea = screen.auxiliaryTopLeftArea
+        let rightSafeArea = screen.auxiliaryTopRightArea
+        let notchCenter: CGFloat
+        if let leftSafeArea,
+           let rightSafeArea,
+           !leftSafeArea.isEmpty,
+           !rightSafeArea.isEmpty {
+            notchCenter = (leftSafeArea.maxX + rightSafeArea.minX) / 2
+        } else {
+            notchCenter = frame.midX
+        }
+        let size = state.isCollapsed ? collapsedSize : expandedSize
+        panel.setFrame(
+            NSRect(x: notchCenter - size.width / 2, y: frame.maxY - size.height, width: size.width, height: size.height),
+            display: true,
+            animate: true
+        )
+    }
+}
+
+private struct NotchHUD: View {
+    @ObservedObject var model: SaysoAppModel
+    @ObservedObject var state: NotchPresentationState
+    let toggle: () -> Void
+    let dismiss: () -> Void
+    let openApp: () -> Void
+    let openSettings: () -> Void
+    let quit: () -> Void
+
+    var body: some View {
+        if state.isCollapsed {
+            Button(action: toggle) {
+                HStack(spacing: 10) {
+                    Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
+                        .foregroundStyle(SaysoPalette.amber)
+                    Text(model.transcriber.phase == .listening ? "Listening" : "Sayso")
+                    if model.transcriber.phase == .listening { Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7) }
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 220, height: 42)
+                .background(.black, in: UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18))
+            }
+            .buttonStyle(.plain)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(SaysoPalette.cobalt)
+                        Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
+                            .font(.caption.weight(.bold))
+                    }
+                    .frame(width: 28, height: 28)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Sayso")
+                            .font(.system(size: 15, weight: .bold))
+                        Text(model.settings.mode == .dictation ? "Dictation" : "Desktop control")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+
+                    Spacer(minLength: 8)
+                    NotchIconButton("macwindow", label: "Open Sayso", action: openApp)
+                    NotchIconButton("gearshape", label: "Open settings", action: openSettings)
+                    NotchIconButton("chevron.up", label: "Collapse notch", action: toggle)
+                    NotchIconButton("xmark", label: "Hide notch", action: dismiss)
+                    NotchIconButton("power", label: "Quit Sayso", tint: SaysoPalette.crimson, action: quit)
+                }
+
+                HStack(spacing: 10) {
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                            .frame(width: 8, height: 8)
+                        Text(model.transcriber.phase == .listening ? "Live transcription" : "Ready when you are")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(SaysoPalette.surfaceRaised, in: Capsule())
+
+                    ModePicker(model: model)
+                        .frame(width: 180)
+                    Spacer()
+                }
+
+                HStack(alignment: .bottom, spacing: 16) {
+                    Text(model.transcriber.partialText.isEmpty ? "Live words appear here." : model.transcriber.partialText)
+                        .font(.system(size: 17, weight: .semibold))
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(model.transcriber.phase == .listening ? "Stop" : "Start") {
+                        model.startOrStopDictation()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .frame(width: 560, height: 176)
+            .background(SaysoPalette.obsidian, in: UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
+            .overlay {
+                UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
+                    .stroke(SaysoPalette.outline, lineWidth: 1)
+            }
+            .foregroundStyle(.white)
+            .contentShape(Rectangle())
+            .gesture(TapGesture().onEnded(toggle), including: .gesture)
+        }
+    }
+}
+
+private struct NotchIconButton: View {
+    let systemName: String
+    let label: String
+    let tint: Color
+    let action: () -> Void
+
+    init(_ systemName: String, label: String, tint: Color = .white, action: @escaping () -> Void) {
+        self.systemName = systemName
+        self.label = label
+        self.tint = tint
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(tint)
+                .frame(width: 26, height: 26)
+                .background(SaysoPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
