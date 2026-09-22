@@ -265,7 +265,7 @@ public final class AXDesktopController: @unchecked Sendable {
             try press(element, in: before.processIdentifier)
         }
 
-        let after = try? capture()
+        let after = try? capture(application: targetApplication)
         let entry = ControlAuditEntry(
             action: step.action,
             beforeFingerprint: before.fingerprint,
@@ -275,8 +275,11 @@ public final class AXDesktopController: @unchecked Sendable {
         return entry
     }
 
-    public func verify(_ snapshot: DesktopSnapshot) throws -> DesktopSnapshot {
-        let current = try capture()
+    public func verify(
+        _ snapshot: DesktopSnapshot,
+        targetApplication: NSRunningApplication? = nil
+    ) throws -> DesktopSnapshot {
+        let current = try capture(application: targetApplication)
         guard !current.isProtected else { throw SaysoError.protectedTarget }
         guard current.fingerprint == snapshot.fingerprint else { throw SaysoError.staleTarget }
         return current
