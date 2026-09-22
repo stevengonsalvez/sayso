@@ -147,6 +147,12 @@ final class SaysoAppModel: ObservableObject {
         notch.show()
     }
 
+    func setOverlayPresentation(_ presentation: OverlayPresentation) {
+        settings.overlayPresentation = presentation
+        save()
+        notch.show()
+    }
+
     func showMainWindow() {
         if let mainWindow {
             mainWindow.makeKeyAndOrderFront(nil)
@@ -518,6 +524,19 @@ private struct SaysoSettingsView: View {
                 Toggle("Translate final text", isOn: $model.settings.translationEnabled)
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
                 Toggle("Hands-free, stop after 1.2 seconds of silence", isOn: $model.settings.handsFree)
+            }
+            Section("Overlay") {
+                Picker("Presentation", selection: Binding(
+                    get: { model.settings.overlayPresentation },
+                    set: { model.setOverlayPresentation($0) }
+                )) {
+                    ForEach(OverlayPresentation.allCases) { presentation in
+                        Text(presentation.displayName).tag(presentation)
+                    }
+                }
+                Text("Notch sits beside the camera cutout. Floating places a movable Sayso panel on your desktop.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Permissions") {
                 ForEach(PermissionKind.allCases) { permission in
