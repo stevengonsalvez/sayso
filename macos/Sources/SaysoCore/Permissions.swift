@@ -93,6 +93,8 @@ public final class PermissionCenter: ObservableObject {
 
     public func request(_ kind: PermissionKind) async {
         refresh()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        await Task.yield()
         switch kind {
         case .microphone:
             if states[.microphone] == .undetermined {
