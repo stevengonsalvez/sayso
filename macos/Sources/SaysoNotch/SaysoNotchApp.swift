@@ -61,6 +61,15 @@ final class SaysoAppModel: ObservableObject {
 
     func save() { settingsStore.save(settings) }
 
+    private func permissionSummary(_ kind: PermissionKind) -> String {
+        switch permissions.states[kind] ?? .unavailable {
+        case .granted: "granted"
+        case .denied: "denied"
+        case .undetermined: "undetermined"
+        case .unavailable: "unavailable"
+        }
+    }
+
     func startOrStopDictation() {
         if transcriber.phase == .listening {
             transcriber.stop()
@@ -820,10 +829,11 @@ extension SaysoAppModel {
     func handle(_ request: AutomationRequest) async -> AutomationResponse {
         switch request.command {
         case .status:
+            permissions.refresh()
             return .success(
                 id: request.id, command: request.command,
                 result: .init(
-                    model: settings.route.displayName,
+                    model: "\(settings.route.displayName); microphone=\(permissionSummary(.microphone)); speech=\(permissionSummary(.speechRecognition))",
                     sessionActive: transcriber.phase == .listening,
                     appVersion: "1.0.0"
                 )
