@@ -209,16 +209,16 @@ private struct NotchHUD: View {
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
             .frame(width: 560, height: 176)
-            .background(SaysoPalette.obsidian, in: UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
+            .background {
+                UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
+                    .fill(SaysoPalette.obsidian)
+                    .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
+                    .onTapGesture(perform: toggle)
+            }
             .overlay {
                 NotchShine(cornerRadius: 20)
             }
             .foregroundStyle(.white)
-            .contentShape(Rectangle())
-            .gesture(
-                TapGesture().onEnded(toggle),
-                including: model.settings.overlayPresentation == .notch ? .gesture : .none
-            )
         }
     }
 }
