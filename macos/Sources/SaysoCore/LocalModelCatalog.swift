@@ -276,10 +276,14 @@ public enum LocalModelCatalog {
             return .notDownloaded
         }
         guard isDirectory.boolValue else { return .incomplete }
-        guard let files = fileManager.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+        let marker = directory.appending(path: ".sayso-install-complete")
+        guard let markerData = try? Data(contentsOf: marker),
+              String(decoding: markerData, as: UTF8.self) == model.id else {
             return .incomplete
         }
-        return files.contains { ($0 as? URL)?.pathExtension == "onnx" } ? .installed : .incomplete
+        return model.artifacts.allSatisfy {
+            fileManager.fileExists(atPath: directory.appending(path: $0.relativePath).path)
+        } ? .installed : .incomplete
     }
 
     public static func availability(
