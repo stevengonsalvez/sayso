@@ -38,6 +38,7 @@ final class SaysoAppModel: ObservableObject {
     let history = HistoryStore()
     let sessions = RecordingSessionStore()
     let controller = AXDesktopController()
+    let desktopControlSession = ControlSession()
     let controlAudit = ControlAuditStore()
     let secrets = KeychainSecretStore()
     private let automation = SaysoAutomationServer()
@@ -420,13 +421,27 @@ final class SaysoAppModel: ObservableObject {
         controlStatus = "Action discarded"
     }
 
+    func cancelControl() {
+        pendingControlStep = nil
+        Task {
+            let state = await desktopControlSession.cancel()
+            controlStatus = state.result == .cancelled ? "Control cancelled" : "No active control task"
+        }
+    }
+
     private func execute(_ step: ControlPlanStep, target: NSRunningApplication, approved: Bool) {
         Task {
             do {
+                let state = await desktopControlSession.currentState()
+                if state.phase != .running { _ = await desktopControlSession.start() }
                 let entry = try await controller.execute(step, approved: approved, targetApplication: target)
                 await controlAudit.append(entry)
                 controlEntries = await controlAudit.entries()
-                controlStatus = entry.result
+                let stepResult: ControlSessionStepResult = entry.result.hasPrefix("observed")
+                    ? .effectObserved
+                    : entry.result.hasPrefix("no observed") ? .noEffectObserved : .actionFailed
+                let updated = await desktopControlSession.record(stepResult)
+                controlStatus = updated.result.map { "\(entry.result), \($0.rawValue)" } ?? entry.result
             } catch {
                 controlStatus = error.localizedDescription
             }
@@ -640,8 +655,10 @@ private struct ControlWorkspace: View {
                 } label: {
                     Label("Run", systemImage: "arrow.up.right")
                 }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SaysoPalette.cobalt)
+                .buttonStyle(.borderedProminent)
+                .tint(SaysoPalette.cobalt)
+                Button("Cancel", role: .cancel) { model.cancelControl() }
+                    .buttonStyle(.bordered)
             }
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -663,7 +680,7 @@ private struct ControlWorkspace: View {
                         Label("\(snapshot.applicationName)  •  \(snapshot.windowTitle)", systemImage: "macwindow")
                             .foregroundStyle(SaysoPalette.muted)
                         Label(
-                            snapshot.isProtected ? "Protected target, blocked" : "Target eligible for verified actions",
+                            snapshot.isProtected ? "Protected target, blocked" : "Target eligible for action",
                             systemImage: snapshot.isProtected ? "xmark.shield" : "checkmark.shield"
                         )
                         .foregroundStyle(snapshot.isProtected ? SaysoPalette.crimson : SaysoPalette.amber)
@@ -700,7 +717,7 @@ private struct ControlWorkspace: View {
             }
             if !model.controlEntries.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Recent verified actions", systemImage: "checkmark.seal")
+                    Label("Recent control actions", systemImage: "checkmark.seal")
                         .font(.headline)
                         .foregroundStyle(SaysoPalette.amber)
                     ForEach(model.controlEntries.prefix(3)) { entry in
