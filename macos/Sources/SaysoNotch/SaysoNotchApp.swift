@@ -55,6 +55,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var selectedTab = 0
     @Published var notice: String?
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
+    @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
@@ -235,7 +236,8 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         guard secrets.secret(named: "byok-api-key") != nil,
-              URL(string: settings.byokBaseURL) != nil else {
+              let baseURL = URL(string: settings.byokBaseURL),
+              ProviderEndpointPolicy.allows(baseURL) else {
             notice = "Configure a compatible BYOK provider before voice edit."
             return
         }
@@ -243,6 +245,7 @@ final class SaysoAppModel: ObservableObject {
             notice = "Select editable text in another app before voice edit."
             return
         }
+        lastVoiceEditRewrite = nil
         switch reserveDictationStart() {
         case .reserved:
             Task { _ = await performDictationStart(voiceEditCapture: capture) }
@@ -532,7 +535,8 @@ final class SaysoAppModel: ObservableObject {
         }
         guard settings.voiceEditCloudConsent,
               let key = secrets.secret(named: "byok-api-key"),
-              let baseURL = URL(string: settings.byokBaseURL) else {
+              let baseURL = URL(string: settings.byokBaseURL),
+              ProviderEndpointPolicy.allows(baseURL) else {
             await failVoiceEdit(session, message: "Voice edit provider or consent changed before rewrite.")
             return
         }
@@ -544,9 +548,14 @@ final class SaysoAppModel: ObservableObject {
             let result = SelectedTextEdit.replace(rewrite, in: capture)
             var completed = session
             switch result {
-            case .replaced, .replacementUnverified:
+            case .replaced:
+                lastVoiceEditRewrite = nil
+                completed.completeVoiceEdit(rewrite)
+            case .replacementUnverified:
+                lastVoiceEditRewrite = rewrite
                 completed.completeVoiceEdit(rewrite)
             case .noRewrite, .copiedToClipboard:
+                lastVoiceEditRewrite = nil
                 completed.fail(result.userMessage)
             }
             await sessions.upsert(completed)
@@ -775,6 +784,13 @@ final class SaysoAppModel: ObservableObject {
         speech.speak(text, language: settings.outputLanguage)
     }
 
+    func copyLastVoiceEditRewrite() {
+        guard let rewrite = lastVoiceEditRewrite else { return }
+        notice = TextOutput.copy(rewrite)
+            ? "Voice edit rewrite copied to clipboard."
+            : "Could not copy voice edit rewrite."
+    }
+
     private func desktopControlEnabled() -> Bool {
         guard settings.desktopControlEnabled else {
             controlStatus = "Enable desktop control in Settings before acting."
@@ -980,6 +996,9 @@ private struct MenuContent: View {
                 model.startOrStopDictation()
             }
             .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+            if model.lastVoiceEditRewrite != nil {
+                Button("Copy pending voice edit rewrite") { model.copyLastVoiceEditRewrite() }
+            }
             Button("Show Sayso Notch") { model.switchMode(model.settings.mode) }
             Button("Open Sayso") { model.showMainWindow() }
             Button("Open Settings") { model.openSettings() }
@@ -1260,7 +1279,7 @@ private struct HistoryWorkspace: View {
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
                 Button("Copy export") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
-                Button("Clear history", role: .destructive) { confirmClear = true }
+                Button("Clear all history", role: .destructive) { confirmClear = true }
             }
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal)
             TextField("Search words, translations, language, or route", text: $query)
