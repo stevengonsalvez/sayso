@@ -246,6 +246,13 @@ import Testing
     #expect(await store.plainTextExport().contains("नमस्ते"))
 }
 
+@Test func transcriptSpokenLanguageMatchesDisplayedText() {
+    let original = Transcript(text: "hello", language: .english, route: .local, isFinal: true)
+    let translated = Transcript(text: "hello", translatedText: "नमस्ते", language: .english, route: .local, isFinal: true)
+    #expect(original.spokenLanguage(outputLanguage: .hindi) == .english)
+    #expect(translated.spokenLanguage(outputLanguage: .hindi) == .hindi)
+}
+
 @Test func historyExportFallsBackFromWhitespaceTranslation() async {
     let store = HistoryStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     await store.append(Transcript(text: "hello", translatedText: "   ", language: .english, route: .local, isFinal: true))
