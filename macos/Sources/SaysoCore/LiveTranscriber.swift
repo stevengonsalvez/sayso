@@ -7,6 +7,34 @@ public enum TranscriptionTermination: Equatable, Sendable {
     case failed(String)
 }
 
+/// Marks one asynchronous transcription run as current until it completes or is cancelled.
+struct TranscriptionRunGate: Sendable {
+    private var attempt: UUID?
+
+    var isPending: Bool { attempt != nil }
+    var current: UUID? { attempt }
+
+    mutating func begin() -> UUID? {
+        guard attempt == nil else { return nil }
+        let next = UUID()
+        attempt = next
+        return next
+    }
+
+    func isCurrent(_ candidate: UUID) -> Bool {
+        attempt == candidate
+    }
+
+    mutating func finish(_ candidate: UUID) {
+        guard attempt == candidate else { return }
+        attempt = nil
+    }
+
+    mutating func cancel() {
+        attempt = nil
+    }
+}
+
 public enum SpeechCapabilities {
     public static func supports(_ language: DictationLanguage) -> Bool {
         guard let identifier = language.localeIdentifier else { return true }
@@ -41,6 +69,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var activeRoute: ProviderRoute = .appleSpeech
     private var handsFree = false
     private var silenceTask: Task<Void, Never>?
+    private var startGate = TranscriptionRunGate()
+    private var appleRecognitionRun = TranscriptionRunGate()
+    private var appleFinalizationTask: Task<Void, Never>?
+
+    @Published public private(set) var isStarting = false
+    public var canStop: Bool { isStarting || phase == .listening }
+    public var canStart: Bool { !isStarting && phase != .requestingPermission && phase != .listening && phase != .processing }
 
     public init(
         fluidAudioModels: FluidAudioLocalModelManager = .init(),
@@ -73,15 +108,20 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
     ) async -> Bool {
+        error = nil
+        guard !startGate.isPending,
+              phase != .requestingPermission, phase != .listening, phase != .processing else {
+            return false
+        }
         guard route.supportsDictation else {
             fail(.unavailable("Your provider is available for translation, not transcription"))
             return false
         }
-        guard phase != .listening, phase != .processing else {
-            error = .unavailable("Dictation is already active")
+        guard let attempt = startGate.begin() else {
             return false
         }
-        stop()
+        isStarting = true
+        defer { finishStartAttempt(attempt) }
         self.onFinal = onFinal
         self.onPartial = onPartial
         self.onTermination = onTermination
@@ -90,28 +130,30 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         self.handsFree = handsFree
         error = nil
         partialText = ""
+        phase = .requestingPermission
 
         if route == .local, language == .punjabi {
             guard sherpaPunjabiModels.state.isInstalled else {
                 fail(.unavailable("Download the local Punjabi model before dictating."))
                 return false
             }
-            guard await microphoneAuthorized() else { return false }
-            return await startSherpaPunjabi(language: language, route: route)
+            guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
+            return await startSherpaPunjabi(language: language, route: route, attempt: attempt)
         }
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
             return false
         }
         if shouldUseFluidAudio(language: language, route: route) {
-            guard await microphoneAuthorized() else { return false }
-            return await startFluidAudio(language: language, route: route)
+            guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
+            return await startFluidAudio(language: language, route: route, attempt: attempt)
         }
         guard SpeechCapabilities.supports(language) else {
             fail(.unavailable("Speech locale \(language.displayName)"))
             return false
         }
-        guard await microphoneAuthorized(), await speechAuthorized() else { return false }
+        guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt),
+              await speechAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
 
         let locale = Locale(identifier: language.localeIdentifier ?? Locale.current.identifier)
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
@@ -120,6 +162,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         guard route != .local || recognizer.supportsOnDeviceRecognition else {
             fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
+            return false
+        }
+        guard let appleRunID = appleRecognitionRun.begin() else {
+            fail(.unavailable("Speech recognition is already active"))
             return false
         }
 
@@ -148,17 +194,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, recognitionError in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                if let result {
-                    self.partialText = result.bestTranscription.formattedString
-                    self.onPartial?(result.bestTranscription.formattedString)
-                    if result.isFinal {
-                        self.finish(text: result.bestTranscription.formattedString, language: language, route: route)
-                    }
-                }
-                if recognitionError != nil, self.phase == .listening {
-                    self.fail(.unavailable("Speech recognition ended"))
-                }
+                self?.receiveAppleRecognition(
+                    result: result,
+                    error: recognitionError,
+                    language: language,
+                    route: route,
+                    runID: appleRunID
+                )
             }
         }
 
@@ -173,6 +215,15 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func stop() {
+        if startGate.isPending {
+            cancelStartAttempt()
+            silenceTask?.cancel()
+            silenceTask = nil
+            phase = .idle
+            partialText = ""
+            terminate(.cancelled)
+            return
+        }
         if usesFluidAudio {
             stopFluidAudio()
             return
@@ -183,13 +234,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         guard phase == .listening || audioEngine.isRunning else { return }
         phase = .processing
-        stopAppleAudioCapture()
-        if !partialText.isEmpty {
-            finish(text: partialText, language: activeLanguage, route: activeRoute)
-        } else {
-            phase = .idle
-            terminate(.cancelled)
-        }
+        finishAppleAudioCapture()
     }
 
     private func observeAudio(level: Float) {
@@ -200,6 +245,30 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
             self?.stop()
+        }
+    }
+
+    private func receiveAppleRecognition(
+        result: SFSpeechRecognitionResult?,
+        error: Error?,
+        language: DictationLanguage,
+        route: ProviderRoute,
+        runID: UUID
+    ) {
+        guard appleRecognitionRun.isCurrent(runID) else { return }
+        if let result {
+            partialText = result.bestTranscription.formattedString
+            onPartial?(result.bestTranscription.formattedString)
+            if result.isFinal {
+                finish(text: result.bestTranscription.formattedString, language: language, route: route)
+            }
+        }
+        if error != nil {
+            if phase == .listening {
+                fail(.unavailable("Speech recognition ended"))
+            } else if phase == .processing {
+                completeAppleFinalization(runID: runID)
+            }
         }
     }
 
@@ -219,16 +288,26 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         Self.prefersNativeFluidAudio(language: language, route: route, models: fluidAudioModels)
     }
 
-    private func startFluidAudio(language: DictationLanguage, route: ProviderRoute) async -> Bool {
+    private func startFluidAudio(language: DictationLanguage, route: ProviderRoute, attempt: UUID) async -> Bool {
         do {
             let session = try await fluidAudioModels.makeReadySession(for: language)
+            guard isStartCurrent(attempt) else {
+                await session.reset()
+                return false
+            }
+            await session.reset()
+            guard isStartCurrent(attempt) else { return false }
             let runID = UUID()
             fluidAudioSession = session
             fluidAudioRunID = runID
             usesFluidAudio = true
-            await session.reset()
             await session.setPartialCallback { [weak self] text in
                 Task { @MainActor [weak self] in self?.receiveFluidAudioPartial(text, runID: runID) }
+            }
+            guard isStartCurrent(attempt) else {
+                clearFluidAudioRun(runID: runID)
+                await session.reset()
+                return false
             }
             let pump = FluidAudioBufferPump { [weak self, session] buffer in
                 do {
@@ -258,6 +337,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             phase = .listening
             return true
         } catch {
+            guard isStartCurrent(attempt) else { return false }
             stopAudioEngine()
             if let session = fluidAudioSession { await session.reset() }
             clearFluidAudioRun()
@@ -272,14 +352,19 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onPartial?(text)
     }
 
-    private func startSherpaPunjabi(language: DictationLanguage, route: ProviderRoute) async -> Bool {
+    private func startSherpaPunjabi(language: DictationLanguage, route: ProviderRoute, attempt: UUID) async -> Bool {
         do {
             let session = try sherpaPunjabiModels.makeReadySession(for: language)
+            guard isStartCurrent(attempt) else {
+                await session.reset()
+                return false
+            }
+            await session.reset()
+            guard isStartCurrent(attempt) else { return false }
             let runID = UUID()
             sherpaPunjabiSession = session
             sherpaPunjabiRunID = runID
             usesSherpaPunjabi = true
-            await session.reset()
             let pump = FluidAudioBufferPump { [weak self, session] buffer in
                 do {
                     try await session.append(audioBuffer: buffer)
@@ -308,6 +393,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             phase = .listening
             return true
         } catch {
+            guard isStartCurrent(attempt) else { return false }
             stopAudioEngine()
             if let session = sherpaPunjabiSession { await session.reset() }
             clearSherpaPunjabiRun()
@@ -386,7 +472,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func finishFluidAudioRun(runID: UUID, result: Result<String, any Error>) {
         guard fluidAudioRunID == runID else { return }
-        clearFluidAudioRun()
+        clearFluidAudioRun(runID: runID)
         switch result {
         case let .success(text):
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -400,7 +486,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
     }
 
-    private func clearFluidAudioRun() {
+    private func clearFluidAudioRun(runID: UUID? = nil) {
+        guard runID == nil || fluidAudioRunID == runID else { return }
         fluidAudioPump = nil
         fluidAudioSession = nil
         fluidAudioRunID = nil
@@ -435,12 +522,45 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         audioEngine.inputNode.removeTap(onBus: 0)
     }
 
+    private func finishAppleAudioCapture() {
+        guard let runID = appleRecognitionRun.current else {
+            stopAppleAudioCapture()
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
+        stopAudioEngine()
+        recognitionRequest?.endAudio()
+        silenceTask?.cancel()
+        silenceTask = nil
+        appleFinalizationTask?.cancel()
+        appleFinalizationTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.completeAppleFinalization(runID: runID)
+        }
+    }
+
+    private func completeAppleFinalization(runID: UUID) {
+        guard appleRecognitionRun.isCurrent(runID), phase == .processing else { return }
+        if partialText.isEmpty {
+            stopAppleAudioCapture()
+            phase = .idle
+            terminate(.cancelled)
+        } else {
+            finish(text: partialText, language: activeLanguage, route: activeRoute)
+        }
+    }
+
     private func stopAppleAudioCapture() {
         stopAudioEngine()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         silenceTask?.cancel()
         silenceTask = nil
+        appleFinalizationTask?.cancel()
+        appleFinalizationTask = nil
+        appleRecognitionRun.cancel()
         recognitionTask = nil
         recognitionRequest = nil
     }
@@ -457,6 +577,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func fail(_ error: SaysoError) {
+        cancelStartAttempt()
         stopAppleAudioCapture()
         self.error = error
         phase = .failed
@@ -470,27 +591,49 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onTermination = nil
     }
 
-    private func microphoneAuthorized() async -> Bool {
+    private func isStartCurrent(_ attempt: UUID) -> Bool {
+        startGate.isCurrent(attempt)
+    }
+
+    private func finishStartAttempt(_ attempt: UUID) {
+        startGate.finish(attempt)
+        isStarting = startGate.isPending
+    }
+
+    private func cancelStartAttempt() {
+        startGate.cancel()
+        isStarting = false
+    }
+
+    private func microphoneAuthorized(attempt: UUID) async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return true
         case .notDetermined:
-            return await AVCaptureDevice.requestAccess(for: .audio)
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            guard isStartCurrent(attempt) else { return false }
+            guard granted else {
+                fail(.permissionDenied("Microphone"))
+                return false
+            }
+            return true
         default:
+            guard isStartCurrent(attempt) else { return false }
             fail(.permissionDenied("Microphone"))
             return false
         }
     }
 
-    private func speechAuthorized() async -> Bool {
+    private func speechAuthorized(attempt: UUID) async -> Bool {
         let status = SFSpeechRecognizer.authorizationStatus()
         if status == .authorized { return true }
         if status == .notDetermined {
             let requested = await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
             }
-            if requested == .authorized { return true }
+            if isStartCurrent(attempt), requested == .authorized { return true }
         }
+        guard isStartCurrent(attempt) else { return false }
         fail(.permissionDenied("Speech Recognition"))
         return false
     }
