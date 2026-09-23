@@ -248,9 +248,14 @@ import Testing
 
 @Test func transcriptSpokenLanguageMatchesDisplayedText() {
     let original = Transcript(text: "hello", language: .english, route: .local, isFinal: true)
-    let translated = Transcript(text: "hello", translatedText: "नमस्ते", language: .english, route: .local, isFinal: true)
+    let translated = Transcript(
+        text: "hello", translatedText: "नमस्ते", translatedLanguage: .hindi,
+        language: .english, route: .local, isFinal: true
+    )
+    let legacyTranslation = Transcript(text: "hello", translatedText: "नमस्ते", language: .english, route: .local, isFinal: true)
     #expect(original.spokenLanguage(outputLanguage: .hindi) == .english)
-    #expect(translated.spokenLanguage(outputLanguage: .hindi) == .hindi)
+    #expect(translated.spokenLanguage(outputLanguage: .tamil) == .hindi)
+    #expect(legacyTranslation.spokenLanguage(outputLanguage: .hindi) == .hindi)
 }
 
 @Test func historyExportFallsBackFromWhitespaceTranslation() async {
