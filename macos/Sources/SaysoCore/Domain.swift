@@ -132,6 +132,11 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         hasTranslation ? translatedText! : text
     }
 
+    public var hasRecording: Bool {
+        guard let audioFileURL else { return false }
+        return FileManager.default.fileExists(atPath: audioFileURL.path)
+    }
+
     public init(
         id: UUID = UUID(),
         createdAt: Date = .now,
