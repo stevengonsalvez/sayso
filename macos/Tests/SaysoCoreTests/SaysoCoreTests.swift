@@ -84,7 +84,8 @@ import Testing
     #expect(anchor.stillMatches(value: value, range: range))
     #expect(!anchor.stillMatches(value: value, range: .init(location: 0, length: "Stevie".utf16.count)))
     #expect(!anchor.stillMatches(value: "Hi 👋 Steven", range: range))
-    #expect(anchor.replacing(with: "team") == "Hi 👋 team")
+    #expect(anchor.replacing(with: "team", in: value) == "Hi 👋 team")
+    #expect(anchor.replacing(with: "team", in: "Yo 👋 Stevie") == "Yo 👋 team")
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: location, length: 0)) == nil)
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: value.utf16.count, length: 1)) == nil)
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: 4, length: 1)) == nil)
@@ -92,6 +93,12 @@ import Testing
 
 @Test func selectedTextEditUnverifiedWriteDoesNotAskForPaste() {
     #expect(SelectedTextEdit.ApplyResult.replacementUnverified.userMessage.contains("copied to clipboard") == false)
+}
+
+@Test func providerEndpointsRequireHTTPSOutsideLocalhost() throws {
+    #expect(ProviderEndpointPolicy.allows(try #require(URL(string: "https://api.example.com/v1"))))
+    #expect(ProviderEndpointPolicy.allows(try #require(URL(string: "http://localhost:11434/v1"))))
+    #expect(!ProviderEndpointPolicy.allows(try #require(URL(string: "http://api.example.com/v1"))))
 }
 
 @Test func lexiconCorrectionsPreferLongestPhrase() {
