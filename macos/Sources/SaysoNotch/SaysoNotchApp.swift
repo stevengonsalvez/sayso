@@ -73,6 +73,7 @@ final class SaysoAppModel: ObservableObject {
     let localPunjabiModel: SherpaPunjabiModelManager
     let speech = SpeechOutput()
     let history = HistoryStore()
+    let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
     let controller = AXDesktopController()
     let desktopControlSession = ControlSession()
@@ -91,6 +92,7 @@ final class SaysoAppModel: ObservableObject {
     private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
+    private var correctionChanges: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -118,9 +120,13 @@ final class SaysoAppModel: ObservableObject {
             saved.onboardingCompleted = true
         }
         settings = saved
+        corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         dictationHotKey = Self.loadDictationHotKey()
         notch = NotchPanelController()
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
@@ -137,10 +143,23 @@ final class SaysoAppModel: ObservableObject {
         Task {
             await history.reclaimUnreferencedAudio(olderThan: launchDate)
             controlEntries = await controlAudit.entries()
+            await corrections.waitUntilLoaded()
+            guard !settings.legacyLexiconMigrated else { return }
+            do {
+                try await corrections.importLegacy(settings.lexicon)
+                settings.lexicon = [:]
+                settings.legacyLexiconMigrated = true
+                save()
+            } catch {
+                notice = "Could not migrate saved corrections."
+            }
         }
     }
 
-    func save() { settingsStore.save(settings) }
+    func save() {
+        corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
+        settingsStore.save(settings)
+    }
 
     func setDictationHotKey(_ hotKey: HotKey) {
         dictationHotKey = hotKey
@@ -508,6 +527,7 @@ final class SaysoAppModel: ObservableObject {
         var corrected = transcript
         corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
         corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
+        corrected.text = corrections.apply(to: corrected.text).transformedText
         guard currentSettings.translationEnabled else { return corrected }
         guard currentSettings.cloudConsentGranted else {
             notice = "Translation needs cloud consent and a selected provider."
@@ -564,6 +584,10 @@ final class SaysoAppModel: ObservableObject {
             if activeRecordingSession == nil {
                 notice = failure.userMessage
             }
+        }
+        if pendingDelivery.settings.autoCorrectionsEnabled,
+           case .delivered(.directInsertion) = output {
+            corrections.startMonitoring(insertedText: finalText, destination: pendingDelivery.destination)
         }
         if activeRecordingSession == nil {
             if historyResult == .recovered {
@@ -778,13 +802,43 @@ final class SaysoAppModel: ObservableObject {
     func addLexiconCorrection(_ spoken: String, replacement: String) {
         guard !spoken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        settings.lexicon[spoken] = replacement
-        save()
+        Task {
+            do {
+                try await corrections.addRule(source: spoken, replacement: replacement)
+            } catch {
+                notice = "Could not save correction."
+            }
+        }
     }
 
-    func removeLexiconCorrection(_ spoken: String) {
-        settings.lexicon.removeValue(forKey: spoken)
-        save()
+    func removeLexiconCorrection(_ rule: PersonalLexiconRule) {
+        Task {
+            do {
+                try await corrections.removeRule(id: rule.id)
+            } catch {
+                notice = "Could not remove correction."
+            }
+        }
+    }
+
+    func promoteCorrection(_ candidate: AutoCorrectionCandidate) {
+        Task {
+            do {
+                try await corrections.promote(candidate)
+            } catch {
+                notice = "Could not promote correction."
+            }
+        }
+    }
+
+    func dismissCorrection(_ candidate: AutoCorrectionCandidate) {
+        Task {
+            do {
+                try await corrections.dismiss(id: candidate.id)
+            } catch {
+                notice = "Could not dismiss correction."
+            }
+        }
     }
 
     func setAutomation(_ enabled: Bool) {
@@ -1778,7 +1832,20 @@ private struct SaysoSettingsView: View {
                 Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
                 Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
             }
-            Section("Lexicon corrections") {
+            Section("Smart corrections") {
+                Toggle("Learn from edits after dictation", isOn: $model.settings.autoCorrectionsEnabled)
+                if model.settings.autoCorrectionsEnabled {
+                    Stepper(
+                        "Promote after \(model.settings.autoCorrectionsPromotionThreshold) edits",
+                        value: $model.settings.autoCorrectionsPromotionThreshold,
+                        in: 2 ... 10
+                    )
+                    if model.corrections.isMonitoring {
+                        Label("Watching the last inserted text for an edit", systemImage: "eye")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 HStack {
                     TextField("Heard", text: $spoken)
                     TextField("Write", text: $replacement)
@@ -1787,13 +1854,23 @@ private struct SaysoSettingsView: View {
                         spoken = ""; replacement = ""
                     }
                 }
-                ForEach(model.settings.lexicon.keys.sorted(), id: \.self) { key in
+                ForEach(model.corrections.rules) { rule in
                     HStack {
-                        Text(key).foregroundStyle(.secondary)
+                        Text(rule.aliases.joined(separator: ", ")).foregroundStyle(.secondary)
                         Image(systemName: "arrow.right")
-                        Text(model.settings.lexicon[key] ?? "")
+                        Text(rule.canonical)
                         Spacer()
-                        Button("Remove") { model.removeLexiconCorrection(key) }
+                        Button("Remove") { model.removeLexiconCorrection(rule) }
+                    }
+                }
+                if !model.corrections.candidates.isEmpty {
+                    ForEach(model.corrections.candidates) { candidate in
+                        HStack {
+                            Label("\(candidate.original) → \(candidate.corrected) · \(candidate.seenCount)x", systemImage: "wand.and.stars")
+                            Spacer()
+                            Button("Dismiss") { model.dismissCorrection(candidate) }
+                            Button("Promote") { model.promoteCorrection(candidate) }
+                        }
                     }
                 }
             }
