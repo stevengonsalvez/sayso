@@ -25,7 +25,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var recognizer: SFSpeechRecognizer?
-    private var fluidAudioManager: StreamingEouAsrManager?
+    private var fluidAudioSession: FluidAudioLocalSession?
     private var fluidAudioPump: FluidAudioBufferPump?
     private var fluidAudioRunID: UUID?
     private var usesFluidAudio = false
@@ -46,7 +46,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         !FileTranscriber.prefersFluidAudio(
             language: language,
             route: route,
-            localModelReady: fluidAudioModels.state.isInstalled
+            localModelReady: fluidAudioModels.isInstalled(for: language)
         )
     }
 
@@ -76,6 +76,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         error = nil
         partialText = ""
 
+        if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
+            fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
+            return false
+        }
         if shouldUseFluidAudio(language: language, route: route) {
             guard await microphoneAuthorized() else { return false }
             return await startFluidAudio(language: language, route: route)
@@ -182,18 +186,18 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func startFluidAudio(language: DictationLanguage, route: ProviderRoute) async -> Bool {
         do {
-            let manager = try await fluidAudioModels.makeReadyManager()
+            let session = try await fluidAudioModels.makeReadySession(for: language)
             let runID = UUID()
-            fluidAudioManager = manager
+            fluidAudioSession = session
             fluidAudioRunID = runID
             usesFluidAudio = true
-            await manager.reset()
-            await manager.setPartialCallback { [weak self] text in
+            await session.reset()
+            await session.setPartialCallback { [weak self] text in
                 Task { @MainActor [weak self] in self?.receiveFluidAudioPartial(text, runID: runID) }
             }
-            let pump = FluidAudioBufferPump { [weak self, manager] buffer in
+            let pump = FluidAudioBufferPump { [weak self, session] buffer in
                 do {
-                    _ = try await manager.process(audioBuffer: buffer)
+                    _ = try await session.process(audioBuffer: buffer)
                 } catch {
                     Task { @MainActor [weak self] in self?.stopFluidAudio() }
                     throw error
@@ -220,9 +224,9 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             return true
         } catch {
             stopAudioEngine()
-            if let manager = fluidAudioManager { await manager.reset() }
+            if let session = fluidAudioSession { await session.reset() }
             clearFluidAudioRun()
-            fail(.unavailable("Local English model could not start: \(error.localizedDescription)"))
+            fail(.unavailable("Local \(language.displayName) model could not start: \(error.localizedDescription)"))
             return false
         }
     }
@@ -235,7 +239,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func stopFluidAudio() {
         guard usesFluidAudio, (phase == .listening || audioEngine.isRunning) else { return }
-        guard let runID = fluidAudioRunID, let manager = fluidAudioManager else { return }
+        guard let runID = fluidAudioRunID, let session = fluidAudioSession else { return }
         phase = .processing
         stopAudioEngine()
         silenceTask?.cancel()
@@ -246,21 +250,21 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             guard let self else { return }
             switch terminal {
             case let .failed(_, _, message):
-                await manager.reset()
+                await session.reset()
                 self.finishFluidAudioRun(runID: runID, result: .failure(SaysoError.unavailable(message)))
             case let .drained(_, dropped) where dropped > 0:
-                await manager.reset()
+                await session.reset()
                 self.finishFluidAudioRun(
                     runID: runID,
                     result: .failure(SaysoError.unavailable("Local audio processing dropped \(dropped) buffers"))
                 )
             case .drained, .none:
                 do {
-                    let text = try await manager.finish()
-                    await manager.reset()
+                    let text = try await session.finish()
+                    await session.reset()
                     self.finishFluidAudioRun(runID: runID, result: .success(text))
                 } catch {
-                    await manager.reset()
+                    await session.reset()
                     self.finishFluidAudioRun(runID: runID, result: .failure(error))
                 }
             }
@@ -285,7 +289,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func clearFluidAudioRun() {
         fluidAudioPump = nil
-        fluidAudioManager = nil
+        fluidAudioSession = nil
         fluidAudioRunID = nil
         usesFluidAudio = false
     }
@@ -365,8 +369,8 @@ public enum FileTranscriber {
         route: ProviderRoute,
         localModelReady: Bool
     ) -> Bool {
-        route == .local && language == .english && FluidAudioLocalModelManager.supportsCurrentHardware
-            && localModelReady
+        route == .local && FluidAudioLocalModelManager.supportsCurrentHardware
+            && FluidAudioLocalModelManager.supportsNativeModel(for: language) && localModelReady
     }
 
     public static func transcribe(
@@ -382,8 +386,11 @@ public enum FileTranscriber {
         if let size = attributes[.size] as? NSNumber, size.intValue > maximumAudioFileBytes {
             throw SaysoError.invalidAction("Audio file exceeds \(maximumAudioFileBytes) bytes")
         }
+        if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
+            throw SaysoError.unavailable("On-device recognition is unavailable for \(language.displayName)")
+        }
         let localModel = FluidAudioLocalModelManager()
-        if prefersFluidAudio(language: language, route: route, localModelReady: localModel.state.isInstalled) {
+        if prefersFluidAudio(language: language, route: route, localModelReady: localModel.isInstalled(for: language)) {
             return try await transcribeWithFluidAudio(fileURL: fileURL, language: language, route: route, model: localModel)
         }
         let authorization = SFSpeechRecognizer.authorizationStatus()
@@ -421,7 +428,7 @@ public enum FileTranscriber {
         route: ProviderRoute,
         model: FluidAudioLocalModelManager
     ) async throws -> Transcript {
-        let manager = try await model.makeReadyManager()
+        let session = try await model.makeReadySession(for: language)
         do {
             let file = try AVAudioFile(forReading: fileURL)
             let chunkFrames = AVAudioFrameCount(max(1_024, Int(file.processingFormat.sampleRate / 5)))
@@ -435,14 +442,14 @@ public enum FileTranscriber {
                 }
                 try file.read(into: buffer)
                 if buffer.frameLength > 0 {
-                    _ = try await manager.process(audioBuffer: buffer)
+                    _ = try await session.process(audioBuffer: buffer)
                 }
             }
-            let text = try await manager.finish()
-            await manager.cleanup()
+            let text = try await session.finish()
+            await session.cleanup()
             return Transcript(text: text, language: language, route: route, isFinal: true)
         } catch {
-            await manager.cleanup()
+            await session.cleanup()
             throw error
         }
     }
