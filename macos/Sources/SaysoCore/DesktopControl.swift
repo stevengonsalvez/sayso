@@ -593,12 +593,13 @@ public enum ControlPlanner {
             if let url = httpURL(target) {
                 return .init(action: .open(url: url), confidence: 0.80, reason: "Explicit web address")
             }
-            guard !looksLikeUnsupportedWebAddress(target) else {
+            let applications = installedApplications ?? InstalledDesktopApplication.available()
+            if case .notFound = DesktopApplicationResolver.resolve(target, in: applications), looksLikeUnsupportedWebAddress(target) {
                 throw SaysoError.invalidAction("Open web addresses must include http:// or https://.")
             }
             return try namedApplicationPlan(
                 requestedName: target,
-                applications: installedApplications ?? InstalledDesktopApplication.available()
+                applications: applications
             )
         }
         if normalized.hasPrefix("switch to ") {
@@ -638,7 +639,7 @@ public enum ControlPlanner {
         let normalized = trimmed.lowercased()
         if normalized.hasPrefix("open ") {
             let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            return !target.isEmpty && httpURL(target) == nil && !looksLikeUnsupportedWebAddress(target)
+            return !target.isEmpty && httpURL(target) == nil && URL(string: target)?.scheme == nil
         }
         if normalized.hasPrefix("switch to ") {
             return !String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces).isEmpty
