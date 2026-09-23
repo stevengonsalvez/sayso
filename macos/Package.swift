@@ -30,6 +30,7 @@ let package = Package(
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "sherpa-onnx", package: "sherpa-onnx"),
+                .product(name: "SpeakCore", package: "justspeaktoit"),
             ]
         ),
         .target(
