@@ -56,6 +56,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var notice: String?
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
     @Published private(set) var isStartingDictation = false
+    @Published var onboardingDeferredThisLaunch = false
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -896,7 +897,7 @@ private struct SettingsHome: View {
         .tint(SaysoPalette.cobalt)
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: Binding(
-            get: { !model.settings.onboardingCompleted },
+            get: { !model.settings.onboardingCompleted && !model.onboardingDeferredThisLaunch },
             set: { _ in }
         )) {
             OnboardingWizard(model: model)
@@ -1546,6 +1547,8 @@ private struct CloudProviderSettings: View {
 private struct OnboardingWizard: View {
     @ObservedObject var model: SaysoAppModel
     @State private var page = 0
+    @State private var testSessionStarted = false
+    @State private var testTranscriptID: UUID?
     @Environment(\.dismiss) private var dismiss
 
     private let steps = ["Language", "Engine", "Delivery", "Permissions"]
@@ -1567,7 +1570,7 @@ private struct OnboardingWizard: View {
                     Text("Step \(page + 1) of \(steps.count)")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(SaysoPalette.cobalt)
-                    Button("Skip") { complete() }
+                    Button("Finish later") { deferSetup() }
                         .buttonStyle(.plain)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -1622,6 +1625,11 @@ private struct OnboardingWizard: View {
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                         }
+                        if !engineReady {
+                            Label(engineReadinessMessage, systemImage: "exclamationmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.crimson)
+                        }
                     }
                 case 2:
                     VStack(alignment: .leading, spacing: 14) {
@@ -1658,6 +1666,24 @@ private struct OnboardingWizard: View {
                             }
                             .padding(.vertical, 3)
                         }
+                        if !requiredPermissionsGranted {
+                            Label("Grant the required permissions before testing dictation.", systemImage: "exclamationmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.crimson)
+                        } else if testTranscriptID == nil {
+                            Label(
+                                testSessionStarted
+                                    ? "Say a short sentence, then stop the test to verify your first transcript."
+                                    : "Start a short test dictation to verify your setup.",
+                                systemImage: "checkmark.seal"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else {
+                            Label("First transcript received. Your setup is ready.", systemImage: "checkmark.seal.fill")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        }
                     }
                 }
             }
@@ -1665,26 +1691,92 @@ private struct OnboardingWizard: View {
             HStack {
                 Button("Back") { page = max(0, page - 1) }.disabled(page == 0)
                 Spacer()
-                Button(page == steps.count - 1 ? "Start dictating" : "Continue") {
+                Button(primaryActionTitle) {
                     if page == steps.count - 1 {
-                        complete()
-                        model.startOrStopDictation()
+                        performFinalStep()
                     } else {
                         page += 1
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(page == 1 && model.settings.route.transmitsData && !model.settings.cloudConsentGranted)
+                .disabled(!canAdvance)
             }
         }
         .padding(32)
         .frame(width: 560, height: 500)
+        .onChange(of: model.transcriber.phase) { _, phase in
+            if phase == .listening { testSessionStarted = true }
+        }
+        .onChange(of: model.lastTranscript?.id) { _, id in
+            guard testSessionStarted, let id else { return }
+            testTranscriptID = id
+        }
     }
 
     private func complete() {
         model.settings.onboardingCompleted = true
         model.save()
         dismiss()
+    }
+
+    private func deferSetup() {
+        model.onboardingDeferredThisLaunch = true
+        dismiss()
+    }
+
+    private var engineReady: Bool {
+        switch model.settings.route {
+        case .local:
+            model.nativeModelReady(for: model.settings.language)
+        case .appleSpeech:
+            model.settings.cloudConsentGranted
+        case .byok:
+            false
+        }
+    }
+
+    private var engineReadinessMessage: String {
+        switch model.settings.route {
+        case .local:
+            "Download the selected local model before continuing."
+        case .appleSpeech:
+            "Confirm the Apple Speech data path before continuing."
+        case .byok:
+            "Choose an available dictation engine."
+        }
+    }
+
+    private var requiredPermissionsGranted: Bool {
+        guard model.permissions.states[.microphone] == .granted else { return false }
+        return model.settings.route != .appleSpeech || model.permissions.states[.speechRecognition] == .granted
+    }
+
+    private var primaryActionTitle: String {
+        guard page == steps.count - 1 else { return "Continue" }
+        if model.transcriber.canStop { return "Stop test" }
+        if testTranscriptID != nil { return "Finish setup" }
+        return "Start test dictation"
+    }
+
+    private var canAdvance: Bool {
+        switch page {
+        case 1:
+            engineReady
+        case steps.count - 1:
+            requiredPermissionsGranted
+        default:
+            true
+        }
+    }
+
+    private func performFinalStep() {
+        if model.transcriber.canStop {
+            model.startOrStopDictation()
+        } else if testTranscriptID != nil {
+            complete()
+        } else {
+            model.startOrStopDictation()
+        }
     }
 
     private func permissionAction(_ permission: PermissionKind) -> String {
