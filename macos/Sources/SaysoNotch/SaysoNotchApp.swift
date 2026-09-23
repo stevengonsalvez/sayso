@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import Darwin
 import SaysoCore
 import SpeakUpstreamBridge
 import SwiftUI
@@ -8,7 +9,17 @@ import UniformTypeIdentifiers
 
 @main
 struct SaysoNotchApp: App {
-    @StateObject private var model = SaysoAppModel()
+    private let instanceLock: SingleInstanceLock
+    @StateObject private var model: SaysoAppModel
+
+    init() {
+        guard let instanceLock = SingleInstanceLock() else {
+            Self.activateExistingInstance()
+            exit(0)
+        }
+        self.instanceLock = instanceLock
+        _model = StateObject(wrappedValue: SaysoAppModel())
+    }
 
     var body: some Scene {
         MenuBarExtra("Sayso", systemImage: "waveform") {
@@ -19,6 +30,46 @@ struct SaysoNotchApp: App {
                 .frame(minWidth: 1000, minHeight: 680)
         }
         .windowResizability(.contentSize)
+    }
+
+    private static func activateExistingInstance() {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "ai.sayso.notch"
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+            .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier })?
+            .activate(options: [.activateAllWindows])
+    }
+}
+
+private final class SingleInstanceLock {
+    private let descriptor: Int32
+
+    init?() {
+        guard let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return nil
+        }
+        let directory = applicationSupport.appendingPathComponent("Sayso Notch", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        let descriptor = open(
+            directory.appendingPathComponent("instance.lock").path,
+            O_CREAT | O_RDWR,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else { return nil }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            return nil
+        }
+        self.descriptor = descriptor
+    }
+
+    deinit {
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
     }
 }
 
