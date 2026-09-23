@@ -147,13 +147,8 @@ public struct InstalledDesktopApplication: Equatable, Sendable {
               fileManager.fileExists(atPath: standardizedURL.path) else { return false }
 
         let contentsInfo = standardizedURL.appendingPathComponent("Contents/Info.plist")
-        let wrapperDirectory = standardizedURL.appendingPathComponent("Wrapper", isDirectory: true)
-        let wrappedInfos = (try? fileManager.contentsOfDirectory(
-            at: wrapperDirectory,
-            includingPropertiesForKeys: nil
-        ))?
-            .filter { $0.pathExtension.lowercased() == "app" }
-            .map { $0.appendingPathComponent("Info.plist") } ?? []
+        let wrappedInfos = wrappedApplicationURLs(in: standardizedURL, fileManager: fileManager)
+            .map { $0.appendingPathComponent("Info.plist") }
 
         return ([contentsInfo] + wrappedInfos).contains { infoURL in
             guard let data = try? Data(contentsOf: infoURL),
@@ -161,6 +156,27 @@ public struct InstalledDesktopApplication: Equatable, Sendable {
                   let currentBundleIdentifier = info["CFBundleIdentifier"] as? String else { return false }
             return currentBundleIdentifier == bundleIdentifier
         }
+    }
+
+    public static func matchesRunningApplication(
+        bundleURL: URL?,
+        plannedApplicationURL: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        guard let bundleURL else { return false }
+        let runningURL = bundleURL.standardizedFileURL.resolvingSymlinksInPath()
+        let plannedURL = plannedApplicationURL.standardizedFileURL.resolvingSymlinksInPath()
+        return runningURL == plannedURL || wrappedApplicationURLs(in: plannedURL, fileManager: fileManager).contains(runningURL)
+    }
+
+    private static func wrappedApplicationURLs(in applicationURL: URL, fileManager: FileManager) -> [URL] {
+        let wrapperDirectory = applicationURL.appendingPathComponent("Wrapper", isDirectory: true)
+        return (try? fileManager.contentsOfDirectory(
+            at: wrapperDirectory,
+            includingPropertiesForKeys: nil
+        ))?
+            .filter { $0.pathExtension.lowercased() == "app" }
+            .map { $0.standardizedFileURL.resolvingSymlinksInPath() } ?? []
     }
 }
 
@@ -814,7 +830,12 @@ public final class AXDesktopController: @unchecked Sendable {
             }
             let app: NSRunningApplication
             if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
-                .first(where: { $0.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == standardizedURL }) {
+                .first(where: {
+                    InstalledDesktopApplication.matchesRunningApplication(
+                        bundleURL: $0.bundleURL,
+                        plannedApplicationURL: standardizedURL
+                    )
+                }) {
                 app = running
             } else {
                 app = try await launchApplication(at: standardizedURL)
