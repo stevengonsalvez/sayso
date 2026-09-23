@@ -403,22 +403,32 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func accept(_ transcript: Transcript) {
-        if applyPendingVoiceMode() { return }
+        if applyPendingVoiceMode() {
+            discardTranscriptAudio(transcript)
+            return
+        }
         if let capture = voiceEditCapture {
             voiceEditCapture = nil
             guard let delivery = takeActiveDictationDelivery() else {
+                discardTranscriptAudio(transcript)
                 notice = "Voice edit session was no longer active."
                 return
             }
+            discardTranscriptAudio(transcript)
             Task { await finishVoiceEdit(transcript, session: delivery.session, capture: capture) }
             return
         }
         if let testID = onboardingTestSessionID, activeRecordingSession?.id == testID {
-            guard let delivery = takeActiveDictationDelivery() else { return }
+            guard let delivery = takeActiveDictationDelivery() else {
+                discardTranscriptAudio(transcript)
+                return
+            }
+            discardTranscriptAudio(transcript)
             Task { await finishOnboardingTest(transcript, session: delivery.session) }
             return
         }
         guard settings.mode == .dictation else {
+            discardTranscriptAudio(transcript)
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
             dictationDestination = nil
@@ -436,9 +446,11 @@ final class SaysoAppModel: ObservableObject {
                 updateActiveSession { $0.completeVoiceEdit(edited) }
                 activeRecordingSession = nil
                 dictationDestination = nil
+                discardTranscriptAudio(transcript)
                 notice = "Voice edit applied."
                 return
             case .targetNotFound:
+                discardTranscriptAudio(transcript)
                 cancelActiveRecordingSession()
                 notice = "Voice edit target was not found."
                 return
@@ -454,6 +466,11 @@ final class SaysoAppModel: ObservableObject {
             await sessions.upsert(delivery.session)
             await finish(await translated(transcript, settings: delivery.settings), delivery: delivery)
         }
+    }
+
+    private func discardTranscriptAudio(_ transcript: Transcript) {
+        guard let audioFileURL = transcript.audioFileURL else { return }
+        SessionAudioArchive.deleteManagedRecording(audioFileURL)
     }
 
     /// Preserve a final transcript even if an already-terminated recording lost its session record.
@@ -1370,7 +1387,10 @@ private struct HistoryWorkspace: View {
         .task { entries = await model.history.all() }
         .onDisappear { playback.stop() }
         .alert("Clear Sayso history?", isPresented: $confirmClear) {
-            Button("Clear", role: .destructive) { Task { await model.history.clear(); entries = [] } }
+            Button("Clear", role: .destructive) {
+                playback.stop()
+                Task { await model.history.clear(); entries = [] }
+            }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts and retained audio from this Mac.") }
         .alert("Delete transcript?", isPresented: Binding(
@@ -1380,6 +1400,7 @@ private struct HistoryWorkspace: View {
             Button("Delete", role: .destructive) {
                 guard let candidate = deletionCandidate else { return }
                 Task {
+                    if playback.activeID == candidate.id { playback.stop() }
                     if await model.history.remove(id: candidate.id) {
                         entries.removeAll { $0.id == candidate.id }
                     }
