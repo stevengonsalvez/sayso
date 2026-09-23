@@ -486,12 +486,7 @@ private struct SettingsHome: View {
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: Binding(
             get: { !model.settings.onboardingCompleted },
-            set: { presented in
-                if !presented {
-                    model.settings.onboardingCompleted = true
-                    model.save()
-                }
-            }
+            set: { _ in }
         )) {
             OnboardingWizard(model: model)
         }
@@ -978,62 +973,107 @@ private struct CloudProviderSettings: View {
 private struct OnboardingWizard: View {
     @ObservedObject var model: SaysoAppModel
     @State private var page = 0
+    @Environment(\.dismiss) private var dismiss
 
-    private let pages = ["Welcome", "Permissions", "Voice", "Ready"]
+    private let steps = ["Language", "Engine", "Delivery", "Permissions"]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        VStack(alignment: .leading, spacing: 20) {
             HStack {
                 Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 42))
+                    .font(.system(size: 36, weight: .bold))
                     .foregroundStyle(SaysoPalette.cobalt)
                 VStack(alignment: .leading) {
-                    Text("Sayso Notch").font(.title.bold())
-                    Text("Private voice, right where you look.").foregroundStyle(.secondary)
+                    Text("Sayso").font(.title2.bold())
+                    Text("Private voice, right where you look.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("Step \(page + 1) of \(steps.count)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(SaysoPalette.cobalt)
+                    Button("Skip") { complete() }
+                        .buttonStyle(.plain)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
-            ProgressView(value: Double(page + 1), total: Double(pages.count))
-                .tint(SaysoPalette.cobalt)
+            HStack(spacing: 6) {
+                ForEach(steps.indices, id: \.self) { index in
+                    Capsule()
+                        .fill(index <= page ? SaysoPalette.cobalt : SaysoPalette.outline)
+                        .frame(height: 4)
+                }
+            }
             Group {
                 switch page {
                 case 0:
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Your voice stays yours.").font(.title2.bold())
-                        Text("Sayso starts on-device. Cloud speech, translation, cleanup, and control planning remain off until you select a provider and consent to its data path.")
-                        Toggle("I understand selected cloud routes transmit data", isOn: $model.settings.cloudConsentGranted)
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Your words, your script.").font(.title2.bold())
+                        Text("Choose the spoken language. Automatic follows your Mac, while an explicit language keeps recognition focused.")
+                            .foregroundStyle(.secondary)
+                        Picker("Spoken language", selection: $model.settings.language) {
+                            ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        Label("Indian languages included: Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Punjabi, Telugu, and Urdu.", systemImage: "character.bubble")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 case 1:
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Grant only what you use.").font(.title2.bold())
-                        ForEach(PermissionKind.allCases) { permission in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(permission.displayName).fontWeight(.semibold)
-                                    Text(permission == .inputMonitoring ? "Enable in System Settings for global hotkeys." : "Required for this Sayso capability.")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Request") { Task { await model.permissions.request(permission) } }
-                            }
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Choose your engine.").font(.title2.bold())
+                        Text("On-device keeps recognition local when macOS supports the selected language. Apple Speech can use Apple’s recognition service.")
+                            .foregroundStyle(.secondary)
+                        Picker("Speech route", selection: $model.settings.route) {
+                            ForEach(ProviderRoute.allCases) { Text($0.displayName).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        if model.settings.route == .byok {
+                            Label("Your-provider transcription is not installed yet. Choose On-device or Apple Speech to continue.", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.amber)
+                        } else if model.settings.route.transmitsData {
+                            Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
                         }
                     }
                 case 2:
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Set your voice path.").font(.title2.bold())
-                        Picker("Language", selection: $model.settings.language) {
-                            ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
-                        }
-                        Picker("Route", selection: $model.settings.route) {
-                            ForEach(ProviderRoute.allCases) { Text($0.displayName).tag($0) }
-                        }
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Choose where words land.").font(.title2.bold())
+                        Text("Sayso first tries to insert safely into your active app. If macOS blocks that, it can paste while preserving your clipboard.")
+                            .foregroundStyle(.secondary)
                         Toggle("Insert final text into active app", isOn: $model.settings.autoInsert)
+                        Toggle("Restore clipboard after a paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
+                            .disabled(!model.settings.autoInsert)
+                        Text(model.settings.autoInsert
+                             ? "Turn restoration off only when you want the transcript left on your clipboard."
+                             : "With insertion off, final transcripts copy to your clipboard.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 default:
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Ready to say it.").font(.title2.bold())
-                        Text("Use the menu-bar control, then watch your live transcript appear in the notch. You can enable Desktop Control later, after Accessibility is granted.")
-                        Button("Test Sayso dictation") { model.startOrStopDictation() }
-                            .buttonStyle(.borderedProminent)
+                        Text("Grant only what you use.").font(.title2.bold())
+                        Text("Microphone and Speech Recognition power dictation. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
+                            .foregroundStyle(.secondary)
+                        ForEach(PermissionKind.allCases) { permission in
+                            HStack(spacing: 12) {
+                                Image(systemName: model.permissions.states[permission] == .granted ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(model.permissions.states[permission] == .granted ? SaysoPalette.cobalt : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(permission.displayName).fontWeight(.semibold)
+                                    Text(permissionDetail(permission))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(permissionAction(permission)) {
+                                    Task { await model.permissions.request(permission) }
+                                }
+                            }
+                            .padding(.vertical, 3)
+                        }
                     }
                 }
             }
@@ -1041,19 +1081,39 @@ private struct OnboardingWizard: View {
             HStack {
                 Button("Back") { page = max(0, page - 1) }.disabled(page == 0)
                 Spacer()
-                Button(page == pages.count - 1 ? "Finish" : "Continue") {
-                    if page == pages.count - 1 {
-                        model.settings.onboardingCompleted = true
-                        model.save()
+                Button(page == steps.count - 1 ? "Start dictating" : "Continue") {
+                    if page == steps.count - 1 {
+                        complete()
+                        model.startOrStopDictation()
                     } else {
                         page += 1
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(page == 1 && model.settings.route == .byok)
             }
         }
         .padding(32)
-        .frame(width: 560, height: 460)
+        .frame(width: 560, height: 500)
+    }
+
+    private func complete() {
+        model.settings.onboardingCompleted = true
+        model.save()
+        dismiss()
+    }
+
+    private func permissionAction(_ permission: PermissionKind) -> String {
+        model.permissions.states[permission] == .granted ? "Granted" : "Request"
+    }
+
+    private func permissionDetail(_ permission: PermissionKind) -> String {
+        switch permission {
+        case .microphone: "Required to hear dictation."
+        case .speechRecognition: "Required to turn voice into text."
+        case .accessibility: "Required to insert text into other apps."
+        case .inputMonitoring: "Required only for the global hotkey."
+        }
     }
 }
 
