@@ -63,6 +63,7 @@ private func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
     return level
 }
 
+// ponytail: keep these factories outside LiveTranscriber so realtime audio taps never inherit MainActor isolation.
 private func makeSpeechTap(
     request: SFSpeechAudioBufferRecognitionRequest,
     levelReporter: AudioLevelReporter
