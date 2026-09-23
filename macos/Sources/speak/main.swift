@@ -8,6 +8,7 @@ enum SpeakCommand: String {
     case start
     case stop
     case transcribe
+    case transcribePunjabi = "transcribe-punjabi"
     case installPunjabi = "install-punjabi"
 }
 
@@ -23,6 +24,20 @@ case .installPunjabi:
         exit(1)
     }
     print("Punjabi model installed")
+case .transcribePunjabi:
+    guard let path = arguments.dropFirst().first else {
+        fputs("Usage: speak transcribe-punjabi /absolute/path/to/audio\n", stderr)
+        exit(2)
+    }
+    do {
+        let transcript = try await FileTranscriber.transcribe(
+            fileURL: URL(fileURLWithPath: path), language: .punjabi, route: .local
+        )
+        print(transcript.text)
+    } catch {
+        fputs("Punjabi transcription failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
 case .status, .history, .start, .stop, .transcribe:
     let client = UnixSocketAutomationClient(socketPath: SaysoAutomationEndpoint.socketPath)
     let request: AutomationRequest
@@ -37,7 +52,7 @@ case .status, .history, .start, .stop, .transcribe:
             exit(2)
         }
         request = .init(command: .transcribeFile, path: URL(fileURLWithPath: path).path)
-    case .installPunjabi:
+    case .installPunjabi, .transcribePunjabi:
         fatalError("Handled above")
     }
     do {
