@@ -995,6 +995,7 @@ final class SaysoAppModel: ObservableObject {
             )
             reprocessed.audioFileURL = audioFileURL
             let completed = await translated(reprocessed, settings: settingsSnapshot)
+            try Task.checkCancellation()
             guard !completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw SaysoError.invalidAction("No speech detected.")
             }
@@ -1009,6 +1010,9 @@ final class SaysoAppModel: ObservableObject {
             lastTranscript = completed
             setTranscriptCompletionNotice("Reprocessed transcript saved as a new history item.")
             transcriptProcessingNotice = nil
+        } catch is CancellationError {
+            transcriptProcessingNotice = nil
+            notice = "History audio reprocess cancelled."
         } catch {
             transcriptProcessingNotice = nil
             notice = "Could not reprocess saved audio: \(error.localizedDescription)"
@@ -1030,7 +1034,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func importHistoryAudio(_ sourceURLs: [URL]) async {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning, !isClearingHistory else {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
             notice = "Finish the current history audio task before importing."
             return
         }
@@ -1057,8 +1061,11 @@ final class SaysoAppModel: ObservableObject {
             }
             var copiedURL: URL?
             do {
-                let importedURL = try SessionAudioArchive.importRecording(from: sourceURL)
+                let importedURL = try await Task.detached(priority: .userInitiated) {
+                    try SessionAudioArchive.importRecording(from: sourceURL)
+                }.value
                 copiedURL = importedURL
+                try Task.checkCancellation()
                 var transcript = try await FileTranscriber.transcribe(
                     fileURL: importedURL,
                     language: settingsSnapshot.language,
@@ -1066,6 +1073,7 @@ final class SaysoAppModel: ObservableObject {
                 )
                 transcript.audioFileURL = importedURL
                 let completed = await translated(transcript, settings: settingsSnapshot)
+                try Task.checkCancellation()
                 guard !completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw SaysoError.invalidAction("No speech detected.")
                 }
@@ -1132,7 +1140,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func clearHistory() async -> Bool {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning, !isClearingHistory else {
             notice = "Finish the current history audio task before clearing history."
             return false
         }
