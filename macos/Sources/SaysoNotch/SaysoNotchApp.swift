@@ -33,7 +33,8 @@ final class SaysoAppModel: ObservableObject {
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
 
     let permissions = PermissionCenter()
-    let transcriber = LiveTranscriber()
+    let transcriber: LiveTranscriber
+    let localEnglishModel: FluidAudioLocalModelManager
     let speech = SpeechOutput()
     let history = HistoryStore()
     let sessions = RecordingSessionStore()
@@ -52,6 +53,9 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
 
     init() {
+        let localEnglishModel = FluidAudioLocalModelManager()
+        self.localEnglishModel = localEnglishModel
+        transcriber = LiveTranscriber(fluidAudioModels: localEnglishModel)
         var saved = UserDefaultsSettingsStore().load()
         if !saved.route.supportsDictation { saved.route = .local }
         if CommandLine.arguments.contains("--automation-server") {
@@ -147,11 +151,13 @@ final class SaysoAppModel: ObservableObject {
             failActiveSession(notice ?? "Microphone access denied")
             return false
         }
-        await permissions.request(.speechRecognition)
-        guard permissions.states[.speechRecognition] == .granted else {
-            notice = "Speech Recognition access is required before Sayso can transcribe."
-            failActiveSession(notice ?? "Speech Recognition access denied")
-            return false
+        if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
+            await permissions.request(.speechRecognition)
+            guard permissions.states[.speechRecognition] == .granted else {
+                notice = "Speech Recognition access is required before Sayso can transcribe."
+                failActiveSession(notice ?? "Speech Recognition access denied")
+                return false
+            }
         }
         let started = await transcriber.start(
                 language: settings.language,
@@ -838,7 +844,13 @@ private struct LanguageWorkspace: View {
 
 private struct ModelsWorkspace: View {
     @ObservedObject var model: SaysoAppModel
+    @ObservedObject private var localEnglishModel: FluidAudioLocalModelManager
     @State private var apiKey = ""
+
+    init(model: SaysoAppModel) {
+        self.model = model
+        _localEnglishModel = ObservedObject(wrappedValue: model.localEnglishModel)
+    }
 
     var body: some View {
         Form {
@@ -865,6 +877,33 @@ private struct ModelsWorkspace: View {
                     }
                 }
             }
+            Section("Native English model") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(FluidAudioLocalModelManager.displayName).fontWeight(.semibold)
+                        Text("On-device English streaming. Apple silicon only. About 430 MB.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(localModelStatus)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(localEnglishModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                }
+                if case .installing = localEnglishModel.state {
+                    ProgressView(value: localEnglishModel.downloadProgress)
+                }
+                if localEnglishModel.state.isInstalled {
+                    Button("Delete local model", role: .destructive) { localEnglishModel.delete() }
+                } else {
+                    Button("Download local English model") { Task { await localEnglishModel.install() } }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SaysoPalette.cobalt)
+                        .disabled(localEnglishModel.state == .installing)
+                }
+                if case let .failed(message) = localEnglishModel.state {
+                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+                }
+            }
             Section("Your provider") {
                 Text("Optional. Used only after explicit cloud consent. API key stays in Keychain.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -877,6 +916,15 @@ private struct ModelsWorkspace: View {
         .formStyle(.grouped)
         .navigationTitle("Models")
         .onChange(of: model.settings) { _, _ in model.save() }
+    }
+
+    private var localModelStatus: String {
+        switch localEnglishModel.state {
+        case .notInstalled: "Download required"
+        case .installing: "Downloading"
+        case .installed: "Ready"
+        case .failed: "Unavailable"
+        }
     }
 }
 
