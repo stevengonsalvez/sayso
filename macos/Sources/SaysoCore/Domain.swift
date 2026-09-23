@@ -189,21 +189,43 @@ public enum LexiconCorrections {
 }
 
 public enum VoiceEdits {
-    public static func apply(_ command: String, to transcript: String) -> String? {
+    public enum Outcome: Equatable {
+        case notCommand
+        case targetNotFound
+        case applied(String)
+    }
+
+    public static func outcome(_ command: String, to transcript: String) -> Outcome {
         let value = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = value.lowercased()
-        if lower.hasPrefix("sayso replace "), let range = lower.range(of: " with ") {
-            let source = String(value[value.index(value.startIndex, offsetBy: 14)..<range.lowerBound])
-            let replacement = String(value[range.upperBound...])
-            guard !source.isEmpty, !replacement.isEmpty else { return nil }
-            return transcript.replacingOccurrences(of: source, with: replacement, options: [.caseInsensitive])
+        if let source = commandPart(after: "sayso replace ", in: value),
+           let divider = source.range(of: " with ", options: .caseInsensitive) {
+            let target = String(source[..<divider.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let replacement = String(source[divider.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard !target.isEmpty, !replacement.isEmpty else { return .notCommand }
+            guard let match = transcript.range(of: target, options: .caseInsensitive) else {
+                return .targetNotFound
+            }
+            return .applied(transcript.replacingCharacters(in: match, with: replacement))
         }
-        if lower.hasPrefix("sayso delete ") {
-            let source = String(value.dropFirst(13)).trimmingCharacters(in: .whitespaces)
-            guard !source.isEmpty else { return nil }
-            return transcript.replacingOccurrences(of: source, with: "", options: [.caseInsensitive])
+        if let source = commandPart(after: "sayso delete ", in: value) {
+            let target = source.trimmingCharacters(in: .whitespaces)
+            guard !target.isEmpty else { return .notCommand }
+            guard let match = transcript.range(of: target, options: .caseInsensitive) else {
+                return .targetNotFound
+            }
+            return .applied(transcript.replacingCharacters(in: match, with: ""))
         }
-        return nil
+        return .notCommand
+    }
+
+    public static func apply(_ command: String, to transcript: String) -> String? {
+        guard case let .applied(edited) = outcome(command, to: transcript) else { return nil }
+        return edited
+    }
+
+    private static func commandPart(after prefix: String, in value: String) -> Substring? {
+        guard let range = value.range(of: prefix, options: [.anchored, .caseInsensitive]) else { return nil }
+        return value[range.upperBound...]
     }
 }
 
