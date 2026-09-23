@@ -42,7 +42,7 @@ public enum HistoryFilter {
             case .translated:
                 transcript.hasTranslation
             case .recordings:
-                transcript.audioFileURL != nil
+                transcript.hasRecording
             }
         }
         guard !query.isEmpty else { return scoped }
