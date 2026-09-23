@@ -31,6 +31,8 @@ import Testing
     #expect(!settings.cleanupEnabled)
     #expect(!settings.cloudCleanupEnabled)
     #expect(settings.byokCleanupModel == "gpt-4.1-mini")
+    #expect(settings.speechVoiceIdentifier == nil)
+    #expect(settings.speechRate == 0.5)
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
