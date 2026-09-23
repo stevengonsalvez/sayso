@@ -156,6 +156,7 @@ interface SettingsStore {
     var bubbleY: Int
     var bubbleAlwaysVisible: Boolean
     var wakeWordEnabled: Boolean
+    var wakeWordPhrase: String get() = WAKE_PHRASE_BOTH; set(_) {}
     var appContextAwarenessEnabled: Boolean get() = true; set(_) {}
     var smartDictationModesEnabled: Boolean get() = true; set(_) {}
     var hasCompletedOnboarding: Boolean get() = false; set(_) {}
@@ -163,6 +164,12 @@ interface SettingsStore {
     var silenceTimeoutSeconds: Float get() = 1.8f; set(_) {}
     var transliterateIndicToLatin: Boolean get() = false; set(_) {}
     var autoLanguageRoutingEnabled: Boolean get() = false; set(_) {}
+
+    companion object {
+        const val WAKE_PHRASE_BOTH = "both"
+        const val WAKE_PHRASE_HEY = "hey_sayso"
+        const val WAKE_PHRASE_SAYSO = "sayso"
+    }
 }
 
 data class HistoryEntry(

@@ -4,6 +4,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -21,14 +22,22 @@ class ModelDownloadsTest {
 
     private class FakeDownloader(
         var installedResult: Boolean = false,
+        var hangDownload: Boolean = false,
     ) : LocalModelDownloader() {
         var downloadCallCount = 0
+        val downloadStarted = CompletableDeferred<Unit>()
+        val allowComplete = CompletableDeferred<Unit>()
 
         override fun isInstalled(model: LocalModel, modelsDir: File): Boolean = installedResult
 
-        override fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> {
+        override fun download(model: LocalModel, modelsDir: File, cacheDir: File): Flow<DownloadState> = flow {
             downloadCallCount++
-            return flowOf(DownloadState.Downloading(0.5f), DownloadState.Done)
+            emit(DownloadState.Downloading(0.5f))
+            if (hangDownload) {
+                downloadStarted.complete(Unit)
+                allowComplete.await()
+            }
+            emit(DownloadState.Done)
         }
     }
 
@@ -83,13 +92,17 @@ class ModelDownloadsTest {
 
     @Test
     fun `start does not deadlock onFinished when busy`() = runBlocking {
-        val fake = FakeDownloader()
+        val fake = FakeDownloader(hangDownload = true)
         val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
         val modelsDir = temp.newFolder("models")
         val cacheDir = temp.newFolder("cache")
 
         // First start
-        downloads.start(LocalModelCatalog.default, modelsDir, cacheDir) {}
+        val firstFinished = CompletableDeferred<Unit>()
+        downloads.start(LocalModelCatalog.default, modelsDir, cacheDir) {
+            firstFinished.complete(Unit)
+        }
+        fake.downloadStarted.await()
         assertTrue(downloads.busy)
 
         // Second start while busy
@@ -101,6 +114,10 @@ class ModelDownloadsTest {
         // Second start should immediately call onFinished and return
         withTimeout(5000) {
             secondFinished.await()
+        }
+        fake.allowComplete.complete(Unit)
+        withTimeout(5000) {
+            firstFinished.await()
         }
     }
 }

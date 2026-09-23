@@ -222,14 +222,22 @@
     <string name="onboarding_lang_tamil">Tamil</string>
     <string name="onboarding_lang_hindi">Hindi</string>
     <string name="onboarding_lang_malayalam">Malayalam</string>
-    <string name="onboarding_lang_all_indic">All / Multilingual</string>
+    <string name="onboarding_lang_primary_title">Primary Spoken Language</string>
+    <string name="onboarding_lang_primary_subtitle">Select your main dictation language. Sayso sets up the best model and dialect handling.</string>
+    <string name="onboarding_lang_ai4bharat_badge">★ Recommended: AI4Bharat is superior for Indian dialects &amp; Tanglish</string>
+    <string name="onboarding_lang_whisper_badge">Multilingual (English + Indic). Note: Lower dialect accuracy than AI4Bharat</string>
+    <string name="onboarding_lang_english_badge">★ Recommended: Fastest &amp; most accurate for English (Parakeet 110M)</string>
+    <string name="home_quick_language_title">SPOKEN LANGUAGE &amp; MODEL</string>
+    <string name="home_quick_language_desc">Switch languages instantly without digging into settings</string>
+    <string name="home_wake_word_title">Wake Word Detection</string>
+    <string name="home_wake_word_desc">Hands-free trigger: Say \"Hey Sayso\" anytime to dictate</string>
     <string name="onboarding_translit_title">How should Indian text appear?</string>
     <string name="onboarding_translit_subtitle">Choose how spoken words are formatted when you dictate:</string>
     <string name="onboarding_translit_latin_title">Tanglish / Hinglish / Manglish</string>
     <string name="onboarding_translit_latin_desc">Phonetic English letters</string>
     <string name="onboarding_translit_native_title">Native Script</string>
     <string name="onboarding_translit_native_desc">Traditional alphabet</string>
-    <string name="onboarding_model_recommendation_title">Recommended for your languages:</string>
+    <string name="onboarding_model_recommendation_title">Recommended for your language:</string>
     <string name="onboarding_stt_title">Choose your speech engine</string>
     <string name="onboarding_stt_subtitle">Sayso converts speech to text on-device for total privacy, or via cloud AI.</string>
     <string name="onboarding_stt_local_title">On-Device Neural Model</string>
@@ -291,4 +299,16 @@
     <string name="home_banner_model_needed_title">Voice Model Download Required</string>
     <string name="home_banner_model_needed_desc">To start dictating, download the on-device Parakeet speech model (104 MB) or configure a cloud API key.</string>
     <string name="home_banner_download_cta">Download Voice Model (104 MB)</string>
+
+    <!-- Settings Search -->
+    <string name="settings_search_placeholder">Search settings...</string>
+    <string name="settings_search_clear">Clear search</string>
+    <string name="settings_search_no_results">No settings match \"%1$s\"</string>
+
+    <!-- Wake Word Trigger Selection -->
+    <string name="wake_word_phrase_label">Change wake word</string>
+    <string name="wake_word_phrase_subtitle">Select hands-free trigger phrase</string>
+    <string name="wake_word_phrase_both">\"Hey Sayso\" or \"Sayso\" (Recommended)</string>
+    <string name="wake_word_phrase_hey_only">\"Hey Sayso\" only (Strict)</string>
+    <string name="wake_word_phrase_sayso_only">\"Sayso\" only (Fast)</string>
 </resources>

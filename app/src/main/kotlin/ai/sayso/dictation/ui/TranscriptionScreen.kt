@@ -12,12 +12,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +48,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.unit.sp
+import ai.sayso.dictation.core.SettingsStore
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -98,9 +106,11 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var history by remember { mutableStateOf(settings.historyEnabled) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
+    var wakeWordPhrase by remember { mutableStateOf(settings.wakeWordPhrase) }
     var autoStopSilence by remember { mutableStateOf(settings.autoStopSilenceEnabled) }
     var silenceTimeout by remember { mutableFloatStateOf(settings.silenceTimeoutSeconds) }
     var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
+    var transliterateIndicToLatin by remember { mutableStateOf(settings.transliterateIndicToLatin) }
     var modelsByProvider by remember { mutableStateOf(emptyMap<String, List<SttModel>>()) }
 
     // Leaving the screen with the keyboard still up never blurs the field, so the last edit
@@ -158,6 +168,19 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 }
             },
         )
+        if (wakeWord) {
+            WakeWordPhraseSelector(
+                selectedPhrase = wakeWordPhrase,
+                onSelectPhrase = { phrase ->
+                    wakeWordPhrase = phrase
+                    settings.wakeWordPhrase = phrase
+                    WakeWordService.updatePhrase(phrase)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
         SwitchRow(
             title = "Hands-free silence auto-stop",
             subtitle = "Automatically end recording when you pause speaking",
@@ -331,6 +354,9 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 ) { Text(stringResource(R.string.transcription_local_open)) }
             } else {
                 for (model in localModels) {
+                    val isIndic = model.id.contains("indicconformer")
+                    val isEnglishBest = model.id.contains("parakeet")
+                    val isWhisper = model.id.contains("whisper")
                     RadioRow(
                         title = model.displayName,
                         subtitle = model.note.takeIf { it.isNotBlank() },
@@ -339,6 +365,48 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                             selectedModel = model.id
                             settings.sttModelId = model.id
                             DictationService.instance?.reloadLocalModel()
+                        },
+                        trailing = {
+                            if (isIndic) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = Color(0xFFFEF3C7),
+                                ) {
+                                    Text(
+                                        text = "★ Best for Dialects",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB45309),
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            } else if (isEnglishBest) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                ) {
+                                    Text(
+                                        text = "★ Best for English",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            } else if (isWhisper) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                ) {
+                                    Text(
+                                        text = "Multilingual",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
                         },
                     )
                 }
@@ -424,6 +492,21 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 settings.language = it
             },
         )
+
+        val isIndic = language in listOf("ta", "hi", "ml", "te", "kn", "mr", "bn", "gu") || selectedModel.contains("indicconformer")
+        if (isIndic) {
+            TransliterationSettingsCard(
+                transliterateToLatin = transliterateIndicToLatin,
+                languageCode = language,
+                onToggle = { enabled ->
+                    transliterateIndicToLatin = enabled
+                    settings.transliterateIndicToLatin = enabled
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
 
         OutlinedTextField(
             value = hints,
@@ -623,6 +706,268 @@ private fun SttModelDropdown(
                         onSelect(model.id)
                     },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun WakeWordPhraseSelector(
+    selectedPhrase: String,
+    onSelectPhrase: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.wake_word_phrase_label),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = stringResource(R.string.wake_word_phrase_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            val options = listOf(
+                SettingsStore.WAKE_PHRASE_BOTH to stringResource(R.string.wake_word_phrase_both),
+                SettingsStore.WAKE_PHRASE_HEY to stringResource(R.string.wake_word_phrase_hey_only),
+                SettingsStore.WAKE_PHRASE_SAYSO to stringResource(R.string.wake_word_phrase_sayso_only),
+            )
+
+            for ((phraseKey, label) in options) {
+                val isSelected = selectedPhrase == phraseKey
+                Surface(
+                    onClick = { onSelectPhrase(phraseKey) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        if (isSelected) 1.5.dp else 1.dp,
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TransliterationSettingsCard(
+    transliterateToLatin: Boolean,
+    languageCode: String?,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val langTitle = when (languageCode) {
+        "hi" -> "Hinglish"
+        "ml" -> "Manglish"
+        "ta" -> "Tanglish"
+        else -> "Tanglish / Hinglish / Manglish"
+    }
+
+    val exampleLatin = when (languageCode) {
+        "hi" -> "Namaste, aap kaise hain?"
+        "ml" -> "Namaskaram, sugamano?"
+        "ta" -> "Vanakkam, eppadi irukkeenga?"
+        else -> "Vanakkam, eppadi irukkeenga?"
+    }
+
+    val exampleNative = when (languageCode) {
+        "hi" -> "नमस्ते, आप कैसे हैं?"
+        "ml" -> "നമസ്കാരം, സുഖമാണോ?"
+        "ta" -> "வணக்கம், எப்படி இருக்கீங்க?"
+        else -> "வணக்கம், எப்படி இருக்கீங்க?"
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Indic Transliteration ($langTitle)",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Choose how spoken words are formatted when you dictate in Indian languages",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = transliterateToLatin,
+                    onCheckedChange = onToggle,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Option 1: Tanglish / Hinglish / Manglish
+                Surface(
+                    onClick = { onToggle(true) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (transliterateToLatin) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                    border = BorderStroke(
+                        if (transliterateToLatin) 1.5.dp else 1.dp,
+                        if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = langTitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "English letters",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(6.dp)) {
+                                Text(
+                                    text = "Example:",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = "\"$exampleLatin\"",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontStyle = FontStyle.Italic,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Option 2: Native Script
+                Surface(
+                    onClick = { onToggle(false) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (!transliterateToLatin) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                    border = BorderStroke(
+                        if (!transliterateToLatin) 1.5.dp else 1.dp,
+                        if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                    ),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = if (!transliterateToLatin) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                                contentDescription = null,
+                                tint = if (!transliterateToLatin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.onboarding_translit_native_title),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Native script",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(6.dp)) {
+                                Text(
+                                    text = "Example:",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    text = "\"$exampleNative\"",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    fontStyle = FontStyle.Italic,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

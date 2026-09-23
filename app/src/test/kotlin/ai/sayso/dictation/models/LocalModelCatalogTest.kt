@@ -81,19 +81,30 @@ class LocalModelCatalogTest {
         assertEquals("ai4bharat-indicconformer-ta", LocalModelCatalog.resolveForLanguages(true, false, "ta").dirName)
         assertEquals("ai4bharat-indicconformer-hi", LocalModelCatalog.resolveForLanguages(true, false, "hi").dirName)
         assertEquals("ai4bharat-indicconformer-ml", LocalModelCatalog.resolveForLanguages(true, false, "ml").dirName)
-        assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.resolveForLanguages(true, false, "all").dirName)
+        assertEquals("ai4bharat-indicconformer-ta", LocalModelCatalog.resolveForLanguages(true, false, "all").dirName)
     }
 
     @Test
-    fun `resolveForLanguages routes to Whisper Tiny for foreign and mixed languages`() {
+    fun `resolveForLanguages prioritizes AI4Bharat when Indian language is selected`() {
+        assertEquals("ai4bharat-indicconformer-ta", LocalModelCatalog.resolveForLanguages(true, true, "ta").dirName)
+        assertEquals("ai4bharat-indicconformer-hi", LocalModelCatalog.resolveForLanguages(true, true, "hi").dirName)
+        assertEquals("ai4bharat-indicconformer-ml", LocalModelCatalog.resolveForLanguages(true, true, "ml").dirName)
+        assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.resolveForLanguages(true, true, "all").dirName)
         assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.resolveForLanguages(false, true, "en").dirName)
-        assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.resolveForLanguages(true, true, "ta").dirName)
-        assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.resolveForLanguages(true, true, "hi").dirName)
     }
 
     @Test
     fun `resolveForLanguages routes to Parakeet for default English only`() {
         assertEquals("sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8", LocalModelCatalog.resolveForLanguages(false, false).dirName)
+    }
+
+    @Test
+    fun `modelForLanguage directly resolves AI4Bharat for Indic codes and Parakeet for English`() {
+        assertEquals("ai4bharat-indicconformer-ta", LocalModelCatalog.modelForLanguage("ta").dirName)
+        assertEquals("ai4bharat-indicconformer-hi", LocalModelCatalog.modelForLanguage("hi").dirName)
+        assertEquals("ai4bharat-indicconformer-ml", LocalModelCatalog.modelForLanguage("ml").dirName)
+        assertEquals("sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8", LocalModelCatalog.modelForLanguage("en").dirName)
+        assertEquals("sherpa-onnx-whisper-tiny", LocalModelCatalog.modelForLanguage("multi").dirName)
     }
 }
 
