@@ -82,6 +82,7 @@ final class SaysoAppModel: ObservableObject {
     private let settingsStore = UserDefaultsSettingsStore()
     private let hotKeyEngine = HotKeyEngine()
     private let notch: NotchPanelController
+    private let launchDate = Date()
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
     private var dictationDestination: TextOutput.Destination?
@@ -134,7 +135,7 @@ final class SaysoAppModel: ObservableObject {
         if saved.desktopControlEnabled { startAutomation() }
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
         Task {
-            await history.reclaimUnreferencedAudio()
+            await history.reclaimUnreferencedAudio(olderThan: launchDate)
             controlEntries = await controlAudit.entries()
         }
     }
@@ -1371,10 +1372,10 @@ private struct HistoryWorkspace: View {
                         Button {
                             playback.toggle(entryID: entry.id, url: audioFileURL)
                         } label: {
-                            Image(systemName: playback.activeID == entry.id ? "pause.fill" : "play.fill")
+                            Image(systemName: playback.activeID == entry.id ? "stop.fill" : "play.fill")
                         }
                         .buttonStyle(.borderless)
-                        .accessibilityLabel(playback.activeID == entry.id ? "Pause recording" : "Play recording")
+                        .accessibilityLabel(playback.activeID == entry.id ? "Stop recording" : "Play recording")
                     }
                     Button {
                         deletionCandidate = entry
