@@ -164,6 +164,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
+    public var cleanupEnabled = false
     public var cloudCleanupEnabled = false
     public var byokCleanupModel = "gpt-4.1-mini"
     public var lexicon: [String: String] = [:]
@@ -183,7 +184,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage
         case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
-        case byokBaseURL, byokTranslationModel, byokRewriteModel, cloudCleanupEnabled, byokCleanupModel
+        case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold, dictationProfile
     }
 
@@ -211,6 +212,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
         byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
+        cleanupEnabled = decoded(Bool.self, .cleanupEnabled, fallback: cleanupEnabled)
         cloudCleanupEnabled = decoded(Bool.self, .cloudCleanupEnabled, fallback: cloudCleanupEnabled)
         byokCleanupModel = decoded(String.self, .byokCleanupModel, fallback: byokCleanupModel)
         lexicon = decoded([String: String].self, .lexicon, fallback: lexicon)
