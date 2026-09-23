@@ -68,6 +68,21 @@ import Testing
     #expect(ControlPolicy.canAutoRun(step))
 }
 
+@Test func controlOutcomeRequiresObservedEffect() {
+    let before = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "before", isProtected: false
+    )
+    let type = DesktopAction.type(text: "after", expectedFingerprint: before.fingerprint)
+    #expect(ControlOutcome.result(for: type, before: before, after: before) == "no observed text change")
+
+    let after = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "after", isProtected: false
+    )
+    #expect(ControlOutcome.result(for: type, before: before, after: after) == "observed text change")
+}
+
 @Test func controlPlannerGroundsTypeAgainstCurrentTarget() throws {
     let snapshot = DesktopSnapshot(
         processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
