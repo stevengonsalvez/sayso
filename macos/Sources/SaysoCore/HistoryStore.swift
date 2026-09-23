@@ -70,10 +70,10 @@ public actor HistoryStore {
     private let persistEntries: @Sendable (Data, URL) -> Bool
     private let persistJournal: @Sendable (Data, URL) -> Bool
 
-    /// A nil maximum retains complete history. Managed deployments may opt into a cap.
+    /// Pass nil to retain complete history. The production app opts in explicitly.
     public init(
         fileManager: FileManager = .default,
-        maximumEntries: Int? = nil,
+        maximumEntries: Int? = 500,
         persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write,
         persistJournal: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
@@ -91,7 +91,7 @@ public actor HistoryStore {
 
     public init(
         fileURL: URL,
-        maximumEntries: Int? = nil,
+        maximumEntries: Int? = 500,
         recordingsDirectory: URL? = nil,
         fileManager: FileManager = .default,
         persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write,
@@ -295,13 +295,14 @@ public actor HistoryStore {
     public static func write(_ data: Data, _ fileURL: URL) -> Bool {
         do {
             try data.write(to: fileURL, options: .atomic)
-            let handle = try FileHandle(forWritingTo: fileURL)
-            defer { try? handle.close() }
-            try handle.synchronize()
-            return true
         } catch {
             return false
         }
+        if let handle = try? FileHandle(forWritingTo: fileURL) {
+            defer { try? handle.close() }
+            try? handle.synchronize()
+        }
+        return true
     }
 
     private func load() -> LoadResult {
@@ -326,7 +327,11 @@ public actor HistoryStore {
                 unlessReferencedBy: entries
             )
             if case let .entries(previousEntries) = snapshot {
-                releaseManagedAudio(previousEntries.map(\.audioFileURL), unlessReferencedBy: entries)
+                releaseManagedAudio(
+                    previousEntries.map(\.audioFileURL),
+                    retaining: recoverableAudioURLs(),
+                    unlessReferencedBy: entries
+                )
             }
         }
         return .entries(entries)
