@@ -290,7 +290,7 @@ public actor HistoryStore {
     }
 
     private static let recordingNamePattern = try! NSRegularExpression(
-        pattern: #"(?i)\bRecording-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:m4a|caf)\b"#
+        pattern: #"(?i)\b(?:Recording|Imported)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:m4a|caf|wav|mp3|aif|aiff|mp4)\b"#
     )
 
     private func clearMissingAudioReference(in transcript: inout Transcript) {
