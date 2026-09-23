@@ -1692,8 +1692,9 @@ private struct HistoryWorkspace: View {
                 availableRecordingIDs: availableRecordingIDs
             )
             let insights = HistoryInsights.make(from: displayedEntries)
+            let isFiltered = scope != .all || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             HStack(spacing: 24) {
-                Label("\(insights.entries) \(scope == .all ? "entries" : "matching")", systemImage: "text.quote")
+                Label("\(insights.entries) \(isFiltered ? "matching" : "entries")", systemImage: "text.quote")
                 Label("\(insights.words) words", systemImage: "textformat")
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
