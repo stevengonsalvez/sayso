@@ -159,6 +159,9 @@ final class SaysoAppModel: ObservableObject {
                 handsFree: settings.handsFree,
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in self?.handleVoiceModeSwitch(text) }
+                },
+                onTermination: { [weak self] termination in
+                    Task { @MainActor [weak self] in self?.handleTranscriptionTermination(termination) }
                 }
             ) { [weak self] transcript in
                 Task { @MainActor [weak self] in
@@ -257,6 +260,18 @@ final class SaysoAppModel: ObservableObject {
         updateActiveSession { $0.fail(message) }
         activeRecordingSession = nil
         dictationDestination = nil
+    }
+
+    private func handleTranscriptionTermination(_ termination: TranscriptionTermination) {
+        guard activeRecordingSession != nil else { return }
+        switch termination {
+        case .cancelled:
+            updateActiveSession { $0.transition(to: .cancelled) }
+            activeRecordingSession = nil
+            dictationDestination = nil
+        case let .failed(message):
+            failActiveSession(message)
+        }
     }
 
     func switchMode(_ mode: SaysoMode) {
