@@ -46,6 +46,11 @@ final class NotchPanelController {
             dismiss: { [weak self] in self?.dismiss() },
             openApp: { model.showMainWindow() },
             openSettings: { model.openSettings() },
+            togglePresentation: {
+                model.setOverlayPresentation(
+                    model.settings.overlayPresentation == .notch ? .floating : .notch
+                )
+            },
             quit: { model.quit() }
         ))
         panel.orderFrontRegardless()
@@ -93,7 +98,9 @@ final class NotchPanelController {
         } else {
             notchBounds = nil
         }
-        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
+        let compactWidth = model?.settings.overlayPresentation == .floating
+            ? 320
+            : notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
@@ -129,6 +136,7 @@ private struct NotchHUD: View {
     let dismiss: () -> Void
     let openApp: () -> Void
     let openSettings: () -> Void
+    let togglePresentation: () -> Void
     let quit: () -> Void
 
     var body: some View {
@@ -160,6 +168,11 @@ private struct NotchHUD: View {
                     .frame(width: 28, height: 28)
 
                     Spacer(minLength: 8)
+                    NotchIconButton(
+                        model.settings.overlayPresentation == .notch ? "rectangle.on.rectangle" : "menubar.rectangle",
+                        label: model.settings.overlayPresentation == .notch ? "Detach widget" : "Attach to notch",
+                        action: togglePresentation
+                    )
                     NotchIconButton("macwindow", label: "Open Sayso", action: openApp)
                     NotchIconButton("gearshape", label: "Open settings", action: openSettings)
                     NotchIconButton("chevron.up", label: "Collapse notch", action: toggle)
