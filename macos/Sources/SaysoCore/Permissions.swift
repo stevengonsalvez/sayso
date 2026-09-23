@@ -42,6 +42,12 @@ public enum PermissionState: Sendable {
     case unavailable
 }
 
+enum PermissionInteraction: Equatable, Sendable {
+    case none
+    case nativePrompt
+    case systemSettings
+}
+
 private final class PermissionRefreshObserver: @unchecked Sendable {
     let token: NSObjectProtocol
 
@@ -84,47 +90,93 @@ public final class PermissionCenter: ObservableObject {
         case .notDetermined: .undetermined
         @unknown default: .unavailable
         }
-        let accessibilityGranted = AXIsProcessTrusted()
-        states[.accessibility] = accessibilityGranted ? .granted : .denied
-        // Accessibility also grants the event-listening capability required by a
-        // global monitor. Otherwise, use the public preflight without prompting.
-        states[.inputMonitoring] = CGPreflightListenEventAccess() || accessibilityGranted ? .granted : .denied
+        states[.accessibility] = AXIsProcessTrusted() ? .granted : .denied
+        // Report the Input Monitoring grant itself, not a capability implied by
+        // another permission, so each row reflects its own System Settings toggle.
+        states[.inputMonitoring] = CGPreflightListenEventAccess() ? .granted : .denied
     }
 
+    /// Resolves a permission for a flow that is already underway, such as
+    /// dictation. Decided permissions return immediately without activating
+    /// Sayso or opening System Settings, so the user's target app keeps focus.
+    /// Only an undetermined microphone or speech grant shows the native prompt.
+    public func authorize(_ kind: PermissionKind) async -> PermissionState {
+        refresh()
+        guard Self.interaction(for: kind, state: states[kind]) == .nativePrompt else {
+            return states[kind] ?? .unavailable
+        }
+        await prompt(kind)
+        return states[kind] ?? .unavailable
+    }
+
+    /// Explicit request from the permission UI. Prompts when undetermined,
+    /// otherwise opens the matching System Settings pane when not granted.
     public func request(_ kind: PermissionKind) async {
         refresh()
+        switch Self.interaction(for: kind, state: states[kind]) {
+        case .none:
+            return
+        case .nativePrompt:
+            await prompt(kind)
+            return
+        case .systemSettings:
+            break
+        }
+        switch kind {
+        case .microphone, .speechRecognition:
+            break
+        case .accessibility:
+            // Registers Sayso in the Accessibility list; the grant itself is manual.
+            AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+        case .inputMonitoring:
+            _ = CGRequestListenEventAccess()
+        }
+        openSettings(for: kind)
+        // Settings grants happen outside Sayso and may not reactivate it, so
+        // keep polling until the grant lands or the bound expires.
+        await pollUntil(kind, attempts: 120) { $0 == .granted }
+    }
+
+    nonisolated static func interaction(for kind: PermissionKind, state: PermissionState?) -> PermissionInteraction {
+        if case .granted? = state { return .none }
+        switch kind {
+        case .microphone, .speechRecognition:
+            if case .undetermined? = state { return .nativePrompt }
+            return .systemSettings
+        case .accessibility, .inputMonitoring:
+            return .systemSettings
+        }
+    }
+
+    nonisolated static func needsSystemPrompt(_ kind: PermissionKind, state: PermissionState?) -> Bool {
+        interaction(for: kind, state: state) == .nativePrompt
+    }
+
+    private func prompt(_ kind: PermissionKind) async {
+        // Native TCC sheets attach to the active app.
         NSApplication.shared.activate(ignoringOtherApps: true)
         await Task.yield()
         switch kind {
         case .microphone:
-            if states[.microphone] == .undetermined {
-                _ = await AVCaptureDevice.requestAccess(for: .audio)
-            } else if states[.microphone] == .denied {
-                openSettings(for: kind)
-            }
+            _ = await AVCaptureDevice.requestAccess(for: .audio)
         case .speechRecognition:
-            if states[.speechRecognition] == .undetermined {
-                _ = await withCheckedContinuation { continuation in
-                    SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
-                }
-            } else if states[.speechRecognition] == .denied {
-                openSettings(for: kind)
+            _ = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
             }
-        case .accessibility:
-            AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-            openSettings(for: kind)
-        case .inputMonitoring:
-            _ = CGRequestListenEventAccess()
-            openSettings(for: kind)
+        case .accessibility, .inputMonitoring:
+            return
         }
-        // TCC can lag its sheet completion. Keep the displayed state aligned with
-        // the actual system grant, without leaving the request UI stale.
-        for _ in 0 ..< 20 {
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(100))
+        // TCC can report the prior state briefly after its sheet closes.
+        await pollUntil(kind, attempts: 20) { $0 != .undetermined }
+    }
+
+    private func pollUntil(_ kind: PermissionKind, attempts: Int, _ done: (PermissionState?) -> Bool) async {
+        for _ in 0 ..< attempts {
             refresh()
-            if states[kind] != .undetermined { break }
+            if done(states[kind]) || Task.isCancelled { return }
+            try? await Task.sleep(for: .milliseconds(250))
         }
+        refresh()
     }
 
     private func openSettings(for kind: PermissionKind) {
