@@ -26,9 +26,12 @@ public enum HistoryFilter {
     public static func matching(
         _ entries: [Transcript],
         query: String,
-        scope: HistoryScope = .all
+        scope: HistoryScope = .all,
+        availableRecordingIDs: Set<Transcript.ID>? = nil
     ) -> [Transcript] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recordingIDs = availableRecordingIDs
+            ?? Set(entries.compactMap { $0.audioFileURL == nil ? nil : $0.id })
         let scoped = entries.filter { transcript in
             switch scope {
             case .all:
@@ -42,7 +45,7 @@ public enum HistoryFilter {
             case .translated:
                 transcript.hasTranslation
             case .recordings:
-                transcript.hasRecording
+                recordingIDs.contains(transcript.id)
             }
         }
         guard !query.isEmpty else { return scoped }
