@@ -1,6 +1,11 @@
 import AVFoundation
 import Speech
 
+public enum TranscriptionTermination: Equatable, Sendable {
+    case cancelled
+    case failed(String)
+}
+
 public enum SpeechCapabilities {
     public static func supports(_ language: DictationLanguage) -> Bool {
         guard let identifier = language.localeIdentifier else { return true }
@@ -20,6 +25,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var recognizer: SFSpeechRecognizer?
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
+    private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
     private var activeLanguage: DictationLanguage = .automatic
     private var activeRoute: ProviderRoute = .appleSpeech
     private var handsFree = false
@@ -34,6 +40,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         route: ProviderRoute,
         handsFree: Bool = false,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
+        onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
     ) async -> Bool {
         guard route.supportsDictation else {
@@ -60,6 +67,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         self.recognizer = recognizer
         self.onFinal = onFinal
         self.onPartial = onPartial
+        self.onTermination = onTermination
         activeLanguage = language
         activeRoute = route
         self.handsFree = handsFree
@@ -123,8 +131,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         silenceTask?.cancel()
         recognitionTask = nil
         recognitionRequest = nil
-        if !partialText.isEmpty { finish(text: partialText, language: activeLanguage, route: activeRoute) }
-        else { phase = .idle }
+        if !partialText.isEmpty {
+            finish(text: partialText, language: activeLanguage, route: activeRoute)
+        } else {
+            phase = .idle
+            terminate(.cancelled)
+        }
     }
 
     private func observeAudio(level: Float) {
@@ -145,11 +157,20 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onFinal?(transcript)
         onFinal = nil
         onPartial = nil
+        onTermination = nil
     }
 
     private func fail(_ error: SaysoError) {
         self.error = error
         phase = .failed
+        terminate(.failed(error.localizedDescription))
+    }
+
+    private func terminate(_ termination: TranscriptionTermination) {
+        onTermination?(termination)
+        onFinal = nil
+        onPartial = nil
+        onTermination = nil
     }
 
     private func microphoneAuthorized() async -> Bool {
