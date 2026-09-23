@@ -221,7 +221,7 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
     let transcript = Transcript(text: "Recovered append", language: .english, route: .local, isFinal: true, audioFileURL: appendedAudioURL)
 
-    #expect(await store.append(transcript))
+    #expect(await store.appendResult(transcript) == .recovered)
     let corruptBackups = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
         .filter { $0.lastPathComponent.hasPrefix("history.json.corrupt-") }
     #expect(corruptBackups.count == 1)
@@ -259,6 +259,23 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
 
     #expect(await store.append(.init(text: "Recovered", language: .english, route: .local, isFinal: true)))
+    await store.reclaimUnreferencedAudio(olderThan: Date().addingTimeInterval(1))
+
+    #expect(FileManager.default.fileExists(atPath: retainedAudioURL.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedAudioURL.path))
+}
+
+@Test func corruptHistoryRecoveryRetainsAudioNamedInUnreadableBackup() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("InjectedRecordings", isDirectory: true)
+    let retainedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let orphanedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    try Data("truncated \(retainedAudioURL.lastPathComponent) history".utf8).write(to: historyURL)
+    let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+
+    #expect(await store.appendResult(.init(text: "Recovered", language: .english, route: .local, isFinal: true)) == .recovered)
     await store.reclaimUnreferencedAudio(olderThan: Date().addingTimeInterval(1))
 
     #expect(FileManager.default.fileExists(atPath: retainedAudioURL.path))
