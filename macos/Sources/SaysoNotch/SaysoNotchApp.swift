@@ -67,6 +67,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var reprocessingHistoryID: UUID?
     @Published private(set) var isImportingHistoryAudio = false
     @Published private(set) var isClearingHistory = false
+    @Published private(set) var isHistoryAudioTaskRunning = false
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
@@ -101,6 +102,7 @@ final class SaysoAppModel: ObservableObject {
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
     private var controlPreparationID: UUID?
+    private var historyAudioTask: Task<Void, Never>?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
     private var onboardingTestSessionID: UUID?
@@ -315,7 +317,7 @@ final class SaysoAppModel: ObservableObject {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
         }
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil else {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning else {
             return .rejected(.alreadyRecording, "Finish the current history audio task before dictating.")
         }
         guard settings.route.supportsDictation else {
@@ -1013,8 +1015,22 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func startReprocessingHistory(_ entry: Transcript) {
+        guard !isHistoryAudioTaskRunning else {
+            notice = "Finish the current history audio task before reprocessing."
+            return
+        }
+        isHistoryAudioTaskRunning = true
+        historyAudioTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isHistoryAudioTaskRunning = false }
+            await self.reprocessHistory(entry)
+            self.historyAudioTask = nil
+        }
+    }
+
     func importHistoryAudio(_ sourceURLs: [URL]) async {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning, !isClearingHistory else {
             notice = "Finish the current history audio task before importing."
             return
         }
@@ -1031,6 +1047,10 @@ final class SaysoAppModel: ObservableObject {
         var processingWarnings = Set<String>()
 
         for sourceURL in sourceURLs {
+            guard !Task.isCancelled else {
+                notice = "History audio import cancelled."
+                return
+            }
             let accessed = sourceURL.startAccessingSecurityScopedResource()
             defer {
                 if accessed { sourceURL.stopAccessingSecurityScopedResource() }
@@ -1061,6 +1081,13 @@ final class SaysoAppModel: ObservableObject {
                 }
                 transcriptProcessingNotice = nil
                 importedCount += 1
+            } catch is CancellationError {
+                if let copiedURL {
+                    SessionAudioArchive.deleteManagedRecording(copiedURL)
+                }
+                transcriptProcessingNotice = nil
+                notice = "History audio import cancelled."
+                return
             } catch {
                 if let copiedURL {
                     SessionAudioArchive.deleteManagedRecording(copiedURL)
@@ -1082,6 +1109,26 @@ final class SaysoAppModel: ObservableObject {
         default:
             notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be imported: \(lastFailure ?? "Unknown error").\(processingWarningSuffix)"
         }
+    }
+
+    func startImportHistoryAudio(_ sourceURLs: [URL]) {
+        guard !isHistoryAudioTaskRunning else {
+            notice = "Finish the current history audio task before importing."
+            return
+        }
+        isHistoryAudioTaskRunning = true
+        historyAudioTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.isHistoryAudioTaskRunning = false }
+            await self.importHistoryAudio(sourceURLs)
+            self.historyAudioTask = nil
+        }
+    }
+
+    func cancelHistoryAudioTask() {
+        guard isHistoryAudioTaskRunning, let historyAudioTask else { return }
+        historyAudioTask.cancel()
+        notice = "Cancelling history audio task."
     }
 
     func clearHistory() async -> Bool {
@@ -1626,10 +1673,13 @@ private struct HistoryWorkspace: View {
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
                 Button("Import audio") { isImportingAudio = true }
-                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
+                    .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
+                if model.isHistoryAudioTaskRunning {
+                    Button("Cancel audio task", role: .cancel) { model.cancelHistoryAudioTask() }
+                }
                 Button("Copy all history") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
                 Button("Clear all history", role: .destructive) { confirmClear = true }
-                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
+                    .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
             }
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal)
             TextField("Search words, translations, language, or route", text: $query)
@@ -1646,14 +1696,17 @@ private struct HistoryWorkspace: View {
                        FileManager.default.fileExists(atPath: audioFileURL.path) {
                         Button {
                             Task {
-                                await model.reprocessHistory(entry)
+                                model.startReprocessingHistory(entry)
+                                while model.isHistoryAudioTaskRunning {
+                                    try? await Task.sleep(for: .milliseconds(100))
+                                }
                                 entries = await model.history.all()
                             }
                         } label: {
                             Image(systemName: model.reprocessingHistoryID == entry.id ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(model.reprocessingHistoryID != nil || model.isImportingHistoryAudio || model.isClearingHistory)
+                        .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
                         .accessibilityLabel("Reprocess recording")
                         Button {
                             playback.toggle(entryID: entry.id, url: audioFileURL)
@@ -1669,6 +1722,7 @@ private struct HistoryWorkspace: View {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.borderless)
+                    .disabled(model.reprocessingHistoryID == entry.id || model.isClearingHistory)
                     .accessibilityLabel("Delete transcript")
                 }
             }
@@ -1684,7 +1738,10 @@ private struct HistoryWorkspace: View {
             switch result {
             case let .success(urls):
                 Task {
-                    await model.importHistoryAudio(urls)
+                    model.startImportHistoryAudio(urls)
+                    while model.isHistoryAudioTaskRunning {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
                     entries = await model.history.all()
                 }
             case .failure:
@@ -1698,12 +1755,12 @@ private struct HistoryWorkspace: View {
                     if await model.clearHistory() {
                         entries = []
                         model.lastTranscript = nil
-                    } else if !model.isImportingHistoryAudio, model.reprocessingHistoryID == nil {
+                    } else if !model.isHistoryAudioTaskRunning, !model.isClearingHistory {
                         model.notice = "Could not clear saved history."
                     }
                 }
             }
-            .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
+            .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts and retained audio from this Mac.") }
         .alert("Delete transcript?", isPresented: Binding(
