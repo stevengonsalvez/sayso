@@ -8,6 +8,7 @@ import Testing
     #expect(allIDs.count == Set(allIDs).count)
     #expect(LocalModelCatalog.all.filter(\.isRecommended).map(\.id) == [
         "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8",
+        "ai4bharat-indicconformer-pa",
     ])
     for model in LocalModelCatalog.all {
         #expect(!model.displayName.isEmpty)
@@ -28,6 +29,7 @@ import Testing
     #expect(LocalModelCatalog.recommendedModel(for: .tamil).id == "ai4bharat-indicconformer-ta")
     #expect(LocalModelCatalog.recommendedModel(for: .hindi).id == "ai4bharat-indicconformer-hi")
     #expect(LocalModelCatalog.recommendedModel(for: .malayalam).id == "ai4bharat-indicconformer-ml")
+    #expect(LocalModelCatalog.recommendedModel(for: .punjabi).id == "ai4bharat-indicconformer-pa")
     #expect(LocalModelCatalog.recommendedModel(for: .telugu).id == "sherpa-onnx-whisper-tiny")
     #expect(LocalModelCatalog.recommendedModel(for: .automatic).id == "sherpa-onnx-whisper-tiny")
 }
