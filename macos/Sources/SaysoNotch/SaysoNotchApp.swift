@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import SaysoCore
 import SpeakUpstreamBridge
 import SwiftUI
@@ -53,6 +54,7 @@ final class SaysoAppModel: ObservableObject {
     private var activeRecordingSession: RecordingSession?
     private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
+    private var permissionsChangeObserver: AnyCancellable?
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
@@ -75,6 +77,9 @@ final class SaysoAppModel: ObservableObject {
         settings = saved
         dictationHotKey = Self.loadDictationHotKey()
         notch = NotchPanelController()
+        permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.startOrStopDictation()
         }
@@ -237,14 +242,22 @@ final class SaysoAppModel: ObservableObject {
             runControl(transcript.text)
             return
         }
-        if let current = lastTranscript, let edited = VoiceEdits.apply(transcript.text, to: current.translatedText ?? current.text) {
-            var updated = current
-            updated.text = edited
-            updated.translatedText = nil
-            lastTranscript = updated
-            Task { await history.append(updated) }
-            notice = "Voice edit applied."
-            return
+        if let current = lastTranscript {
+            switch VoiceEdits.outcome(transcript.text, to: current.translatedText ?? current.text) {
+            case let .applied(edited):
+                var updated = current
+                updated.text = edited
+                updated.translatedText = nil
+                lastTranscript = updated
+                Task { await history.append(updated) }
+                notice = "Voice edit applied."
+                return
+            case .targetNotFound:
+                notice = "Voice edit target was not found."
+                return
+            case .notCommand:
+                break
+            }
         }
         updateActiveSession { $0.transition(to: .processing) }
         Task {
