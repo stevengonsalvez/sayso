@@ -36,6 +36,7 @@ final class SaysoAppModel: ObservableObject {
     let transcriber = LiveTranscriber()
     let speech = SpeechOutput()
     let history = HistoryStore()
+    let sessions = RecordingSessionStore()
     let controller = AXDesktopController()
     let controlAudit = ControlAuditStore()
     let secrets = KeychainSecretStore()
@@ -46,6 +47,7 @@ final class SaysoAppModel: ObservableObject {
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
     private var dictationDestination: TextOutput.Destination?
+    private var activeRecordingSession: RecordingSession?
     private var workspaceObserver: NSObjectProtocol?
 
     init() {
@@ -131,14 +133,23 @@ final class SaysoAppModel: ObservableObject {
         dictationDestination = settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
+        let session = RecordingSession(
+            language: settings.language,
+            route: settings.route,
+            destination: dictationDestination?.recordingDestination
+        )
+        activeRecordingSession = session
+        await sessions.upsert(session)
         await permissions.request(.microphone)
         guard permissions.states[.microphone] == .granted else {
             notice = "Microphone access is required before Sayso can listen."
+            failActiveSession(notice ?? "Microphone access denied")
             return false
         }
         await permissions.request(.speechRecognition)
         guard permissions.states[.speechRecognition] == .granted else {
             notice = "Speech Recognition access is required before Sayso can transcribe."
+            failActiveSession(notice ?? "Speech Recognition access denied")
             return false
         }
         let started = await transcriber.start(
@@ -154,7 +165,11 @@ final class SaysoAppModel: ObservableObject {
                     self.accept(transcript)
                 }
             }
-        guard started else { return false }
+        guard started else {
+            failActiveSession(transcriber.error?.localizedDescription ?? "Could not start dictation")
+            return false
+        }
+        updateActiveSession { $0.transition(to: .listening) }
         try? await Task.sleep(for: .milliseconds(250))
         return transcriber.phase == .listening
     }
@@ -173,6 +188,7 @@ final class SaysoAppModel: ObservableObject {
             notice = "Voice edit applied."
             return
         }
+        updateActiveSession { $0.transition(to: .processing) }
         Task {
             await finish(await translated(transcript))
         }
@@ -212,17 +228,34 @@ final class SaysoAppModel: ObservableObject {
         let finalText = transcript.translatedText ?? transcript.text
         let destination = dictationDestination
         dictationDestination = nil
+        let delivery: TextDeliveryMethod
         if settings.autoInsert {
-            let inserted = TextOutput.insertOrCopy(
+            delivery = TextOutput.insertOrCopy(
                 finalText,
                 destination: destination,
                 restoreClipboardAfterPaste: settings.restoreClipboardAfterPaste
             )
-            if !inserted { notice = "Final text copied to clipboard." }
         } else {
             TextOutput.copy(finalText)
+            delivery = .clipboard
         }
+        if delivery == .clipboard { notice = "Final text copied to clipboard." }
+        updateActiveSession { $0.complete(text: finalText, delivery: delivery) }
+        activeRecordingSession = nil
         notch.hideAfterDelay()
+    }
+
+    private func updateActiveSession(_ update: (inout RecordingSession) -> Void) {
+        guard var session = activeRecordingSession else { return }
+        update(&session)
+        activeRecordingSession = session
+        Task { await sessions.upsert(session) }
+    }
+
+    private func failActiveSession(_ message: String) {
+        updateActiveSession { $0.fail(message) }
+        activeRecordingSession = nil
+        dictationDestination = nil
     }
 
     func switchMode(_ mode: SaysoMode) {
