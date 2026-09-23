@@ -964,8 +964,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func reprocessHistory(_ entry: Transcript) async {
-        guard reprocessingHistoryID == nil else {
-            notice = "Another saved recording is already being reprocessed."
+        guard reprocessingHistoryID == nil, !isImportingHistoryAudio else {
+            notice = "Finish the current history audio task before reprocessing."
             return
         }
         guard let audioFileURL = entry.audioFileURL,
@@ -985,6 +985,9 @@ final class SaysoAppModel: ObservableObject {
             )
             reprocessed.audioFileURL = audioFileURL
             let completed = await translated(reprocessed, settings: settingsSnapshot)
+            guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
+                throw SaysoError.unavailable("Saved audio was removed during reprocessing")
+            }
             guard await history.append(completed) else {
                 notice = "Reprocessed transcript could not save to history."
                 transcriptProcessingNotice = nil
@@ -1008,6 +1011,7 @@ final class SaysoAppModel: ObservableObject {
         defer { isImportingHistoryAudio = false }
         var importedCount = 0
         var failedCount = 0
+        var lastFailure: String?
 
         for sourceURL in sourceURLs {
             let accessed = sourceURL.startAccessingSecurityScopedResource()
@@ -1037,6 +1041,7 @@ final class SaysoAppModel: ObservableObject {
                 }
                 transcriptProcessingNotice = nil
                 failedCount += 1
+                lastFailure = error.localizedDescription
             }
         }
 
@@ -1046,7 +1051,7 @@ final class SaysoAppModel: ObservableObject {
         case (_, 0):
             notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files") into history."
         default:
-            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be transcribed."
+            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be imported: \(lastFailure ?? "Unknown error")"
         }
     }
 
@@ -1608,7 +1613,7 @@ private struct HistoryWorkspace: View {
                             Image(systemName: model.reprocessingHistoryID == entry.id ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(model.reprocessingHistoryID != nil)
+                        .disabled(model.reprocessingHistoryID != nil || model.isImportingHistoryAudio)
                         .accessibilityLabel("Reprocess recording")
                         Button {
                             playback.toggle(entryID: entry.id, url: audioFileURL)
@@ -1633,7 +1638,7 @@ private struct HistoryWorkspace: View {
         .onDisappear { playback.stop() }
         .fileImporter(
             isPresented: $isImportingAudio,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: [.mpeg4Audio, .wav, .mp3, .aiff, .mpeg4Movie, UTType(filenameExtension: "caf")!],
             allowsMultipleSelection: true
         ) { result in
             switch result {
