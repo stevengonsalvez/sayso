@@ -165,6 +165,9 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
     public var lexicon: [String: String] = [:]
+    public var legacyLexiconMigrated = false
+    public var autoCorrectionsEnabled = false
+    public var autoCorrectionsPromotionThreshold = 3
     public var dictationProfile: DictationProfile = .default
 
     public init() {}
@@ -179,7 +182,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel
-        case lexicon, dictationProfile
+        case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold, dictationProfile
     }
 
     public init(from decoder: any Decoder) throws {
@@ -207,6 +210,12 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
         byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
         lexicon = decoded([String: String].self, .lexicon, fallback: lexicon)
+        legacyLexiconMigrated = decoded(Bool.self, .legacyLexiconMigrated, fallback: legacyLexiconMigrated)
+        autoCorrectionsEnabled = decoded(Bool.self, .autoCorrectionsEnabled, fallback: autoCorrectionsEnabled)
+        autoCorrectionsPromotionThreshold = min(
+            max(decoded(Int.self, .autoCorrectionsPromotionThreshold, fallback: autoCorrectionsPromotionThreshold), 2),
+            10
+        )
         dictationProfile = decoded(DictationProfile.self, .dictationProfile, fallback: dictationProfile)
     }
 }
