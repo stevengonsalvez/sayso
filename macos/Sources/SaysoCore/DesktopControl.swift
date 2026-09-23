@@ -145,8 +145,10 @@ public struct InstalledDesktopApplication: Equatable, Sendable {
         guard standardizedURL.pathExtension.lowercased() == "app",
               (try? standardizedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
               fileManager.fileExists(atPath: standardizedURL.path),
-              let bundle = Bundle(url: standardizedURL),
-              bundle.bundleIdentifier == bundleIdentifier else { return false }
+              let data = try? Data(contentsOf: standardizedURL.appendingPathComponent("Contents/Info.plist")),
+              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let currentBundleIdentifier = info["CFBundleIdentifier"] as? String,
+              currentBundleIdentifier == bundleIdentifier else { return false }
         return true
     }
 }
@@ -636,7 +638,7 @@ public enum ControlPlanner {
         let normalized = trimmed.lowercased()
         if normalized.hasPrefix("open ") {
             let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            return !target.isEmpty && httpURL(target) == nil
+            return !target.isEmpty && httpURL(target) == nil && !looksLikeUnsupportedWebAddress(target)
         }
         if normalized.hasPrefix("switch to ") {
             return !String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces).isEmpty
