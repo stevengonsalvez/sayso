@@ -62,6 +62,14 @@ public actor ControlSession {
 
     @discardableResult
     public func start() -> ControlSessionState {
+        guard phase == .idle else { return state() }
+        return beginCommand()
+    }
+
+    /// Starts a deliberately new user command with its own bounded action budget.
+    /// Unlike `start()`, this is the only explicit path that may replace a terminal session.
+    @discardableResult
+    public func beginCommand() -> ControlSessionState {
         phase = .running
         result = nil
         actionCount = 0
