@@ -49,6 +49,14 @@ public actor HistoryStore {
         case unavailable
     }
 
+    private enum PersistResult {
+        case snapshot
+        case journaled
+        case failed
+
+        var didCommit: Bool { self != .failed }
+    }
+
     private let fileURL: URL
     private let walURL: URL
     private let recordingsDirectory: URL
@@ -164,7 +172,7 @@ public actor HistoryStore {
             expired = []
         }
         discarded += expired
-        guard persist(entries) else {
+        guard persist(entries).didCommit else {
             releaseManagedAudio(
                 [transcript.audioFileURL],
                 retaining: recovered ? recoverableAudioURLs() : [],
@@ -183,7 +191,7 @@ public actor HistoryStore {
         let removed = entries.filter { $0.id == id }
         let originalCount = entries.count
         entries.removeAll { $0.id == id }
-        guard entries.count != originalCount, persist(entries) else { return false }
+        guard entries.count != originalCount, persist(entries).didCommit else { return false }
         releaseManagedAudio(removed.map(\.audioFileURL), unlessReferencedBy: entries)
         return true
     }
@@ -191,9 +199,9 @@ public actor HistoryStore {
     @discardableResult
     public func clear() -> Bool {
         var succeeded = true
-        guard persist([]) else { return false }
+        guard persist([]).didCommit else { return false }
 
-        let historyFiles = ([fileURL, walURL] + corruptBackupURLs() + corruptWALBackupURLs())
+        let historyFiles = ([fileURL] + corruptBackupURLs())
             .filter { fileManager.fileExists(atPath: $0.path) }
         for url in Set(historyFiles.map(\.standardizedFileURL)) {
             do {
@@ -206,6 +214,19 @@ public actor HistoryStore {
         guard succeeded,
               !fileManager.fileExists(atPath: fileURL.path),
               corruptBackupURLs().isEmpty else {
+            return false
+        }
+        let walFiles = ([walURL] + corruptWALBackupURLs())
+            .filter { fileManager.fileExists(atPath: $0.path) }
+        for url in Set(walFiles.map(\.standardizedFileURL)) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                return false
+            }
+        }
+        guard !fileManager.fileExists(atPath: walURL.path),
+              corruptWALBackupURLs().isEmpty else {
             return false
         }
         SessionAudioArchive.deleteAllManagedRecordings(directory: recordingsDirectory, fileManager: fileManager)
@@ -238,11 +259,11 @@ public actor HistoryStore {
             .joined(separator: "\n\n")
     }
 
-    private func persist(_ entries: [Transcript]) -> Bool {
-        guard let data = try? JSONEncoder().encode(entries) else { return false }
-        guard writeWAL(data), persistEntries(data, fileURL) else { return false }
+    private func persist(_ entries: [Transcript]) -> PersistResult {
+        guard let data = try? JSONEncoder().encode(entries), writeWAL(data) else { return .failed }
+        guard persistEntries(data, fileURL) else { return .journaled }
         try? fileManager.removeItem(at: walURL)
-        return true
+        return .snapshot
     }
 
     public static func write(_ data: Data, _ fileURL: URL) -> Bool {
@@ -263,8 +284,8 @@ public actor HistoryStore {
             return snapshot
         }
 
-        if case .invalid = snapshot {
-            _ = preserveUnreadableHistory()
+        if case .invalid = snapshot, !preserveUnreadableHistory() {
+            return .entries(entries)
         }
         if persistEntries(data, fileURL) {
             try? fileManager.removeItem(at: walURL)
