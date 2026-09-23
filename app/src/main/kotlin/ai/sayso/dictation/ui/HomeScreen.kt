@@ -27,15 +27,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -48,13 +52,18 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontStyle
+import ai.sayso.dictation.core.SettingsStore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -107,6 +116,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
+    var wakeWordPhrase by remember { mutableStateOf(settings.wakeWordPhrase) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
     var installedIndicModels by remember { mutableStateOf(emptySet<String>()) }
@@ -115,6 +125,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var currentSttModelId by remember { mutableStateOf(settings.sttModelId) }
     var indicTransliteration by remember { mutableStateOf(settings.transliterateIndicToLatin) }
     var showLanguageDownloadDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     var sttSummary by remember { mutableStateOf("") }
     var cleanupSummary by remember { mutableStateOf<String?>(null) }
@@ -189,8 +200,21 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // 0. Model Required Setup Banner (Actionable CTA when model is missing)
-        if (!isSttReady) {
+        // Top Settings Search Bar
+        SettingsSearchBar(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+        )
+
+        if (searchQuery.isNotBlank()) {
+            SettingsSearchResults(
+                query = searchQuery,
+                onNavigate = onNavigate,
+                onOpenOnboarding = { showOnboarding = true },
+            )
+        } else {
+            // 0. Model Required Setup Banner (Actionable CTA when model is missing)
+            if (!isSttReady) {
             ModelRequiredBanner(
                 downloadState = downloads.state,
                 isDownloading = downloads.busy,
@@ -401,6 +425,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         // 3. Hands-Free & Overlay Controls Card
         HandsFreeControlsCard(
             wakeWord = wakeWord,
+            wakeWordPhrase = wakeWordPhrase,
             bubbleAlwaysVisible = bubbleAlwaysVisible,
             autoLanguageRouting = autoLanguageRouting,
             installedIndicCount = installedIndicModels.size,
@@ -418,6 +443,11 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                     AppGraph.settings.wakeWordEnabled = false
                     WakeWordService.stop(context)
                 }
+            },
+            onWakeWordPhraseChange = { phrase ->
+                wakeWordPhrase = phrase
+                AppGraph.settings.wakeWordPhrase = phrase
+                WakeWordService.restart(context)
             },
             onBubbleAlwaysVisibleChange = { enabled ->
                 bubbleAlwaysVisible = enabled
@@ -449,6 +479,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         )
 
         Spacer(Modifier.height(16.dp))
+        }
     }
 
     if (showOnboarding) {
@@ -1212,12 +1243,11 @@ private fun LanguageQuickSwitcherCard(
                     }
                 }
 
-                // Chips Row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                // Chips Flow Cloud (all visible on screen)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     for (opt in QUICK_LANG_OPTIONS) {
                         val isSelected = (!isCloud && opt.code == activeOption?.code && selectedOption.code == opt.code) || (isCloud && opt.code == selectedLangCode) || (!isTargetInstalled && opt.code == selectedOption.code)
@@ -1402,38 +1432,16 @@ private fun LanguageQuickSwitcherCard(
                     }
                 }
 
-                // Transliteration Toggle when Indic language is active
+                // Transliteration Toggle & Explanation when Indic language is active
                 if (selectedOption.isIndic) {
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = when (selectedOption.code) {
-                                    "ta" -> "Format as Tanglish (English letters)"
-                                    "hi" -> "Format as Hinglish (English letters)"
-                                    "ml" -> "Format as Manglish (English letters)"
-                                    else -> "Format as phonetic English letters"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = if (indicTransliteration) "e.g. \"epdi irukinga\" instead of native script" else "Types in traditional native alphabet",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = indicTransliteration,
-                            onCheckedChange = onTransliterationChange,
-                        )
-                    }
+                    HomeTransliterationExplanationSection(
+                        selectedOption = selectedOption,
+                        indicTransliteration = indicTransliteration,
+                        onTransliterationChange = onTransliterationChange,
+                    )
                 }
             }
         }
@@ -1443,10 +1451,12 @@ private fun LanguageQuickSwitcherCard(
 @Composable
 private fun HandsFreeControlsCard(
     wakeWord: Boolean,
+    wakeWordPhrase: String,
     bubbleAlwaysVisible: Boolean,
     autoLanguageRouting: Boolean,
     installedIndicCount: Int,
     onWakeWordChange: (Boolean) -> Unit,
+    onWakeWordPhraseChange: (String) -> Unit,
     onBubbleAlwaysVisibleChange: (Boolean) -> Unit,
     onAutoLanguageRoutingChange: (Boolean) -> Unit,
     onOpenLanguageDownload: () -> Unit,
@@ -1493,13 +1503,21 @@ private fun HandsFreeControlsCard(
                                 fontSize = 12.sp,
                             )
                             Text(
-                                text = "Active: Keyword Spotter listening for \"Hey Sayso\" or \"Sayso\" (on-device Sherpa-ONNX).",
+                                text = "Active: Keyword Spotter listening for chosen wake word phrase (on-device Sherpa-ONNX).",
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
                                 color = Color(0xFF14532D),
                             )
                         }
                     }
+
+                    WakeWordPhraseSelector(
+                        selectedPhrase = wakeWordPhrase,
+                        onSelectPhrase = onWakeWordPhraseChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
                 }
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -1963,6 +1981,513 @@ internal fun cleanupSummary(): String? {
     val id = AppGraph.settings.polishModelId
     val found = AppGraph.polish.find(id) ?: return id
     return "${found.first.displayName}: ${found.second.displayName}"
+}
+
+@Composable
+private fun HomeTransliterationExplanationSection(
+    selectedOption: QuickLangOption,
+    indicTransliteration: Boolean,
+    onTransliterationChange: (Boolean) -> Unit,
+) {
+    val langTitle = when (selectedOption.code) {
+        "hi" -> "Hinglish"
+        "ml" -> "Manglish"
+        "ta" -> "Tanglish"
+        else -> "Tanglish / Hinglish / Manglish"
+    }
+
+    val exampleLatin = when (selectedOption.code) {
+        "hi" -> "Namaste, aap kaise hain?"
+        "ml" -> "Namaskaram, sugamano?"
+        "ta" -> "Vanakkam, eppadi irukkeenga?"
+        else -> "Vanakkam, eppadi irukkeenga?"
+    }
+
+    val exampleNative = when (selectedOption.code) {
+        "hi" -> "नमस्ते, आप कैसे हैं?"
+        "ml" -> "നമസ്കാരം, സുഖമാണോ?"
+        "ta" -> "வணக்கம், எப்படி இருக்கீங்க?"
+        else -> "வணக்கம், எப்படி இருக்கீங்க?"
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Indic Transliteration ($langTitle)",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Format spoken ${selectedOption.label} into English letters or native script",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = indicTransliteration,
+                onCheckedChange = onTransliterationChange,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Option 1: Tanglish / Hinglish / Manglish
+            Surface(
+                onClick = { onTransliterationChange(true) },
+                shape = RoundedCornerShape(12.dp),
+                color = if (indicTransliteration) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                },
+                border = BorderStroke(
+                    if (indicTransliteration) 1.5.dp else 1.dp,
+                    if (indicTransliteration) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (indicTransliteration) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (indicTransliteration) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = langTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "English letters",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(6.dp)) {
+                            Text(
+                                text = "Example:",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                text = "\"$exampleLatin\"",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontStyle = FontStyle.Italic,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Option 2: Native Script
+            Surface(
+                onClick = { onTransliterationChange(false) },
+                shape = RoundedCornerShape(12.dp),
+                color = if (!indicTransliteration) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                },
+                border = BorderStroke(
+                    if (!indicTransliteration) 1.5.dp else 1.dp,
+                    if (!indicTransliteration) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                ),
+                modifier = Modifier.weight(1f),
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = if (!indicTransliteration) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (!indicTransliteration) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = stringResource(R.string.onboarding_translit_native_title),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "Native script",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.padding(6.dp)) {
+                            Text(
+                                text = "Example:",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                text = "\"$exampleNative\"",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontStyle = FontStyle.Italic,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        placeholder = {
+            Text(
+                text = stringResource(R.string.settings_search_placeholder),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Default.Clear,
+                        contentDescription = stringResource(R.string.settings_search_clear),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(16.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        ),
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+private data class SettingSearchItem(
+    val title: String,
+    val description: String,
+    val keywords: String,
+    val screen: Screen,
+    val badge: String,
+    val isSpecialOnboarding: Boolean = false,
+)
+
+private val SETTINGS_INDEX = listOf(
+    SettingSearchItem(
+        title = "Spoken Language",
+        description = "Change input language (Tamil, Hindi, Malayalam, English, and more)",
+        keywords = "spoken language tamil hindi malayalam english indian voice speech input",
+        screen = Screen.Transcription,
+        badge = "Voice",
+    ),
+    SettingSearchItem(
+        title = "Indic Transliteration",
+        description = "Output spoken Indian languages in Tanglish, Hinglish, Manglish or native script",
+        keywords = "transliteration tanglish hinglish manglish english letters native script tamil hindi malayalam alphabet",
+        screen = Screen.Transcription,
+        badge = "Voice",
+    ),
+    SettingSearchItem(
+        title = "Hands-Free Wake Word",
+        description = "Activate dictation by saying \"Hey Sayso\" without touching your phone",
+        keywords = "wake word hands free voice trigger hey sayso speech spotter sherpa",
+        screen = Screen.Transcription,
+        badge = "Hands-Free",
+    ),
+    SettingSearchItem(
+        title = "Change Wake Word",
+        description = "Choose trigger phrase: \"Hey Sayso\" or \"Sayso\", strict, or fast",
+        keywords = "change wake word trigger phrase hey sayso only strict fast keyword option",
+        screen = Screen.Transcription,
+        badge = "Hands-Free",
+    ),
+    SettingSearchItem(
+        title = "Automatic Language Routing",
+        description = "Classify speech to auto-switch between English (Parakeet) and Indic (AI4Bharat) models",
+        keywords = "automatic language routing early lid neural classification parakeet ai4bharat indic switch",
+        screen = Screen.Transcription,
+        badge = "Voice",
+    ),
+    SettingSearchItem(
+        title = "Hands-Free Silence Auto-Stop",
+        description = "Automatically end recording when you pause speaking",
+        keywords = "silence auto stop pause detection hands free end recording quiet",
+        screen = Screen.Transcription,
+        badge = "Audio",
+    ),
+    SettingSearchItem(
+        title = "Silence Timeout",
+        description = "Adjust the pause duration before hands-free recording stops (1.0s to 3.5s)",
+        keywords = "silence timeout slider seconds duration pause quiet delay",
+        screen = Screen.Transcription,
+        badge = "Audio",
+    ),
+    SettingSearchItem(
+        title = "Floating Button Position & Visibility",
+        description = "Always show floating microphone button or only when an input field is active",
+        keywords = "floating button bubble overlay position always visible drag",
+        screen = Screen.Transcription,
+        badge = "Overlay",
+    ),
+    SettingSearchItem(
+        title = "Maximum Recording Duration",
+        description = "Set the maximum allowed recording time limit (up to 5 minutes)",
+        keywords = "maximum recording time limit seconds minutes duration cap",
+        screen = Screen.Transcription,
+        badge = "Audio",
+    ),
+    SettingSearchItem(
+        title = "Audio Feedback & Sounds",
+        description = "Play chimes and haptic feedback when dictation starts and stops",
+        keywords = "sound audio chime tone feedback haptic beep",
+        screen = Screen.Transcription,
+        badge = "Audio",
+    ),
+    SettingSearchItem(
+        title = "Transcription History",
+        description = "Store and manage transcripts and audio recordings locally on device",
+        keywords = "history recordings transcripts copy export past save audio clips",
+        screen = Screen.History,
+        badge = "History",
+    ),
+    SettingSearchItem(
+        title = "On-Device Voice Models",
+        description = "Download and manage local neural models (Parakeet, AI4Bharat, Whisper)",
+        keywords = "models local speech voice download parakeet ai4bharat whisper offline",
+        screen = Screen.LocalModels,
+        badge = "Models",
+    ),
+    SettingSearchItem(
+        title = "AI Text Cleanup & Post-Processing",
+        description = "Remove filler words, format numbers, punctuation, and apply style rules",
+        keywords = "cleanup post processing polish filler words punctuation slm rules local phi",
+        screen = Screen.Cleanup,
+        badge = "Polish",
+    ),
+    SettingSearchItem(
+        title = "App-Context Adaptation (Wispr Flow)",
+        description = "Adapt tone and formatting based on active app (casual Slack, formal Gmail, Code)",
+        keywords = "app context adaptation wispr flow active app slack gmail code formatting style",
+        screen = Screen.Cleanup,
+        badge = "Wispr Flow",
+    ),
+    SettingSearchItem(
+        title = "Smart Dictation & Checklists",
+        description = "Format spoken tasks into markdown checklists and bulleted summaries",
+        keywords = "smart dictation checklist todo action items summary markdown bullet",
+        screen = Screen.Cleanup,
+        badge = "Wispr Flow",
+    ),
+    SettingSearchItem(
+        title = "Custom Vocabulary & Acronyms",
+        description = "Teach Sayso custom technical terms, names, and word replacements",
+        keywords = "vocabulary lexicon words names custom acronyms jargon spelling replacement",
+        screen = Screen.Vocabulary,
+        badge = "Dictionary",
+    ),
+    SettingSearchItem(
+        title = "Pronunciation Dictionary",
+        description = "Map phonetically spoken words to correct written terms and spellings",
+        keywords = "pronunciation sounds like sounds phonetic mapping dictionary alias",
+        screen = Screen.Vocabulary,
+        badge = "Dictionary",
+    ),
+    SettingSearchItem(
+        title = "Speech Insights & Statistics",
+        description = "View speaking pace (WPM), time saved, dictation volume, and top words",
+        keywords = "insights statistics wpm speaking pace time saved analytics metrics charts",
+        screen = Screen.Insights,
+        badge = "Insights",
+    ),
+    SettingSearchItem(
+        title = "Setup Wizard & Onboarding",
+        description = "Launch interactive setup guide for speech models, languages, and permissions",
+        keywords = "setup wizard onboarding walkthrough guide restart welcome initial",
+        screen = Screen.Home,
+        badge = "Setup",
+        isSpecialOnboarding = true,
+    ),
+    SettingSearchItem(
+        title = "About Sayso & Privacy",
+        description = "App version, licenses, open-source attributions, and privacy policy",
+        keywords = "about version privacy licenses acknowledgments legal",
+        screen = Screen.About,
+        badge = "About",
+    ),
+)
+
+@Composable
+private fun SettingsSearchResults(
+    query: String,
+    onNavigate: (Screen) -> Unit,
+    onOpenOnboarding: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val q = query.trim().lowercase()
+    val matches = remember(q) {
+        SETTINGS_INDEX.filter {
+            it.title.lowercase().contains(q) ||
+                it.description.lowercase().contains(q) ||
+                it.keywords.lowercase().contains(q) ||
+                it.badge.lowercase().contains(q)
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "SEARCH RESULTS (${matches.size})",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            letterSpacing = 0.8.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+        )
+
+        if (matches.isEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_search_no_results, query),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        } else {
+            for (item in matches) {
+                Surface(
+                    onClick = {
+                        if (item.isSpecialOnboarding) {
+                            onOpenOnboarding()
+                        } else {
+                            onNavigate(item.screen)
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                ) {
+                                    Text(
+                                        text = item.badge,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 10.sp,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                                Text(
+                                    text = item.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = item.description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 
