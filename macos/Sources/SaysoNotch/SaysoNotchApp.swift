@@ -1478,12 +1478,51 @@ private struct SettingsHome: View {
         }
         .tint(SaysoPalette.cobalt)
         .navigationSplitViewStyle(.balanced)
+        .overlay(alignment: .bottom) {
+            if let notice = model.notice {
+                NoticeBanner(text: notice) { model.notice = nil }
+                    .padding(20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: Binding(
             get: { !model.settings.onboardingCompleted && !model.onboardingDeferredThisLaunch },
             set: { _ in }
         )) {
             OnboardingWizard(model: model)
         }
+    }
+}
+
+private struct NoticeBanner: View {
+    let text: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(SaysoPalette.amber)
+            Text(text)
+                .font(.callout.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss message")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 620)
+        .background(SaysoPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(SaysoPalette.amber.opacity(0.45), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sayso message: \(text)")
     }
 }
 
