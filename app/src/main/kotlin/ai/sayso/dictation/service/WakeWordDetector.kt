@@ -2,6 +2,7 @@ package ai.sayso.dictation.service
 
 import android.content.Context
 import android.util.Log
+import ai.sayso.dictation.core.SettingsStore
 import com.k2fsa.sherpa.onnx.FeatureConfig
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
@@ -17,6 +18,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
  */
 class WakeWordDetector(
     private val context: Context,
+    private val wakeWordPhrase: String = SettingsStore.WAKE_PHRASE_BOTH,
     private val onWakeWordDetected: (String) -> Unit,
 ) {
     private var spotter: KeywordSpotter? = null
@@ -70,7 +72,11 @@ class WakeWordDetector(
                 val result = s.getResult(str)
                 if (result.keyword.isNotEmpty()) {
                     Log.i(TAG, "Detected wake phrase: ${result.keyword}")
-                    onWakeWordDetected(result.keyword)
+                    if (matchesWakePhrase(result.keyword, wakeWordPhrase)) {
+                        onWakeWordDetected(result.keyword)
+                    } else {
+                        Log.d(TAG, "Wake phrase ${result.keyword} filtered by active setting: $wakeWordPhrase")
+                    }
                     s.reset(str)
                 }
             }
@@ -95,5 +101,14 @@ class WakeWordDetector(
     companion object {
         private const val TAG = "SaysoWakeWord"
         const val SAMPLE_RATE = 16_000
+
+        fun matchesWakePhrase(detectedKeyword: String, allowedPhrase: String): Boolean {
+            val clean = detectedKeyword.lowercase()
+            return when (allowedPhrase) {
+                SettingsStore.WAKE_PHRASE_HEY -> clean.contains("hey")
+                SettingsStore.WAKE_PHRASE_SAYSO -> clean.contains("sayso") && !clean.contains("hey")
+                else -> true
+            }
+        }
     }
 }
