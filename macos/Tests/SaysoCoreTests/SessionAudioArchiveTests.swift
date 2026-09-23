@@ -79,6 +79,17 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     }
 }
 
+@Test func importedAudioRejectsDirectories() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("recording.m4a", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+    #expect(throws: SaysoError.self) {
+        try SessionAudioArchive.importRecording(from: directory, directory: root.appendingPathComponent("Recordings"))
+    }
+}
+
 @Test func sessionAudioArchivePersistsReadableAudioOnlyAfterFramesArrive() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
