@@ -131,6 +131,17 @@ import Testing
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "click sen", snapshot: snapshot) }
 }
 
+@Test func controlPlannerRequiresReviewForDestructiveVisibleControl() throws {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Mail", windowTitle: "Compose",
+        focusedRole: "AXTextField", focusedValue: "", isProtected: false,
+        elements: [.init(id: "stable-send", role: "AXButton", title: "Send")]
+    )
+
+    let step = try ControlPlanner.plan(command: "click Send", snapshot: snapshot)
+    #expect(ControlPolicy.requiresConfirmation(step))
+}
+
 @Test func controlPlannerRequiresExactBundleIdentifier() throws {
     let snapshot = DesktopSnapshot(processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft", focusedRole: "AXTextField", focusedValue: "", isProtected: false)
     #expect(try ControlPlanner.plan(command: "activate com.apple.Safari", snapshot: snapshot).action == .activate(bundleIdentifier: "com.apple.Safari"))
