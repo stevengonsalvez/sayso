@@ -1052,10 +1052,11 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func speak(_ text: String) {
+        let language = settings.speechLanguage
         speech.speak(
             text,
-            language: settings.speechLanguage,
-            voiceIdentifier: settings.speechVoiceIdentifier,
+            language: language,
+            voiceIdentifier: selectedVoice(for: language),
             rate: settings.speechRate
         )
     }
@@ -1063,10 +1064,13 @@ final class SaysoAppModel: ObservableObject {
     func speakLatest() {
         guard let transcript = lastTranscript else { return }
         let language = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
-        let voiceIdentifier = settings.speechVoiceIdentifier.flatMap { selected in
+        speech.speak(transcript.displayText, language: language, voiceIdentifier: selectedVoice(for: language), rate: settings.speechRate)
+    }
+
+    private func selectedVoice(for language: DictationLanguage) -> String? {
+        settings.speechVoiceIdentifier.flatMap { selected in
             SpeechOutput.availableVoices(for: language).contains(where: { $0.id == selected }) ? selected : nil
         }
-        speech.speak(transcript.displayText, language: language, voiceIdentifier: voiceIdentifier, rate: settings.speechRate)
     }
 
     func reprocessHistory(_ entry: Transcript) async {
@@ -1744,6 +1748,10 @@ private struct VoiceOutputWorkspace: View {
                     .pickerStyle(.menu)
                     Picker("Voice", selection: $model.settings.speechVoiceIdentifier) {
                         Text("System default").tag(nil as String?)
+                        if let selected = model.settings.speechVoiceIdentifier,
+                           !voices.contains(where: { $0.id == selected }) {
+                            Text("Saved voice unavailable").tag(selected as String?)
+                        }
                         ForEach(voices) { voice in
                             Text("\(voice.name) (\(voice.language))").tag(voice.id as String?)
                         }
@@ -1794,10 +1802,6 @@ private struct VoiceOutputWorkspace: View {
 
     private func refreshVoices() {
         voices = SpeechOutput.availableVoices(for: model.settings.speechLanguage)
-        if let selected = model.settings.speechVoiceIdentifier,
-           !voices.contains(where: { $0.id == selected }) {
-            model.settings.speechVoiceIdentifier = nil
-        }
     }
 
     private func refreshHistory() async {
