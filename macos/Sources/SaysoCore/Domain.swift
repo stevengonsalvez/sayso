@@ -124,6 +124,14 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     public var isFinal: Bool
     public var audioFileURL: URL?
 
+    public var hasTranslation: Bool {
+        !(translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var displayText: String {
+        hasTranslation ? translatedText! : text
+    }
+
     public init(
         id: UUID = UUID(),
         createdAt: Date = .now,
