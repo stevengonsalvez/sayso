@@ -29,3 +29,33 @@ import Testing
     #expect(await HistoryStore(fileURL: fileURL).all().map(\.id) == [second.id])
     #expect(!(await store.remove(id: first.id)))
 }
+
+@Test func historyReplaysJournalAfterSnapshotWriteFailure() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let fileURL = root.appendingPathComponent("history.json")
+    let saved = Transcript(text: "Saved", language: .english, route: .local, isFinal: true)
+    let pending = Transcript(text: "Pending", language: .english, route: .local, isFinal: true)
+
+    #expect(await HistoryStore(fileURL: fileURL).append(saved))
+    let failingStore = HistoryStore(fileURL: fileURL, persistEntries: { _, _ in false })
+    #expect(!(await failingStore.append(pending)))
+    #expect(FileManager.default.fileExists(atPath: fileURL.appendingPathExtension("wal").path))
+
+    let recoveredStore = HistoryStore(fileURL: fileURL)
+    #expect(await recoveredStore.all().map(\.id) == [pending.id, saved.id])
+    #expect(!FileManager.default.fileExists(atPath: fileURL.appendingPathExtension("wal").path))
+}
+
+@Test func historyKeepsMoreThanFiveHundredEntriesByDefault() async {
+    let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    let store = HistoryStore(fileURL: fileURL)
+
+    for index in 0...500 {
+        #expect(await store.append(.init(text: "Entry \(index)", language: .english, route: .local, isFinal: true)))
+    }
+
+    #expect(await store.all().count == 501)
+}
