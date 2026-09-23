@@ -1273,6 +1273,7 @@ private struct HistoryWorkspace: View {
     @State private var entries: [Transcript] = []
     @State private var query = ""
     @State private var confirmClear = false
+    @State private var deletionCandidate: Transcript?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1291,9 +1292,19 @@ private struct HistoryWorkspace: View {
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal)
             List(displayedEntries) { entry in
-                VStack(alignment: .leading) {
-                    Text(entry.translatedText ?? entry.text)
-                    Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading) {
+                        Text(entry.translatedText ?? entry.text)
+                        Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        deletionCandidate = entry
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Delete transcript")
                 }
             }
         }
@@ -1303,6 +1314,23 @@ private struct HistoryWorkspace: View {
             Button("Clear", role: .destructive) { Task { await model.history.clear(); entries = [] } }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts from this Mac.") }
+        .alert("Delete transcript?", isPresented: Binding(
+            get: { deletionCandidate != nil },
+            set: { if !$0 { deletionCandidate = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                guard let candidate = deletionCandidate else { return }
+                Task {
+                    if await model.history.remove(id: candidate.id) {
+                        entries.removeAll { $0.id == candidate.id }
+                    }
+                    deletionCandidate = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { deletionCandidate = nil }
+        } message: {
+            Text("This removes this saved transcript from this Mac.")
+        }
     }
 }
 
