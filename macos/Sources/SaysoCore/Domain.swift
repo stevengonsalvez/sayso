@@ -120,6 +120,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var translationEnabled = false
     public var outputLanguage: DictationLanguage = .english
     public var autoInsert = true
+    public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var soundCues = true
     public var onboardingCompleted = false
