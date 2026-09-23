@@ -217,6 +217,11 @@ final class SaysoAppModel: ObservableObject {
         requestDictationStart(onboardingTest: true)
     }
 
+    func clearOnboardingTestResult() {
+        guard !isOnboardingTestActive else { return }
+        onboardingTestTranscriptID = nil
+    }
+
     private func requestDictationStart(onboardingTest: Bool) {
         switch reserveDictationStart() {
         case .reserved:
@@ -1629,7 +1634,7 @@ private struct OnboardingWizard: View {
                 case 0:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your words, your script.").font(.title2.bold())
-                        Text("Choose the spoken language. Automatic follows your Mac, while an explicit language keeps recognition focused.")
+                        Text("Choose the spoken language. An explicit language keeps recognition focused.")
                             .foregroundStyle(.secondary)
                         Picker("Spoken language", selection: $model.settings.language) {
                             ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
@@ -1649,6 +1654,7 @@ private struct OnboardingWizard: View {
                         }
                         .pickerStyle(.segmented)
                         .onChange(of: model.settings.route) { _, route in
+                            model.clearOnboardingTestResult()
                             guard route == .local, model.settings.language == .automatic else { return }
                             model.settings.language = .english
                         }
@@ -1749,6 +1755,7 @@ private struct OnboardingWizard: View {
         }
         .padding(32)
         .frame(width: 560, height: 500)
+        .onChange(of: model.settings.language) { _, _ in model.clearOnboardingTestResult() }
     }
 
     private func complete() {
@@ -1809,11 +1816,14 @@ private struct OnboardingWizard: View {
     private var canAdvance: Bool {
         switch page {
         case 1:
-            engineReady
+            return engineReady
         case steps.count - 1:
-            model.isOnboardingTestActive || requiredPermissionsGranted
+            if model.isOnboardingTestActive {
+                return model.isStartingDictation || model.transcriber.canStop
+            }
+            return requiredPermissionsGranted
         default:
-            true
+            return true
         }
     }
 
