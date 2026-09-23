@@ -84,6 +84,7 @@ final class SaysoAppModel: ObservableObject {
     private var controlExecutionTask: Task<Void, Never>?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
+    private var isOnboardingTest = false
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
@@ -217,6 +218,13 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func startOnboardingTest() {
+        guard !transcriber.canStop else { return }
+        isOnboardingTest = true
+        startOrStopDictation()
+        if !isStartingDictation { isOnboardingTest = false }
+    }
+
     private func reserveDictationStart() -> DictationStartReservation {
         guard !isStartingDictation, transcriber.canStart else {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
@@ -240,7 +248,9 @@ final class SaysoAppModel: ObservableObject {
             dictationStartCancellationRequested = false
         }
         notch.show()
-        dictationDestination = settings.autoInsert
+        let onboardingTest = isOnboardingTest
+        isOnboardingTest = false
+        dictationDestination = !onboardingTest && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
         let session = RecordingSession(
@@ -1549,6 +1559,7 @@ private struct OnboardingWizard: View {
     @State private var page = 0
     @State private var testSessionStarted = false
     @State private var testTranscriptID: UUID?
+    @State private var testRequested = false
     @Environment(\.dismiss) private var dismiss
 
     private let steps = ["Language", "Engine", "Delivery", "Permissions"]
@@ -1607,6 +1618,10 @@ private struct OnboardingWizard: View {
                             ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.segmented)
+                        .onChange(of: model.settings.route) { _, route in
+                            guard route == .local, model.settings.language == .automatic else { return }
+                            model.settings.language = .english
+                        }
                         if model.settings.route.transmitsData {
                             Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
                         }
@@ -1705,7 +1720,7 @@ private struct OnboardingWizard: View {
         .padding(32)
         .frame(width: 560, height: 500)
         .onChange(of: model.transcriber.phase) { _, phase in
-            if phase == .listening { testSessionStarted = true }
+            if testRequested, phase == .listening { testSessionStarted = true }
         }
         .onChange(of: model.lastTranscript?.id) { _, id in
             guard testSessionStarted, let id else { return }
@@ -1725,34 +1740,39 @@ private struct OnboardingWizard: View {
     }
 
     private var engineReady: Bool {
-        switch model.settings.route {
-        case .local:
-            model.nativeModelReady(for: model.settings.language)
-        case .appleSpeech:
-            model.settings.cloudConsentGranted
-        case .byok:
-            false
-        }
+        OnboardingReadiness.engineIsReady(
+            route: model.settings.route,
+            language: model.settings.language,
+            hasLocalModel: model.nativeModelReady(for: model.settings.language),
+            cloudConsentGranted: model.settings.cloudConsentGranted
+        )
     }
 
     private var engineReadinessMessage: String {
         switch model.settings.route {
         case .local:
-            "Download the selected local model before continuing."
+            if model.settings.language == .automatic {
+                return "Choose a spoken language for On-device dictation."
+            }
+            return "Download the selected local model before continuing."
         case .appleSpeech:
-            "Confirm the Apple Speech data path before continuing."
+            return "Confirm the Apple Speech data path before continuing."
         case .byok:
-            "Choose an available dictation engine."
+            return "Choose an available dictation engine."
         }
     }
 
     private var requiredPermissionsGranted: Bool {
-        guard model.permissions.states[.microphone] == .granted else { return false }
-        return model.settings.route != .appleSpeech || model.permissions.states[.speechRecognition] == .granted
+        OnboardingReadiness.hasRequiredPermissions(
+            route: model.settings.route,
+            microphoneGranted: model.permissions.states[.microphone] == .granted,
+            speechRecognitionGranted: model.permissions.states[.speechRecognition] == .granted
+        )
     }
 
     private var primaryActionTitle: String {
         guard page == steps.count - 1 else { return "Continue" }
+        if model.isStartingDictation { return "Cancel test start" }
         if model.transcriber.canStop { return "Stop test" }
         if testTranscriptID != nil { return "Finish setup" }
         return "Start test dictation"
@@ -1775,7 +1795,8 @@ private struct OnboardingWizard: View {
         } else if testTranscriptID != nil {
             complete()
         } else {
-            model.startOrStopDictation()
+            testRequested = true
+            model.startOnboardingTest()
         }
     }
 
