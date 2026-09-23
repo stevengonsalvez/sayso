@@ -118,6 +118,11 @@ public actor HistoryStore {
         return true
     }
 
+    public func reclaimUnreferencedAudio() {
+        let retained = Set(all().compactMap(\.audioFileURL).map(\.standardizedFileURL))
+        SessionAudioArchive.sweepUnreferencedRecordings(retaining: retained, fileManager: fileManager)
+    }
+
     public func plainTextExport() -> String {
         all().reversed().map { "\($0.createdAt.formatted(date: .numeric, time: .shortened))\n\($0.translatedText ?? $0.text)" }
             .joined(separator: "\n\n")
