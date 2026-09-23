@@ -42,6 +42,18 @@ public enum SpeechCapabilities {
     }
 }
 
+private final class AudioLevelReporter: @unchecked Sendable {
+    private let receive: @MainActor @Sendable (Float) -> Void
+
+    init(receive: @escaping @MainActor @Sendable (Float) -> Void) {
+        self.receive = receive
+    }
+
+    func report(_ level: Float) {
+        Task { @MainActor [receive] in receive(level) }
+    }
+}
+
 @MainActor
 public final class LiveTranscriber: NSObject, ObservableObject {
     @Published public private(set) var phase: SessionPhase = .idle
@@ -180,16 +192,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak request] buffer, _ in
+        let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
+        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak request, levelReporter] buffer, _ in
             request?.append(buffer)
-            var level: Float = 0
-            if let channels = buffer.floatChannelData {
-                let samples = channels[0]
-                for index in 0..<Int(buffer.frameLength) {
-                    level = Swift.max(level, abs(samples[index]))
-                }
-            }
-            Task { @MainActor [weak self] in self?.observeAudio(level: level) }
+            levelReporter.report(Self.audioLevel(in: buffer))
         }
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, recognitionError in
@@ -246,6 +252,15 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             guard !Task.isCancelled else { return }
             self?.stop()
         }
+    }
+
+    private nonisolated static func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
+        guard let samples = buffer.floatChannelData?[0] else { return 0 }
+        var level: Float = 0
+        for index in 0..<Int(buffer.frameLength) {
+            level = Swift.max(level, abs(samples[index]))
+        }
+        return level
     }
 
     private func receiveAppleRecognition(
@@ -321,16 +336,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self, pump] buffer, _ in
+            let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [pump, levelReporter] buffer, _ in
                 pump.submit(buffer)
-                var level: Float = 0
-                if let channels = buffer.floatChannelData {
-                    let samples = channels[0]
-                    for index in 0..<Int(buffer.frameLength) {
-                        level = Swift.max(level, abs(samples[index]))
-                    }
-                }
-                Task { @MainActor [weak self] in self?.observeAudio(level: level) }
+                levelReporter.report(Self.audioLevel(in: buffer))
             }
             audioEngine.prepare()
             try audioEngine.start()
@@ -377,16 +386,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self, pump] buffer, _ in
+            let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [pump, levelReporter] buffer, _ in
                 pump.submit(buffer)
-                var level: Float = 0
-                if let channels = buffer.floatChannelData {
-                    let samples = channels[0]
-                    for index in 0..<Int(buffer.frameLength) {
-                        level = Swift.max(level, abs(samples[index]))
-                    }
-                }
-                Task { @MainActor [weak self] in self?.observeAudio(level: level) }
+                levelReporter.report(Self.audioLevel(in: buffer))
             }
             audioEngine.prepare()
             try audioEngine.start()
