@@ -2,6 +2,31 @@ import Combine
 import Foundation
 import SpeakCore
 
+private enum CorrectionStoragePrivacy {
+    private static let directoryPermissions: NSNumber = 0o700
+    private static let filePermissions: NSNumber = 0o600
+
+    static func prepareDirectory(_ directory: URL, fileManager: FileManager) {
+        try? fileManager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: directoryPermissions]
+        )
+        // `createDirectory` does not update permissions on an existing folder.
+        try? fileManager.setAttributes([.posixPermissions: directoryPermissions], ofItemAtPath: directory.path)
+    }
+
+    static func restrictExistingFile(_ fileURL: URL, fileManager: FileManager) {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return }
+        try? fileManager.setAttributes([.posixPermissions: filePermissions], ofItemAtPath: fileURL.path)
+    }
+
+    static func write(_ data: Data, to fileURL: URL, fileManager: FileManager) throws {
+        try data.write(to: fileURL, options: .atomic)
+        try fileManager.setAttributes([.posixPermissions: filePermissions], ofItemAtPath: fileURL.path)
+    }
+}
+
 public actor SaysoPersonalLexiconStore: PersonalLexiconStoring {
     private let fileURL: URL
     private let fileManager: FileManager
@@ -13,8 +38,9 @@ public actor SaysoPersonalLexiconStore: PersonalLexiconStoring {
         let root = baseDirectory ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SaysoNotch", isDirectory: true)
         let directory = root.appendingPathComponent("PersonalLexicon", isDirectory: true)
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        CorrectionStoragePrivacy.prepareDirectory(directory, fileManager: fileManager)
         fileURL = directory.appendingPathComponent("lexicon.json")
+        CorrectionStoragePrivacy.restrictExistingFile(fileURL, fileManager: fileManager)
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -29,7 +55,7 @@ public actor SaysoPersonalLexiconStore: PersonalLexiconStoring {
             if fileManager.fileExists(atPath: fileURL.path) { try fileManager.removeItem(at: fileURL) }
             return
         }
-        try encoder.encode(rules).write(to: fileURL, options: .atomic)
+        try CorrectionStoragePrivacy.write(encoder.encode(rules), to: fileURL, fileManager: fileManager)
     }
 }
 
@@ -46,8 +72,9 @@ public actor SaysoAutoCorrectionStore: AutoCorrectionStoring {
         let root = baseDirectory ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SaysoNotch", isDirectory: true)
         let directory = root.appendingPathComponent("AutoCorrections", isDirectory: true)
-        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        CorrectionStoragePrivacy.prepareDirectory(directory, fileManager: fileManager)
         fileURL = directory.appendingPathComponent("candidates.json")
+        CorrectionStoragePrivacy.restrictExistingFile(fileURL, fileManager: fileManager)
         encoder.dateEncodingStrategy = .iso8601
         decoder.dateDecodingStrategy = .iso8601
     }
@@ -64,7 +91,7 @@ public actor SaysoAutoCorrectionStore: AutoCorrectionStoring {
             if fileManager.fileExists(atPath: fileURL.path) { try fileManager.removeItem(at: fileURL) }
             return
         }
-        try encoder.encode(candidates).write(to: fileURL, options: .atomic)
+        try CorrectionStoragePrivacy.write(encoder.encode(candidates), to: fileURL, fileManager: fileManager)
     }
 
     public func deleteAll() throws {
