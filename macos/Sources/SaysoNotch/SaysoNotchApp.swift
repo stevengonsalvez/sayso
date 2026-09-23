@@ -197,20 +197,19 @@ final class SaysoAppModel: ObservableObject {
         )
         activeRecordingSession = session
         await sessions.upsert(session)
-        await permissions.request(.microphone)
-        guard permissions.states[.microphone] == .granted else {
-            notice = "Microphone access is required before Sayso can listen."
+        guard await permissions.authorize(.microphone) == .granted else {
+            notice = "Microphone access is required before Sayso can listen. Grant it in Settings."
             failActiveSession(notice ?? "Microphone access denied")
             return false
         }
         if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
-            await permissions.request(.speechRecognition)
-            guard permissions.states[.speechRecognition] == .granted else {
-                notice = "Speech Recognition access is required before Sayso can transcribe."
+            guard await permissions.authorize(.speechRecognition) == .granted else {
+                notice = "Speech Recognition access is required before Sayso can transcribe. Grant it in Settings."
                 failActiveSession(notice ?? "Speech Recognition access denied")
                 return false
             }
         }
+        restoreDictationTargetFocus()
         let started = await transcriber.start(
                 language: settings.language,
                 route: settings.route,
@@ -234,6 +233,14 @@ final class SaysoAppModel: ObservableObject {
         updateActiveSession { $0.transition(to: .listening) }
         try? await Task.sleep(for: .milliseconds(250))
         return transcriber.phase == .listening
+    }
+
+    /// A first-run permission sheet activates Sayso. Hand focus back to the
+    /// captured app so auto-insert still passes its frontmost-target check.
+    private func restoreDictationTargetFocus() {
+        guard let target = dictationDestination?.recordingDestination.processIdentifier,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier else { return }
+        NSRunningApplication(processIdentifier: target)?.activate()
     }
 
     func accept(_ transcript: Transcript) {
@@ -568,9 +575,7 @@ final class SaysoAppModel: ObservableObject {
                 let entry = try await controller.execute(step, approved: approved, targetApplication: target)
                 await controlAudit.append(entry)
                 controlEntries = await controlAudit.entries()
-                let stepResult: ControlSessionStepResult = entry.result.hasPrefix("observed")
-                    ? .effectObserved
-                    : entry.result.hasPrefix("no observed") ? .noEffectObserved : .actionFailed
+                let stepResult = ControlSessionStepResult(entry.effect)
                 let updated = await desktopControlSession.record(stepResult)
                 controlStatus = updated.result.map { "\(entry.result), \($0.rawValue)" } ?? entry.result
             } catch {
