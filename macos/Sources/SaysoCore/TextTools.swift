@@ -398,13 +398,11 @@ public struct TextUTF16Range: Codable, Equatable, Sendable {
 
 public struct SelectedTextEditAnchor: Equatable, Sendable {
     public let selectedText: String
-    public let originalValue: String
     public let range: TextUTF16Range
 
     public init?(value: String, range: TextUTF16Range) {
         guard let selectedText = Self.substring(in: value, at: range) else { return nil }
         self.selectedText = selectedText
-        originalValue = value
         self.range = range
     }
 
@@ -414,16 +412,16 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
 
     public func replacing(with text: String, in value: String) -> String? {
         guard stillMatches(value: value, range: range),
-              let bounds = Self.stringRange(in: value, at: range) else { return nil }
-        return String(value[..<bounds.lowerBound]) + text + String(value[bounds.upperBound...])
+              let range = Self.nsRange(in: value, at: range) else { return nil }
+        return (value as NSString).replacingCharacters(in: range, with: text)
     }
 
     private static func substring(in value: String, at range: TextUTF16Range) -> String? {
-        guard let bounds = stringRange(in: value, at: range) else { return nil }
-        return String(value[bounds])
+        guard let range = nsRange(in: value, at: range) else { return nil }
+        return (value as NSString).substring(with: range)
     }
 
-    private static func stringRange(in value: String, at range: TextUTF16Range) -> Range<String.Index>? {
+    private static func nsRange(in value: String, at range: TextUTF16Range) -> NSRange? {
         let utf16Count = value.utf16.count
         guard range.location >= 0,
               range.length > 0,
@@ -434,7 +432,7 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
         let end = String.Index(utf16Offset: range.location + range.length, in: value)
         guard start.samePosition(in: value.unicodeScalars) != nil,
               end.samePosition(in: value.unicodeScalars) != nil else { return nil }
-        return start..<end
+        return .init(location: range.location, length: range.length)
     }
 }
 
