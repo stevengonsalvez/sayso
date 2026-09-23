@@ -35,6 +35,7 @@ final class SaysoAppModel: ObservableObject {
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
     let localEnglishModel: FluidAudioLocalModelManager
+    let localPunjabiModel: SherpaPunjabiModelManager
     let speech = SpeechOutput()
     let history = HistoryStore()
     let sessions = RecordingSessionStore()
@@ -54,8 +55,13 @@ final class SaysoAppModel: ObservableObject {
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
+        let localPunjabiModel = SherpaPunjabiModelManager()
         self.localEnglishModel = localEnglishModel
-        transcriber = LiveTranscriber(fluidAudioModels: localEnglishModel)
+        self.localPunjabiModel = localPunjabiModel
+        transcriber = LiveTranscriber(
+            fluidAudioModels: localEnglishModel,
+            sherpaPunjabiModels: localPunjabiModel
+        )
         var saved = UserDefaultsSettingsStore().load()
         saved.applyFirstRunDefaults()
         if !saved.route.supportsDictation { saved.route = .local }
@@ -118,6 +124,24 @@ final class SaysoAppModel: ObservableObject {
 
     private var localEnglishModelStatus: String {
         switch localEnglishModel.state {
+        case .notInstalled: "not-installed"
+        case .installing: "installing"
+        case .installed: "installed"
+        case .failed: "failed"
+        }
+    }
+
+    private var localIndicModelStatus: String {
+        switch localEnglishModel.multilingualState {
+        case .notInstalled: "not-installed"
+        case .installing: "installing"
+        case .installed: "installed"
+        case .failed: "failed"
+        }
+    }
+
+    private var localPunjabiModelStatus: String {
+        switch localPunjabiModel.state {
         case .notInstalled: "not-installed"
         case .installing: "installing"
         case .installed: "installed"
@@ -837,12 +861,16 @@ private struct LanguageWorkspace: View {
                     HStack {
                         Text(language.displayName)
                         Spacer()
+                        let isPunjabi = language == .punjabi
+                        let available = isPunjabi
+                            ? model.localPunjabiModel.state.isInstalled
+                            : SpeechCapabilities.supports(language)
                         Label(
-                            SpeechCapabilities.supports(language) ? "Available" : "Unavailable",
-                            systemImage: SpeechCapabilities.supports(language) ? "checkmark.circle.fill" : "xmark.circle"
+                            available ? (isPunjabi ? "On-device ready" : "Available") : (isPunjabi ? "Download model" : "Unavailable"),
+                            systemImage: available ? "checkmark.circle.fill" : "xmark.circle"
                         )
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(SpeechCapabilities.supports(language) ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        .foregroundStyle(available ? SaysoPalette.cobalt : SaysoPalette.muted)
                     }
                 }
             }
@@ -855,11 +883,13 @@ private struct LanguageWorkspace: View {
 private struct ModelsWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject private var localEnglishModel: FluidAudioLocalModelManager
+    @ObservedObject private var localPunjabiModel: SherpaPunjabiModelManager
     @State private var apiKey = ""
 
     init(model: SaysoAppModel) {
         self.model = model
         _localEnglishModel = ObservedObject(wrappedValue: model.localEnglishModel)
+        _localPunjabiModel = ObservedObject(wrappedValue: model.localPunjabiModel)
     }
 
     var body: some View {
@@ -914,6 +944,64 @@ private struct ModelsWorkspace: View {
                     Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
                 }
             }
+            Section("Native Indian language model") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(FluidAudioLocalModelManager.multilingualDisplayName).fontWeight(.semibold)
+                        Text("Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Telugu and Urdu. Apple silicon only. About 1.5 GB.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(multilingualModelStatus)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(localEnglishModel.multilingualState.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                }
+                Text("Runs entirely on this Mac. Model terms: NVIDIA Open Model Development License 1.1.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if case .installing = localEnglishModel.multilingualState {
+                    ProgressView(value: localEnglishModel.multilingualDownloadProgress)
+                }
+                if localEnglishModel.multilingualState.isInstalled {
+                    Button("Delete Indian language model", role: .destructive) { localEnglishModel.deleteMultilingual() }
+                } else {
+                    Button("Download Indian language model") { Task { await localEnglishModel.install(language: .hindi) } }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SaysoPalette.cobalt)
+                        .disabled(localEnglishModel.multilingualState == .installing)
+                }
+                if case let .failed(message) = localEnglishModel.multilingualState {
+                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+                }
+            }
+            Section("Native Punjabi model") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(SherpaPunjabiModelManager.displayName).fontWeight(.semibold)
+                        Text("Offline Punjabi final transcription. Any Mac. About 198 MB.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(punjabiModelStatus)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(localPunjabiModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                }
+                Text("Runs entirely on this Mac. Model and runtime: Apache-2.0.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if case .installing = localPunjabiModel.state {
+                    ProgressView()
+                }
+                if localPunjabiModel.state.isInstalled {
+                    Button("Delete Punjabi model", role: .destructive) { localPunjabiModel.delete() }
+                } else {
+                    Button("Download Punjabi model") { Task { await localPunjabiModel.install() } }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SaysoPalette.cobalt)
+                        .disabled(localPunjabiModel.state == .installing)
+                }
+                if case let .failed(message) = localPunjabiModel.state {
+                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+                }
+            }
             Section("Your provider") {
                 Text("Optional. Used only after explicit cloud consent. API key stays in Keychain.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -936,6 +1024,24 @@ private struct ModelsWorkspace: View {
         case .failed: "Unavailable"
         }
     }
+
+    private var multilingualModelStatus: String {
+        switch localEnglishModel.multilingualState {
+        case .notInstalled: "Download required"
+        case .installing: "Downloading"
+        case .installed: "Ready"
+        case .failed: "Unavailable"
+        }
+    }
+
+    private var punjabiModelStatus: String {
+        switch localPunjabiModel.state {
+        case .notInstalled: "Download required"
+        case .installing: "Downloading"
+        case .installed: "Ready"
+        case .failed: "Unavailable"
+        }
+    }
 }
 
 private struct SaysoSettingsView: View {
@@ -949,8 +1055,16 @@ private struct SaysoSettingsView: View {
                 Picker("Spoken language", selection: $model.settings.language) {
                     ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
-                Text(SpeechCapabilities.supports(model.settings.language) ? "Available on this Mac" : "Unavailable on this Mac, choose another language or cloud route")
-                    .font(.caption).foregroundStyle(SpeechCapabilities.supports(model.settings.language) ? .secondary : SaysoPalette.crimson)
+                if model.settings.route == .local, model.settings.language == .punjabi {
+                    Text(model.localPunjabiModel.state.isInstalled
+                        ? "Punjabi runs locally and delivers final text when you stop."
+                        : "Download the Punjabi model in Models before dictating.")
+                        .font(.caption)
+                        .foregroundStyle(model.localPunjabiModel.state.isInstalled ? .secondary : SaysoPalette.crimson)
+                } else {
+                    Text(SpeechCapabilities.supports(model.settings.language) ? "Available on this Mac" : "Unavailable on this Mac, choose another language or cloud route")
+                        .font(.caption).foregroundStyle(SpeechCapabilities.supports(model.settings.language) ? .secondary : SaysoPalette.crimson)
+                }
                 Picker("Speech route", selection: $model.settings.route) {
                     ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                 }
@@ -1048,7 +1162,7 @@ extension SaysoAppModel {
             return .success(
                 id: request.id, command: request.command,
                 result: .init(
-                    model: "\(settings.route.displayName); local-English=\(localEnglishModelStatus); microphone=\(permissionSummary(.microphone)); raw=\(microphoneSystemStatus); speech=\(permissionSummary(.speechRecognition))",
+                    model: "\(settings.route.displayName); local-English=\(localEnglishModelStatus); local-Indic=\(localIndicModelStatus); local-Punjabi=\(localPunjabiModelStatus); microphone=\(permissionSummary(.microphone)); raw=\(microphoneSystemStatus); speech=\(permissionSummary(.speechRecognition))",
                     sessionActive: transcriber.phase == .listening,
                     appVersion: "1.0.0"
                 )
