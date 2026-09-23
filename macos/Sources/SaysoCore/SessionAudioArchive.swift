@@ -69,7 +69,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
         let candidate = url.standardizedFileURL.resolvingSymlinksInPath().path
         return url.isFileURL
             && candidate.hasPrefix(directory + "/")
-            && managedExtensions.contains(url.pathExtension.lowercased())
+            && managedFileExtensions.contains(url.pathExtension.lowercased())
     }
 
     public static func deleteManagedRecording(
@@ -95,17 +95,24 @@ public final class SessionAudioArchive: @unchecked Sendable {
         directory: URL = defaultDirectory(),
         fileManager: FileManager = .default
     ) throws -> URL {
-        let extensionName = sourceURL.pathExtension.lowercased()
-        guard sourceURL.isFileURL, managedExtensions.contains(extensionName) else {
+        let resolvedSourceURL = sourceURL.standardizedFileURL.resolvingSymlinksInPath()
+        let extensionName = resolvedSourceURL.pathExtension.lowercased()
+        guard resolvedSourceURL.isFileURL, managedFileExtensions.contains(extensionName) else {
             throw SaysoError.invalidAction("Choose a supported audio file.")
         }
-        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+        let attributes = try fileManager.attributesOfItem(atPath: resolvedSourceURL.path)
         if let size = attributes[.size] as? NSNumber, size.intValue > maximumImportedAudioBytes {
-            throw SaysoError.invalidAction("Audio file exceeds \(maximumImportedAudioBytes) bytes")
+            throw SaysoError.invalidAction("Audio file exceeds 512 MB")
         }
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent("Imported-\(UUID().uuidString).\(extensionName)")
-        try fileManager.copyItem(at: sourceURL, to: destination)
+        do {
+            try fileManager.copyItem(at: resolvedSourceURL, to: destination)
+            try fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: destination.path)
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            throw error
+        }
         return destination
     }
 
@@ -119,7 +126,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
             .standardizedFileURL.resolvingSymlinksInPath()
         let retained = Set(retainedURLs.map { $0.standardizedFileURL.resolvingSymlinksInPath() })
         let urls = (try? fileManager.contentsOfDirectory(at: recordingDirectory, includingPropertiesForKeys: nil)) ?? []
-        for url in urls where managedExtensions.contains(url.pathExtension.lowercased()) {
+        for url in urls where managedFileExtensions.contains(url.pathExtension.lowercased()) {
             let standardizedURL = url.standardizedFileURL
             guard !retained.contains(standardizedURL) else { continue }
             if let olderThan {
@@ -182,7 +189,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
         try? fileManager.removeItem(at: recordingURL)
     }
 
-    private static let managedExtensions: Set<String> = ["m4a", "caf", "wav", "mp3", "aif", "aiff", "mp4"]
+    public static let managedFileExtensions: Set<String> = ["m4a", "caf", "wav", "mp3", "aif", "aiff", "mp4"]
 
     private enum ArchiveError: Error {
         case unsupportedArchiveFormat
