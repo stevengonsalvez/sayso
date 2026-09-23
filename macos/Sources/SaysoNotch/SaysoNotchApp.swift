@@ -2688,7 +2688,7 @@ private struct OnboardingWizard: View {
     @State private var page = 0
     @Environment(\.dismiss) private var dismiss
 
-    private let steps = ["Language", "Engine", "Delivery", "Permissions"]
+    private let steps = ["Language", "Engine", "Delivery", "Shortcut", "Permissions"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -2784,6 +2784,19 @@ private struct OnboardingWizard: View {
                         Text(model.settings.autoInsert
                              ? "Turn restoration off only when you want the transcript left on your clipboard."
                              : "With insertion off, final transcripts copy to your clipboard.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                case 3:
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Choose your shortcut.").font(.title2.bold())
+                        Text("Use it once to start or stop dictation. Double-tap with selected text to voice edit.")
+                            .foregroundStyle(.secondary)
+                        HotKeyRecorder("Start or stop dictation", hotKey: Binding(
+                            get: { model.dictationHotKey },
+                            set: { model.setDictationHotKey($0) }
+                        ))
+                        Text("Default: ⌥ Space. You can change this later in Settings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
