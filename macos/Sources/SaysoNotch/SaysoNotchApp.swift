@@ -133,7 +133,10 @@ final class SaysoAppModel: ObservableObject {
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
-        Task { controlEntries = await controlAudit.entries() }
+        Task {
+            await history.reclaimUnreferencedAudio()
+            controlEntries = await controlAudit.entries()
+        }
     }
 
     func save() { settingsStore.save(settings) }
@@ -880,10 +883,10 @@ final class SaysoAppModel: ObservableObject {
                 }
                 guard !Task.isCancelled,
                       let self,
-                      self.controlPreparationID == preparationID,
-                      self.controlRun == nil else { return }
+                      self.controlPreparationID == preparationID else { return }
                 self.controlPreparationTask = nil
                 self.controlPreparationID = nil
+                guard self.controlRun == nil else { return }
                 let run = ControlCommandRun(
                     commands: commands,
                     target: target,
@@ -1396,9 +1399,8 @@ private struct HistoryWorkspace: View {
         .alert("Delete transcript?", isPresented: Binding(
             get: { deletionCandidate != nil },
             set: { if !$0 { deletionCandidate = nil } }
-        )) {
+        ), presenting: deletionCandidate) { candidate in
             Button("Delete", role: .destructive) {
-                guard let candidate = deletionCandidate else { return }
                 Task {
                     if playback.activeID == candidate.id { playback.stop() }
                     if await model.history.remove(id: candidate.id) {
@@ -1408,7 +1410,7 @@ private struct HistoryWorkspace: View {
                 }
             }
             Button("Cancel", role: .cancel) { deletionCandidate = nil }
-        } message: {
+        } message: { _ in
             Text("This removes this saved transcript and its retained audio from this Mac.")
         }
     }
@@ -1685,7 +1687,7 @@ private struct SaysoSettingsView: View {
                     .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free, stop after 1.2 seconds of silence", isOn: $model.settings.handsFree)
                 Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
-                Text("Audio stays on this Mac. Turn this off when you only want saved text.")
+                Text("New audio stays on this Mac. Existing History audio remains until deleted.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
