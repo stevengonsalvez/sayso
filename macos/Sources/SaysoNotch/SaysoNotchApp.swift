@@ -203,18 +203,28 @@ final class SaysoAppModel: ObservableObject {
             notice = "Finishing current dictation."
             return
         }
+        guard beginDictationStart() else { return }
         Task {
-            _ = await startDictation()
+            _ = await performDictationStart()
         }
     }
 
     private func startDictation() async -> Bool {
+        guard beginDictationStart() else { return false }
+        return await performDictationStart()
+    }
+
+    private func beginDictationStart() -> Bool {
         guard !isStartingDictation, transcriber.canStart else {
             notice = transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return false
         }
         isStartingDictation = true
         dictationStartCancellationRequested = false
+        return true
+    }
+
+    private func performDictationStart() async -> Bool {
         defer {
             isStartingDictation = false
             dictationStartCancellationRequested = false
@@ -1437,14 +1447,19 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
-            guard !isStartingDictation, transcriber.canStart else {
+            guard beginDictationStart() else {
                 let message = isStartingDictation || transcriber.isStarting ? "Sayso is already starting." : "Sayso is finishing the current dictation."
                 return .failure(id: request.id, command: request.command, error: .init(code: .alreadyRecording, message: message))
             }
-            guard await startDictation() else {
-                return .failure(id: request.id, command: request.command, error: .init(code: .appUnavailable, message: transcriber.error?.localizedDescription ?? "Speech engine did not start."))
+            Task { [weak self] in
+                guard let self else { return }
+                _ = await self.performDictationStart()
             }
-            return .success(id: request.id, command: request.command, result: .init(sessionActive: true))
+            return .success(
+                id: request.id,
+                command: request.command,
+                result: .init(model: "Preparing local speech.", sessionActive: false)
+            )
         case .stopDictation:
             guard transcriber.canStop || isStartingDictation else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .notRecording, message: "Sayso is not listening."))
