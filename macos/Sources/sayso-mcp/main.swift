@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SaysoCore
 import SpeakUpstreamBridge
 
@@ -131,7 +132,7 @@ private enum SaysoMCP {
     private static func encode(_ object: [String: Any]) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
               let text = String(data: data, encoding: .utf8) else {
-            return #"{\"error\":{\"code\":-32603,\"message\":\"Encoding failure\"},\"id\":null,\"jsonrpc\":\"2.0\"}"#
+            return #"{"error":{"code":-32603,"message":"Encoding failure"},"id":null,"jsonrpc":"2.0"}"#
         }
         return text
     }
@@ -140,6 +141,8 @@ private enum SaysoMCP {
 let client = UnixSocketAutomationClient(socketPath: SaysoAutomationEndpoint.socketPath)
 while let line = readLine() {
     if let response = SaysoMCP.handle(line, client: client) {
-        print(response)
+        fputs(response, stdout)
+        fputc(10, stdout)
+        fflush(stdout)
     }
 }
