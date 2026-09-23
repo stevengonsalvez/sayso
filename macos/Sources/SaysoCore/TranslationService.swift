@@ -5,6 +5,14 @@ public protocol Translating: Sendable {
     func translate(_ text: String, from: DictationLanguage, to: DictationLanguage) async throws -> String
 }
 
+public enum ProviderEndpointPolicy {
+    public static func allows(_ url: URL) -> Bool {
+        if url.scheme?.lowercased() == "https" { return true }
+        guard url.scheme?.lowercased() == "http" else { return false }
+        return ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased())
+    }
+}
+
 public struct OpenAICompatibleTranslator: Translating {
     private let client: OpenAICompatibleChatClient
 
@@ -59,6 +67,9 @@ private struct OpenAICompatibleChatClient: Sendable {
     }
 
     func complete(systemPrompt: String, userPrompt: String, failureLabel: String) async throws -> String {
+        guard ProviderEndpointPolicy.allows(baseURL) else {
+            throw SaysoError.unavailable("\(failureLabel) provider must use HTTPS")
+        }
         let body = ChatRequest(
             model: model,
             messages: [.init(role: "system", content: systemPrompt), .init(role: "user", content: userPrompt)],
