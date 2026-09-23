@@ -56,6 +56,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     case escape
     case goBack
     case nextTab
+    case previousTab
 
     static func parse(_ value: String) -> DesktopKey? {
         switch value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -81,6 +82,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .escape: 53
         case .goBack: 33
         case .nextTab: 48
+        case .previousTab: 48
         }
     }
 
@@ -88,6 +90,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         switch self {
         case .goBack: .maskCommand
         case .nextTab: .maskControl
+        case .previousTab: [.maskControl, .maskShift]
         default: []
         }
     }
@@ -605,6 +608,14 @@ public enum ControlPlanner {
                 requiresConfirmation: true
             )
         }
+        if normalized == "previous tab" {
+            return .init(
+                action: .key(.previousTab, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Previous tab",
+                requiresConfirmation: true
+            )
+        }
         if normalized.hasPrefix("type ") {
             let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { throw SaysoError.invalidAction("Say what to type after 'type'.") }
@@ -668,7 +679,7 @@ public enum ControlPlanner {
         if normalized.hasPrefix("quit "), let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
             return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, go back, next tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit bundle ID.")
+        throw SaysoError.invalidAction("Control supports: type, press key, go back, next or previous tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit bundle ID.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
