@@ -30,18 +30,13 @@ import Testing
     #expect(!(await store.remove(id: first.id)))
 }
 
-@Test func historyScopesFilterRouteTranslationAndRecordings() throws {
-    let recordingURL = FileManager.default.temporaryDirectory
-        .appendingPathComponent(UUID().uuidString)
-        .appendingPathExtension("m4a")
-    defer { try? FileManager.default.removeItem(at: recordingURL) }
-    try Data().write(to: recordingURL)
+@Test func historyScopesFilterRouteTranslationAndRecordings() {
     let onDeviceRecording = Transcript(
         text: "Local",
         language: .english,
         route: .local,
         isFinal: true,
-        audioFileURL: recordingURL
+        audioFileURL: URL(fileURLWithPath: "/tmp/Recording-a.m4a")
     )
     let translated = Transcript(
         text: "Original",
@@ -60,12 +55,14 @@ import Testing
     )
     let entries = [onDeviceRecording, translated, provider, emptyTranslation]
 
+    #expect(HistoryFilter.matching(entries, query: "", scope: .all).map(\.id) == entries.map(\.id))
     #expect(HistoryFilter.matching(entries, query: "", scope: .onDevice).map(\.id) == [onDeviceRecording.id, emptyTranslation.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .appleSpeech).map(\.id) == [translated.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .yourProvider).map(\.id) == [provider.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .translated).map(\.id) == [translated.id])
-    #expect(HistoryFilter.matching(entries, query: "", scope: .recordings).map(\.id) == [onDeviceRecording.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .recordings, availableRecordingIDs: [onDeviceRecording.id]).map(\.id) == [onDeviceRecording.id])
     #expect(HistoryFilter.matching(entries, query: "Local", scope: .appleSpeech).isEmpty)
+    #expect(HistoryFilter.matching(entries, query: "अनुवाद", scope: .translated).map(\.id) == [translated.id])
     #expect(!emptyTranslation.hasTranslation)
     #expect(emptyTranslation.displayText == "Fallback")
 }
