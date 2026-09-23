@@ -4,6 +4,7 @@ public enum HistoryScope: String, CaseIterable, Identifiable, Sendable {
     case all
     case onDevice
     case appleSpeech
+    case yourProvider
     case translated
     case recordings
 
@@ -14,6 +15,7 @@ public enum HistoryScope: String, CaseIterable, Identifiable, Sendable {
         case .all: "All"
         case .onDevice: "On-device"
         case .appleSpeech: "Apple Speech"
+        case .yourProvider: "Your provider"
         case .translated: "Translated"
         case .recordings: "Recordings"
         }
@@ -35,8 +37,10 @@ public enum HistoryFilter {
                 transcript.route == .local
             case .appleSpeech:
                 transcript.route == .appleSpeech
+            case .yourProvider:
+                transcript.route == .byok
             case .translated:
-                !(transcript.translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                transcript.hasTranslation
             case .recordings:
                 transcript.audioFileURL != nil
             }
