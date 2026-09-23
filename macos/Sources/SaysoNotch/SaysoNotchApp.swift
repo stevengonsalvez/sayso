@@ -471,7 +471,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let current = lastTranscript {
-            switch VoiceEdits.outcome(transcript.text, to: current.translatedText ?? current.text) {
+            switch VoiceEdits.outcome(transcript.text, to: current.displayText) {
             case let .applied(edited):
                 var updated = current
                 updated.text = edited
@@ -522,7 +522,7 @@ final class SaysoAppModel: ObservableObject {
         let completed = await translated(transcript, settings: settingsSnapshot)
         lastTranscript = completed
         let historyResult = await history.appendResult(completed)
-        let finalText = completed.translatedText ?? completed.text
+        let finalText = completed.displayText
         let copied = TextOutput.copy(finalText)
         if historyResult == .recovered {
             setTranscriptCompletionNotice(copied
@@ -613,7 +613,7 @@ final class SaysoAppModel: ObservableObject {
     private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
         lastTranscript = transcript
         let historyResult = await history.appendResult(transcript)
-        let finalText = transcript.translatedText ?? transcript.text
+        let finalText = transcript.displayText
         let output: TextOutput.DeliveryResult
         if pendingDelivery.settings.autoInsert {
             output = TextOutput.insertOrCopy(
@@ -965,7 +965,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func speakLatest() {
-        guard let text = lastTranscript?.translatedText ?? lastTranscript?.text else { return }
+        guard let text = lastTranscript?.displayText else { return }
         speech.speak(text, language: settings.outputLanguage)
     }
 
@@ -1508,7 +1508,7 @@ private struct DictationWorkspace: View {
             if let transcript = model.lastTranscript {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("LAST RESULT").font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                    Text(transcript.translatedText ?? transcript.text).font(.title3)
+                    Text(transcript.displayText).font(.title3)
                     HStack {
                         Button("Speak") { model.speakLatest() }
                         Text(transcript.route.displayName).foregroundStyle(.secondary)
@@ -2297,7 +2297,7 @@ extension SaysoAppModel {
             let entries = await history.all().prefix(request.resolvedLimit).map {
                 AutomationHistoryEntry(
                     id: $0.id.uuidString,
-                    text: $0.translatedText ?? $0.text,
+                    text: $0.displayText,
                     createdAt: $0.createdAt,
                     model: $0.route.displayName,
                     durationSeconds: nil,
@@ -2325,7 +2325,7 @@ extension SaysoAppModel {
                 await history.append(final)
                 return .success(
                     id: request.id, command: request.command,
-                    result: .init(text: final.translatedText ?? final.text, model: final.route.displayName)
+                    result: .init(text: final.displayText, model: final.route.displayName)
                 )
             } catch let error as SaysoError {
                 return .failure(id: request.id, command: request.command, error: .init(code: .transcriptionFailed, message: error.localizedDescription))
