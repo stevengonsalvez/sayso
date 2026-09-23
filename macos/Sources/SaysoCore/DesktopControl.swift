@@ -54,6 +54,8 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     case right
     case `return`
     case escape
+    case goBack
+    case nextTab
 
     static func parse(_ value: String) -> DesktopKey? {
         switch value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -77,6 +79,16 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .right: 124
         case .return: 36
         case .escape: 53
+        case .goBack: 33
+        case .nextTab: 48
+        }
+    }
+
+    var modifierFlags: CGEventFlags {
+        switch self {
+        case .goBack: .maskCommand
+        case .nextTab: .maskControl
+        default: []
         }
     }
 }
@@ -420,6 +432,22 @@ public enum ControlPlanner {
         if normalized == "scroll up" || normalized == "scroll up a bit" {
             return .init(action: .scroll(lines: 6, expectedFingerprint: snapshot.fingerprint), confidence: 0.90, reason: "Exact scroll command")
         }
+        if normalized == "go back" {
+            return .init(
+                action: .key(.goBack, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Go back",
+                requiresConfirmation: true
+            )
+        }
+        if normalized == "next tab" {
+            return .init(
+                action: .key(.nextTab, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Next tab",
+                requiresConfirmation: true
+            )
+        }
         if normalized.hasPrefix("type ") {
             let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { throw SaysoError.invalidAction("Say what to type after 'type'.") }
@@ -463,7 +491,7 @@ public enum ControlPlanner {
         if normalized.hasPrefix("quit "), let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
             return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, click exact title, scroll, open https URL, activate bundle ID, or quit bundle ID.")
+        throw SaysoError.invalidAction("Control supports: type, press key, go back, next tab, click exact title, scroll, open https URL, activate bundle ID, or quit bundle ID.")
     }
 
     private static func bundleIdentifier(from command: String, prefix: Int) -> String? {
@@ -607,6 +635,8 @@ public final class AXDesktopController: @unchecked Sendable {
                   let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: false) else {
                 throw SaysoError.unavailable("Keyboard event")
             }
+            keyDown.flags = key.modifierFlags
+            keyUp.flags = key.modifierFlags
             keyDown.postToPid(target.processIdentifier)
             keyUp.postToPid(target.processIdentifier)
         }
