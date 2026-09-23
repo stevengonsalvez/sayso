@@ -45,10 +45,12 @@ final class SaysoAppModel: ObservableObject {
     private let notch: NotchPanelController
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
+    private var dictationTargetProcessIdentifier: pid_t?
     private var workspaceObserver: NSObjectProtocol?
 
     init() {
         var saved = UserDefaultsSettingsStore().load()
+        if !saved.route.supportsDictation { saved.route = .local }
         if CommandLine.arguments.contains("--automation-server") {
             saved.desktopControlEnabled = true
             saved.onboardingCompleted = true
@@ -118,6 +120,15 @@ final class SaysoAppModel: ObservableObject {
 
     private func startDictation() async -> Bool {
         notch.show()
+        guard settings.route.supportsDictation else {
+            notice = "Your provider supports translation, not transcription."
+            return false
+        }
+        guard !settings.route.transmitsData || settings.cloudConsentGranted else {
+            notice = "Confirm the Apple Speech data path before recording."
+            return false
+        }
+        dictationTargetProcessIdentifier = lastExternalApplication?.processIdentifier
         await permissions.request(.microphone)
         guard permissions.states[.microphone] == .granted else {
             notice = "Microphone access is required before Sayso can listen."
@@ -197,10 +208,12 @@ final class SaysoAppModel: ObservableObject {
         lastTranscript = transcript
         await history.append(transcript)
         let finalText = transcript.translatedText ?? transcript.text
+        let targetProcessIdentifier = dictationTargetProcessIdentifier
+        dictationTargetProcessIdentifier = nil
         if settings.autoInsert {
             _ = TextOutput.insertOrCopy(
                 finalText,
-                targetProcessIdentifier: lastExternalApplication?.processIdentifier,
+                targetProcessIdentifier: targetProcessIdentifier,
                 restoreClipboardAfterPaste: settings.restoreClipboardAfterPaste
             )
         } else {
@@ -736,8 +749,8 @@ private struct LanguageWorkspace: View {
                         Text(language.displayName)
                         Spacer()
                         Label(
-                            SpeechCapabilities.supports(language) ? "Available" : "Needs cloud route",
-                            systemImage: SpeechCapabilities.supports(language) ? "checkmark.circle.fill" : "cloud"
+                            SpeechCapabilities.supports(language) ? "Available" : "Unavailable",
+                            systemImage: SpeechCapabilities.supports(language) ? "checkmark.circle.fill" : "xmark.circle"
                         )
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(SpeechCapabilities.supports(language) ? SaysoPalette.cobalt : SaysoPalette.muted)
@@ -758,11 +771,11 @@ private struct ModelsWorkspace: View {
         Form {
             Section("Speech route") {
                 Picker("Active route", selection: $model.settings.route) {
-                    ForEach(ProviderRoute.allCases) { route in
+                    ForEach(ProviderRoute.dictationRoutes) { route in
                         Text(route.displayName).tag(route)
                     }
                 }
-                ForEach(ProviderRoute.allCases) { route in
+                ForEach(ProviderRoute.dictationRoutes) { route in
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(route.displayName).fontWeight(.semibold)
@@ -808,7 +821,7 @@ private struct SaysoSettingsView: View {
                 Text(SpeechCapabilities.supports(model.settings.language) ? "Available on this Mac" : "Unavailable on this Mac, choose another language or cloud route")
                     .font(.caption).foregroundStyle(SpeechCapabilities.supports(model.settings.language) ? .secondary : SaysoPalette.crimson)
                 Picker("Speech route", selection: $model.settings.route) {
-                    ForEach(ProviderRoute.allCases) { Text($0.displayName).tag($0) }
+                    ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Translate final text", isOn: $model.settings.translationEnabled)
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
@@ -1028,14 +1041,10 @@ private struct OnboardingWizard: View {
                         Text("On-device keeps recognition local when macOS supports the selected language. Apple Speech can use Apple’s recognition service.")
                             .foregroundStyle(.secondary)
                         Picker("Speech route", selection: $model.settings.route) {
-                            ForEach(ProviderRoute.allCases) { Text($0.displayName).tag($0) }
+                            ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.segmented)
-                        if model.settings.route == .byok {
-                            Label("Your-provider transcription is not installed yet. Choose On-device or Apple Speech to continue.", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.amber)
-                        } else if model.settings.route.transmitsData {
+                        if model.settings.route.transmitsData {
                             Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
                         }
                     }
@@ -1090,7 +1099,7 @@ private struct OnboardingWizard: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(page == 1 && model.settings.route == .byok)
+                .disabled(page == 1 && model.settings.route.transmitsData && !model.settings.cloudConsentGranted)
             }
         }
         .padding(32)
