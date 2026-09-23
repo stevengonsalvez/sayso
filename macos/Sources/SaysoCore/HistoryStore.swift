@@ -34,7 +34,14 @@ public struct HistoryInsights: Equatable, Sendable {
 }
 
 public actor HistoryStore {
+    private enum LoadResult {
+        case missing
+        case entries([Transcript])
+        case unreadable
+    }
+
     private let fileURL: URL
+    private let recordingsDirectory: URL
     private let maximumEntries: Int
     private let fileManager: FileManager
 
@@ -46,19 +53,27 @@ public actor HistoryStore {
             .appendingPathComponent("SaysoNotch", isDirectory: true)
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         self.fileURL = root.appendingPathComponent("history.json")
+        self.recordingsDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
     }
 
-    public init(fileURL: URL, maximumEntries: Int = 500) {
+    public init(
+        fileURL: URL,
+        maximumEntries: Int = 500,
+        recordingsDirectory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
         self.fileURL = fileURL
+        self.recordingsDirectory = recordingsDirectory
+            ?? fileURL.deletingLastPathComponent().appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
-        self.fileManager = .default
+        self.fileManager = fileManager
     }
 
     public func all() -> [Transcript] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        return (try? JSONDecoder().decode([Transcript].self, from: data)) ?? []
+        guard case let .entries(entries) = load() else { return [] }
+        return entries
     }
 
     public func matching(_ query: String) -> [Transcript] {
@@ -67,7 +82,15 @@ public actor HistoryStore {
 
     @discardableResult
     public func append(_ transcript: Transcript) -> Bool {
-        let existing = all()
+        let existing: [Transcript]
+        switch load() {
+        case .missing:
+            existing = []
+        case let .entries(entries):
+            existing = entries
+        case .unreadable:
+            return false
+        }
         guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
             return false
@@ -101,7 +124,8 @@ public actor HistoryStore {
 
     @discardableResult
     public func remove(id: Transcript.ID) -> Bool {
-        var entries = all()
+        guard case let .entries(loadedEntries) = load() else { return false }
+        var entries = loadedEntries
         let removed = entries.filter { $0.id == id }
         let originalCount = entries.count
         entries.removeAll { $0.id == id }
@@ -112,15 +136,37 @@ public actor HistoryStore {
 
     @discardableResult
     public func clear() -> Bool {
-        let entries = all()
+        let entries: [Transcript]
+        switch load() {
+        case .missing:
+            entries = []
+        case let .entries(loadedEntries):
+            entries = loadedEntries
+        case .unreadable:
+            return false
+        }
         guard persist([]) else { return false }
         releaseManagedAudio(entries.map(\.audioFileURL), unlessReferencedBy: [])
         return true
     }
 
-    public func reclaimUnreferencedAudio() {
-        let retained = Set(all().compactMap(\.audioFileURL).map(\.standardizedFileURL))
-        SessionAudioArchive.sweepUnreferencedRecordings(retaining: retained, fileManager: fileManager)
+    public func reclaimUnreferencedAudio(olderThan: Date? = nil) {
+        let entries: [Transcript]
+        switch load() {
+        case .missing:
+            entries = []
+        case let .entries(loadedEntries):
+            entries = loadedEntries
+        case .unreadable:
+            return
+        }
+        let retained = Set(entries.compactMap(\.audioFileURL).map(\.standardizedFileURL))
+        SessionAudioArchive.sweepUnreferencedRecordings(
+            retaining: retained,
+            directory: recordingsDirectory,
+            olderThan: olderThan,
+            fileManager: fileManager
+        )
     }
 
     public func plainTextExport() -> String {
@@ -138,6 +184,16 @@ public actor HistoryStore {
         }
     }
 
+    private func load() -> LoadResult {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return .missing }
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return .entries(try JSONDecoder().decode([Transcript].self, from: data))
+        } catch {
+            return .unreadable
+        }
+    }
+
     private func clearMissingAudioReference(in transcript: inout Transcript) {
         guard let url = transcript.audioFileURL,
               url.isFileURL,
@@ -149,7 +205,11 @@ public actor HistoryStore {
         let retained = Set(entries.compactMap(\.audioFileURL).map { $0.standardizedFileURL })
         Set(urls.compactMap { $0?.standardizedFileURL }).forEach { url in
             guard !retained.contains(url) else { return }
-            SessionAudioArchive.deleteManagedRecording(url, fileManager: fileManager)
+            SessionAudioArchive.deleteManagedRecording(
+                url,
+                directory: recordingsDirectory,
+                fileManager: fileManager
+            )
         }
     }
 }
