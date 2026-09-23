@@ -94,6 +94,22 @@ private func pcmBuffer(_ value: Float = 0.25) -> AVAudioPCMBuffer {
     #expect(await recorder.samples == [0.25])
 }
 
+@Test func fluidAudioPumpDrainsTapBuffersReservedBeforeStop() async {
+    actor Counter {
+        var value = 0
+        func increment() { value += 1 }
+    }
+
+    let counter = Counter()
+    let pump = FluidAudioBufferPump { _ in await counter.increment() }
+    for _ in 0..<FluidAudioBufferPump.capacity {
+        pump.submit(pcmBuffer())
+    }
+
+    #expect(await pump.closeAndDrain() == .drained(processed: FluidAudioBufferPump.capacity, dropped: 0))
+    #expect(await counter.value == FluidAudioBufferPump.capacity)
+}
+
 @Test func fluidAudioPumpReturnsProcessorFailureAfterDrain() async {
     let pump = FluidAudioBufferPump { _ in throw PumpFailure.model }
 
