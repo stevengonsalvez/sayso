@@ -37,12 +37,18 @@ final class SaysoAppModel: ObservableObject {
     private final class ControlCommandRun {
         let commands: [String]
         let target: NSRunningApplication
+        let installedApplications: [InstalledDesktopApplication]
         var nextCommandIndex = 0
         var hasStarted = false
 
-        init(commands: [String], target: NSRunningApplication) {
+        init(
+            commands: [String],
+            target: NSRunningApplication,
+            installedApplications: [InstalledDesktopApplication]
+        ) {
             self.commands = commands
             self.target = target
+            self.installedApplications = installedApplications
         }
     }
 
@@ -86,6 +92,8 @@ final class SaysoAppModel: ObservableObject {
     private var permissionsChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
+    private var controlPreparationTask: Task<Void, Never>?
+    private var controlPreparationID: UUID?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
     private var onboardingTestSessionID: UUID?
@@ -346,6 +354,7 @@ final class SaysoAppModel: ObservableObject {
                 language: settings.language,
                 route: settings.route,
                 handsFree: settings.handsFree,
+                saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
                         guard self?.voiceEditCapture == nil else { return }
@@ -732,6 +741,9 @@ final class SaysoAppModel: ObservableObject {
         } else {
             automation.stop()
             pendingControlStep = nil
+            controlPreparationTask?.cancel()
+            controlPreparationTask = nil
+            controlPreparationID = nil
             if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
         }
         save()
@@ -830,15 +842,39 @@ final class SaysoAppModel: ObservableObject {
 
     func runControl(_ command: String) {
         guard desktopControlEnabled() else { return }
-        guard controlRun == nil else {
+        guard controlRun == nil, controlPreparationTask == nil else {
             controlStatus = "Control command already active."
             return
         }
         do {
             let target = try controlTarget()
-            let run = ControlCommandRun(commands: try ControlPlanner.commands(from: command), target: target)
-            controlRun = run
-            executeControlRun(run)
+            let commands = try ControlPlanner.commands(from: command)
+            let preparationID = UUID()
+            controlPreparationID = preparationID
+            controlStatus = "Preparing control command"
+            controlPreparationTask = Task { [weak self] in
+                let applications: [InstalledDesktopApplication]
+                if commands.contains(where: { ControlPlanner.requiresInstalledApplicationCatalog(for: $0) }) {
+                    applications = await Task.detached(priority: .utility) {
+                        InstalledDesktopApplication.available()
+                    }.value
+                } else {
+                    applications = []
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.controlPreparationID == preparationID,
+                      self.controlRun == nil else { return }
+                self.controlPreparationTask = nil
+                self.controlPreparationID = nil
+                let run = ControlCommandRun(
+                    commands: commands,
+                    target: target,
+                    installedApplications: applications
+                )
+                self.controlRun = run
+                self.executeControlRun(run)
+            }
         } catch {
             controlStatus = error.localizedDescription
         }
@@ -866,6 +902,13 @@ final class SaysoAppModel: ObservableObject {
 
     func cancelControl() {
         pendingControlStep = nil
+        if controlPreparationTask != nil {
+            controlPreparationTask?.cancel()
+            controlPreparationTask = nil
+            controlPreparationID = nil
+            controlStatus = "Control command cancelled."
+            return
+        }
         guard let run = controlRun else {
             controlStatus = "No active control task"
             return
@@ -899,7 +942,11 @@ final class SaysoAppModel: ObservableObject {
                     } else {
                         let snapshot = try controller.capture(application: run.target)
                         currentSnapshot = snapshot
-                        step = try ControlPlanner.plan(command: run.commands[run.nextCommandIndex], snapshot: snapshot)
+                        step = try ControlPlanner.plan(
+                            command: run.commands[run.nextCommandIndex],
+                            snapshot: snapshot,
+                            installedApplications: run.installedApplications
+                        )
                         isApprovedStep = false
                         controlStatus = "Planned: \(step.reason)"
                         if ControlPolicy.requiresConfirmation(step) {
@@ -1274,6 +1321,7 @@ private struct HistoryWorkspace: View {
     @State private var query = ""
     @State private var confirmClear = false
     @State private var deletionCandidate: Transcript?
+    @StateObject private var playback = HistoryAudioPlayback()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1298,6 +1346,16 @@ private struct HistoryWorkspace: View {
                         Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let audioFileURL = entry.audioFileURL,
+                       FileManager.default.fileExists(atPath: audioFileURL.path) {
+                        Button {
+                            playback.toggle(entryID: entry.id, url: audioFileURL)
+                        } label: {
+                            Image(systemName: playback.activeID == entry.id ? "pause.fill" : "play.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(playback.activeID == entry.id ? "Pause recording" : "Play recording")
+                    }
                     Button {
                         deletionCandidate = entry
                     } label: {
@@ -1310,10 +1368,11 @@ private struct HistoryWorkspace: View {
         }
         .navigationTitle("History")
         .task { entries = await model.history.all() }
+        .onDisappear { playback.stop() }
         .alert("Clear Sayso history?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) { Task { await model.history.clear(); entries = [] } }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This removes saved transcripts from this Mac.") }
+        } message: { Text("This removes saved transcripts and retained audio from this Mac.") }
         .alert("Delete transcript?", isPresented: Binding(
             get: { deletionCandidate != nil },
             set: { if !$0 { deletionCandidate = nil } }
@@ -1329,8 +1388,37 @@ private struct HistoryWorkspace: View {
             }
             Button("Cancel", role: .cancel) { deletionCandidate = nil }
         } message: {
-            Text("This removes this saved transcript from this Mac.")
+            Text("This removes this saved transcript and its retained audio from this Mac.")
         }
+    }
+}
+
+@MainActor
+private final class HistoryAudioPlayback: NSObject, ObservableObject, @preconcurrency AVAudioPlayerDelegate {
+    @Published private(set) var activeID: UUID?
+    private var player: AVAudioPlayer?
+
+    func toggle(entryID: UUID, url: URL) {
+        if activeID == entryID, player?.isPlaying == true {
+            stop()
+            return
+        }
+        stop()
+        guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
+        player.delegate = self
+        guard player.play() else { return }
+        self.player = player
+        activeID = entryID
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+        activeID = nil
+    }
+
+    func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
+        stop()
     }
 }
 
@@ -1575,6 +1663,10 @@ private struct SaysoSettingsView: View {
                 Toggle("Restore clipboard after paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
                     .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free, stop after 1.2 seconds of silence", isOn: $model.settings.handsFree)
+                Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
+                Text("Audio stays on this Mac. Turn this off when you only want saved text.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Overlay") {
                 Picker("Presentation", selection: Binding(
