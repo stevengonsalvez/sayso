@@ -53,10 +53,12 @@ public actor HistoryStore {
     private let recordingsDirectory: URL
     private let maximumEntries: Int
     private let fileManager: FileManager
+    private let persistEntries: @Sendable (Data, URL) -> Bool
 
     public init(
         fileManager: FileManager = .default,
-        maximumEntries: Int = 500
+        maximumEntries: Int = 500,
+        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SaysoNotch", isDirectory: true)
@@ -65,19 +67,22 @@ public actor HistoryStore {
         self.recordingsDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
+        self.persistEntries = persistEntries
     }
 
     public init(
         fileURL: URL,
         maximumEntries: Int = 500,
         recordingsDirectory: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         self.fileURL = fileURL
         self.recordingsDirectory = recordingsDirectory
             ?? fileURL.deletingLastPathComponent().appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
+        self.persistEntries = persistEntries
     }
 
     public func all() -> [Transcript] {
@@ -152,7 +157,11 @@ public actor HistoryStore {
         if !expired.isEmpty { entries.removeLast(expired.count) }
         discarded += expired
         guard persist(entries) else {
-            releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
+            releaseManagedAudio(
+                [transcript.audioFileURL],
+                retaining: recovered ? recoverableAudioURLs() : [],
+                unlessReferencedBy: existing
+            )
             return .failed
         }
         releaseManagedAudio(discarded.map(\.audioFileURL), unlessReferencedBy: entries)
@@ -221,6 +230,10 @@ public actor HistoryStore {
 
     private func persist(_ entries: [Transcript]) -> Bool {
         guard let data = try? JSONEncoder().encode(entries) else { return false }
+        return persistEntries(data, fileURL)
+    }
+
+    public static func write(_ data: Data, _ fileURL: URL) -> Bool {
         do {
             try data.write(to: fileURL, options: .atomic)
             return true
