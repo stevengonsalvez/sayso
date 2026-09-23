@@ -1393,7 +1393,14 @@ private struct HistoryWorkspace: View {
         .alert("Clear Sayso history?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) {
                 playback.stop()
-                Task { await model.history.clear(); entries = [] }
+                Task {
+                    if await model.history.clear() {
+                        entries = []
+                        model.lastTranscript = nil
+                    } else {
+                        model.notice = "Could not clear saved history."
+                    }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts and retained audio from this Mac.") }
@@ -1406,6 +1413,9 @@ private struct HistoryWorkspace: View {
                     if playback.activeID == candidate.id { playback.stop() }
                     if await model.history.remove(id: candidate.id) {
                         entries.removeAll { $0.id == candidate.id }
+                        if model.lastTranscript?.id == candidate.id { model.lastTranscript = nil }
+                    } else {
+                        model.notice = "Could not delete saved transcript."
                     }
                     deletionCandidate = nil
                 }
