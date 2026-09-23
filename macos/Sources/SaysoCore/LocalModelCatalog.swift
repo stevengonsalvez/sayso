@@ -139,7 +139,7 @@ public struct LocalModelManifest: Identifiable, Codable, Equatable, Sendable {
 /// intentionally remain separate. A manifest entry is never a selectable dictation route.
 public enum LocalModelCatalog {
     private static let sherpaRelease = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models"
-    private static let indicRelease = "https://huggingface.co/parismitaglobalsolutions/indicconformer-sherpa-onnx/resolve/main"
+    private static let indicRelease = "https://huggingface.co/parismitaglobalsolutions/indicconformer-sherpa-onnx/resolve/9721eb71eea141fae0982cfcdb9dd2e3d4953c4a"
     private static let supportedHosts: Set<LocalModelHostArchitecture> = [.appleSilicon, .intel]
     private static let indicLanguages: Set<DictationLanguage> = [
         .hindi, .tamil, .malayalam, .bengali, .gujarati, .kannada,
@@ -192,6 +192,12 @@ public enum LocalModelCatalog {
             id: "ai4bharat-indicconformer-ml", displayName: "AI4Bharat Malayalam",
             language: .malayalam, languageCode: "ml", modelSizeBytes: 197_595_555,
             modelSHA256: "dcbdfa9f773db910508b40b703cb76c5974e8d4c6f123ea81265b40853c3f0c2"
+        ),
+        indic(
+            id: "ai4bharat-indicconformer-pa", displayName: "AI4Bharat Punjabi",
+            language: .punjabi, languageCode: "pa", modelSizeBytes: 197_595_548,
+            modelSHA256: "ccd02e5ae7e71b6719de517c2819ce570247c1d9e79b3348e76cfd5eb3e5dbbc",
+            recommended: true
         ),
         archive(
             id: "sherpa-onnx-moonshine-tiny-en-int8",
@@ -259,7 +265,8 @@ public enum LocalModelCatalog {
         case .tamil: model(id: "ai4bharat-indicconformer-ta")!
         case .hindi: model(id: "ai4bharat-indicconformer-hi")!
         case .malayalam: model(id: "ai4bharat-indicconformer-ml")!
-        case .automatic, .bengali, .gujarati, .kannada, .marathi, .punjabi, .telugu, .urdu:
+        case .punjabi: model(id: "ai4bharat-indicconformer-pa")!
+        case .automatic, .bengali, .gujarati, .kannada, .marathi, .telugu, .urdu:
             model(id: "sherpa-onnx-whisper-tiny")!
         case .english: recommendedEnglishModel
         }
@@ -343,7 +350,8 @@ public enum LocalModelCatalog {
         language: DictationLanguage,
         languageCode: String,
         modelSizeBytes: Int64,
-        modelSHA256: String
+        modelSHA256: String,
+        recommended: Bool = false
     ) -> LocalModelManifest {
         let tokensSizeBytes: Int64 = 67_605
         let tokensSHA256 = "ee60967630213f31951817ac8b402b92ec18cce80718a24a49b388e56672dfb2"
@@ -360,7 +368,7 @@ public enum LocalModelCatalog {
                     url: URL(string: "\(indicRelease)/tokens.txt")!,
                     relativePath: "tokens.txt", byteCount: tokensSizeBytes, sha256: tokensSHA256
                 ),
-            ], expectedSizeBytes: modelSizeBytes + tokensSizeBytes
+            ], expectedSizeBytes: modelSizeBytes + tokensSizeBytes, isRecommended: recommended
         )
     }
 }
