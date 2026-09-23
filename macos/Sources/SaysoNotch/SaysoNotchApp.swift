@@ -213,7 +213,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startOnboardingTest() {
-        guard !transcriber.canStop else { return }
+        guard !isOnboardingTestActive, !transcriber.canStop else { return }
         requestDictationStart(onboardingTest: true)
     }
 
@@ -344,7 +344,7 @@ final class SaysoAppModel: ObservableObject {
 
     func accept(_ transcript: Transcript) {
         if applyPendingVoiceMode() { return }
-        if activeRecordingSession?.id == onboardingTestSessionID {
+        if let testID = onboardingTestSessionID, activeRecordingSession?.id == testID {
             guard let delivery = takeActiveDictationDelivery() else { return }
             Task { await finishOnboardingTest(transcript, session: delivery.session) }
             return
@@ -465,7 +465,6 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func finishOnboardingTest(_ transcript: Transcript, session: RecordingSession) async {
-        lastTranscript = transcript
         onboardingTestTranscriptID = transcript.id
         onboardingTestSessionID = nil
         isOnboardingTestActive = false
@@ -526,7 +525,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func clearOnboardingTest(for session: RecordingSession?) {
-        guard session?.id == onboardingTestSessionID else { return }
+        guard let testID = onboardingTestSessionID, session?.id == testID else { return }
         onboardingTestSessionID = nil
         isOnboardingTestActive = false
     }
@@ -1633,7 +1632,7 @@ private struct OnboardingWizard: View {
                         Text("Choose the spoken language. Automatic follows your Mac, while an explicit language keeps recognition focused.")
                             .foregroundStyle(.secondary)
                         Picker("Spoken language", selection: $model.settings.language) {
-                            ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
+                            ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.menu)
                         Label("Indian languages included: Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Punjabi, Telugu, and Urdu.", systemImage: "character.bubble")
@@ -1796,12 +1795,13 @@ private struct OnboardingWizard: View {
 
     private var primaryActionTitle: String {
         guard page == steps.count - 1 else { return "Continue" }
-        if model.isStartingDictation {
-            return model.isOnboardingTestActive ? "Cancel test start" : "Dictation is starting"
+        if model.isOnboardingTestActive {
+            if model.isStartingDictation { return "Cancel test start" }
+            if model.transcriber.canStop { return "Stop test" }
+            return "Verifying test"
         }
-        if model.transcriber.canStop {
-            return model.isOnboardingTestActive ? "Stop test" : "Stop active dictation"
-        }
+        if model.isStartingDictation { return "Dictation is starting" }
+        if model.transcriber.canStop { return "Stop active dictation" }
         if model.onboardingTestTranscriptID != nil { return "Finish setup" }
         return "Start test dictation"
     }
@@ -1811,15 +1811,17 @@ private struct OnboardingWizard: View {
         case 1:
             engineReady
         case steps.count - 1:
-            requiredPermissionsGranted
+            model.isOnboardingTestActive || requiredPermissionsGranted
         default:
             true
         }
     }
 
     private func performFinalStep() {
-        if model.isOnboardingTestActive && (model.isStartingDictation || model.transcriber.canStop) {
-            model.startOrStopDictation()
+        if model.isOnboardingTestActive {
+            if model.isStartingDictation || model.transcriber.canStop {
+                model.startOrStopDictation()
+            }
         } else if model.isStartingDictation || model.transcriber.canStop {
             model.notice = "Stop active dictation before testing setup."
         } else if model.onboardingTestTranscriptID != nil {
