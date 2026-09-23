@@ -101,6 +101,9 @@ public final class SessionAudioArchive: @unchecked Sendable {
             throw SaysoError.invalidAction("Choose a supported audio file.")
         }
         let attributes = try fileManager.attributesOfItem(atPath: resolvedSourceURL.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw SaysoError.invalidAction("Choose an audio file, not a folder.")
+        }
         if let size = attributes[.size] as? NSNumber, size.intValue > maximumImportedAudioBytes {
             throw SaysoError.invalidAction("Audio file exceeds 512 MB")
         }
