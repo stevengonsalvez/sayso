@@ -253,6 +253,11 @@ class WakeWordService : Service() {
             .build()
     }
 
+    fun updatePhrase(phrase: String) {
+        detector?.wakeWordPhrase = phrase
+        Log.i(TAG, "Updated wake word phrase in running detector: $phrase")
+    }
+
     companion object {
         private const val TAG = "SaysoWakeWord"
         private const val CHANNEL_ID = "sayso_wake_word"
@@ -262,6 +267,10 @@ class WakeWordService : Service() {
         @Volatile
         var instance: WakeWordService? = null
             private set
+
+        fun updatePhrase(phrase: String) {
+            instance?.updatePhrase(phrase)
+        }
 
         fun start(context: Context) {
             if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -287,7 +296,8 @@ class WakeWordService : Service() {
 
         fun restart(context: Context) {
             if (instance != null) {
-                stop(context)
+                instance?.updatePhrase(ai.sayso.dictation.AppGraph.settings.wakeWordPhrase)
+            } else {
                 start(context)
             }
         }
