@@ -122,6 +122,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     public var language: DictationLanguage
     public var route: ProviderRoute
     public var isFinal: Bool
+    public var audioFileURL: URL?
 
     public init(
         id: UUID = UUID(),
@@ -130,7 +131,8 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         translatedText: String? = nil,
         language: DictationLanguage,
         route: ProviderRoute,
-        isFinal: Bool
+        isFinal: Bool,
+        audioFileURL: URL? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -139,6 +141,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         self.language = language
         self.route = route
         self.isFinal = isFinal
+        self.audioFileURL = audioFileURL
     }
 }
 
@@ -152,6 +155,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var autoInsert = true
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
+    public var saveSessionAudio = false
     public var soundCues = true
     public var onboardingCompleted = false
     public var cloudConsentGranted = false
@@ -172,7 +176,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage
-        case autoInsert, restoreClipboardAfterPaste, handsFree, soundCues, onboardingCompleted
+        case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel
         case lexicon, dictationProfile
@@ -193,6 +197,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
         restoreClipboardAfterPaste = decoded(Bool.self, .restoreClipboardAfterPaste, fallback: restoreClipboardAfterPaste)
         handsFree = decoded(Bool.self, .handsFree, fallback: handsFree)
+        saveSessionAudio = decoded(Bool.self, .saveSessionAudio, fallback: saveSessionAudio)
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
