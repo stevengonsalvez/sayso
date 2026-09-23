@@ -12,6 +12,22 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     return try #require(archive.finish())
 }
 
+private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Sendable {
+    private let protectedURL: URL
+
+    init(protectedURL: URL) {
+        self.protectedURL = protectedURL.standardizedFileURL
+        super.init()
+    }
+
+    override func removeItem(at url: URL) throws {
+        guard url.standardizedFileURL != protectedURL else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.removeItem(at: url)
+    }
+}
+
 @Test func sessionAudioArchivePersistsReadableAudioOnlyAfterFramesArrive() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -115,6 +131,23 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     #expect(FileManager.default.fileExists(atPath: recentURL.path))
 }
 
+@Test func sessionAudioArchiveRetainsReferenceThroughSymlinkedDirectory() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let actualDirectory = root.appendingPathComponent("Actual", isDirectory: true)
+    let linkedDirectory = root.appendingPathComponent("Linked", isDirectory: true)
+    let audioURL = try finishedManagedRecording(in: actualDirectory)
+    try FileManager.default.createSymbolicLink(at: linkedDirectory, withDestinationURL: actualDirectory)
+    let linkedAudioURL = linkedDirectory.appendingPathComponent(audioURL.lastPathComponent)
+
+    SessionAudioArchive.sweepUnreferencedRecordings(
+        retaining: Set([linkedAudioURL]),
+        directory: actualDirectory
+    )
+
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
+}
+
 @Test func historyRemovalDeletesItsManagedAudioAfterMetadataPersists() async throws {
     let recordingDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: recordingDirectory) }
@@ -206,6 +239,25 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
 
     #expect(await store.append(.init(text: "Final", language: .english, route: .local, isFinal: true, audioFileURL: finalAudioURL)))
     #expect(await store.all().first?.audioFileURL == nil)
+}
+
+@Test func clearingHistoryPreservesAudioWhenHistoryRemovalFails() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let audioURL = try finishedManagedRecording(in: recordingDirectory)
+    let transcript = Transcript(text: "Existing", language: .english, route: .local, isFinal: true, audioFileURL: audioURL)
+    try JSONEncoder().encode([transcript]).write(to: historyURL)
+    let store = HistoryStore(
+        fileURL: historyURL,
+        recordingsDirectory: recordingDirectory,
+        fileManager: HistoryRemovalFailingFileManager(protectedURL: historyURL)
+    )
+
+    #expect(!(await store.clear()))
+    #expect(FileManager.default.fileExists(atPath: historyURL.path))
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
 }
 
 @Test func corruptHistoryAppendMovesBytesAsideAndPreservesManagedAudio() async throws {
