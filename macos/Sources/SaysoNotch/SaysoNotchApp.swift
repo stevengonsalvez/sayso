@@ -77,7 +77,7 @@ final class SaysoAppModel: ObservableObject {
     let localEnglishModel: FluidAudioLocalModelManager
     let localPunjabiModel: SherpaPunjabiModelManager
     let speech = SpeechOutput()
-    let history = HistoryStore()
+    let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
     let controller = AXDesktopController()
