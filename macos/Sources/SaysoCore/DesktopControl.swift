@@ -58,8 +58,9 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         switch self {
         case .quit:
             return true
-        case let .press(elementID, _):
-            return ControlPolicy.isDestructiveControlTitle(elementID.split(separator: "|", maxSplits: 1).last.map(String.init) ?? "")
+        case .press:
+            // Element IDs are opaque AX locators. Treat an unlabelled press as review-only.
+            return true
         default:
             return false
         }
@@ -71,16 +72,20 @@ public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
     public let action: DesktopAction
     public let confidence: Double
     public let reason: String
+    /// AX title captured with a press action. Never recover this from its opaque element ID.
+    public let candidateTitle: String?
     public let requiresConfirmation: Bool
 
     public init(
         id: UUID = UUID(), action: DesktopAction, confidence: Double, reason: String,
+        candidateTitle: String? = nil,
         requiresConfirmation: Bool = false
     ) {
         self.id = id
         self.action = action
         self.confidence = confidence
         self.reason = reason
+        self.candidateTitle = candidateTitle
         self.requiresConfirmation = requiresConfirmation
     }
 }
@@ -130,21 +135,46 @@ public enum ControlEffect: String, Codable, Equatable, Sendable {
 public enum ControlPolicy {
     public static let minimumConfidence = 0.60
     private static let destructiveWords = [
-        "quit", "close", "delete", "remove", "trash", "empty", "discard", "clear",
-        "send", "submit", "post", "share", "publish", "pay", "purchase", "order", "transfer"
+        "quit", "close", "delete", "remove", "trash", "empty", "discard", "clear", "erase",
+        "archive", "uninstall", "revoke", "deactivate", "cancel", "reset",
+        "send", "resend", "reply", "forward", "submit", "post", "share", "publish",
+        "pay", "purchase", "order", "transfer", "book", "confirm", "approve"
     ]
+    private static let destructiveStems = [
+        "delet", "remov", "clos", "clear", "empt", "eras", "archiv", "uninstall", "revok",
+        "deactivat", "cancel", "reset", "send", "resend", "repl", "forward", "submi", "post",
+        "shar", "publish", "pay", "purchas", "order", "transfer", "book", "confirm", "approv", "unsend"
+    ]
+    private static let destructiveSuffixes: Set<String> = ["", "s", "es", "d", "ed", "ing", "ion", "ation", "al", "ment", "led", "ted", "red", "ied", "ies", "ting", "tted"]
+    private static let destructiveIrregularForms: Set<String> = ["sent"]
 
     public static func canAutoRun(_ step: ControlPlanStep) -> Bool {
         step.confidence >= minimumConfidence && !requiresConfirmation(step)
     }
 
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
-        step.requiresConfirmation || step.action.isDestructive
+        if case .press = step.action {
+            guard let candidateTitle = step.candidateTitle else { return true }
+            return step.requiresConfirmation || isDestructiveControlTitle(candidateTitle)
+        }
+        return step.requiresConfirmation || step.action.isDestructive
     }
 
     public static func isDestructiveControlTitle(_ title: String) -> Bool {
-        let normalized = title.lowercased()
-        return destructiveWords.contains { normalized.contains($0) }
+        let separated = title.replacingOccurrences(
+            of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression
+        )
+        let words = separated
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .map { $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil).lowercased() }
+        return words.contains { word in
+            destructiveWords.contains(word) || destructiveIrregularForms.contains(word)
+                || destructiveStems.contains { stem in
+                    guard word.hasPrefix(stem) else { return false }
+                    return destructiveSuffixes.contains(String(word.dropFirst(stem.count)))
+                }
+        }
     }
 }
 
@@ -302,6 +332,38 @@ public enum ControlObservation {
 }
 
 public enum ControlPlanner {
+    public static func commands(from command: String) throws -> [String] {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw SaysoError.invalidAction("Say a control command.") }
+        if trimmed.lowercased().hasPrefix("type ") { return [trimmed] }
+        let normalized = trimmed.lowercased()
+        guard !normalized.hasPrefix("then "), !normalized.hasSuffix(" then") else {
+            throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
+        }
+        var commands: [String] = []
+        var remaining = trimmed[...]
+        while let separator = remaining.range(of: " then ", options: .caseInsensitive) {
+            let current = remaining[..<separator.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !current.isEmpty else {
+                throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
+            }
+            commands.append(current)
+            remaining = remaining[separator.upperBound...]
+            if remaining.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("type ") {
+                break
+            }
+        }
+        let tail = remaining.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tail.isEmpty else {
+            throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
+        }
+        commands.append(tail)
+        guard commands.allSatisfy({ !$0.isEmpty }) else {
+            throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
+        }
+        return commands
+    }
+
     public static func plan(command: String, snapshot: DesktopSnapshot) throws -> ControlPlanStep {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
@@ -333,7 +395,7 @@ public enum ControlPlanner {
                 action: .press(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
                 confidence: 0.85,
                 reason: "Exact visible control",
-                requiresConfirmation: ControlPolicy.isDestructiveControlTitle(element.title)
+                candidateTitle: element.title
             )
         }
         if normalized.hasPrefix("activate "), let identifier = bundleIdentifier(from: trimmed, prefix: 9) {
@@ -392,15 +454,16 @@ public final class AXDesktopController: @unchecked Sendable {
         let application = AXUIElementCreateApplication(app.processIdentifier)
         let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: application)
         let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
-        let subrole = focused.flatMap { copyAttribute(kAXSubroleAttribute as CFString, from: $0) as? String } ?? ""
+        let focusedRole = focused.flatMap { copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String } ?? ""
+        let focusedSubrole = focused.flatMap { copyAttribute(kAXSubroleAttribute as CFString, from: $0) as? String } ?? ""
         let candidateSnapshot = try candidateCapture.capture(application: app)
         return DesktopSnapshot(
             processIdentifier: app.processIdentifier,
             applicationName: app.localizedName ?? "Unknown",
             windowTitle: window.flatMap { copyAttribute(kAXTitleAttribute as CFString, from: $0) as? String } ?? "",
-            focusedRole: focused.flatMap { copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String } ?? "",
+            focusedRole: focusedRole,
             focusedValue: focused.flatMap { copyAttribute(kAXValueAttribute as CFString, from: $0) as? String } ?? "",
-            isProtected: subrole == kAXSecureTextFieldSubrole as String,
+            isProtected: AXCandidateCapturePolicy.isProtected(role: focusedRole, subrole: focusedSubrole),
             elements: candidateSnapshot.candidates.filter(\.state.isTargetable).map {
                 DesktopElement(id: $0.id.rawValue, role: $0.role, title: $0.title)
             }
@@ -506,8 +569,9 @@ public final class AXDesktopController: @unchecked Sendable {
         guard let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: application) else {
             throw SaysoError.unavailable("Focused text field")
         }
-        let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: focused) as? String
-        guard subrole != kAXSecureTextFieldSubrole as String else { throw SaysoError.protectedTarget }
+        let role = copyAttribute(kAXRoleAttribute as CFString, from: focused) as? String ?? ""
+        let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: focused) as? String ?? ""
+        guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { throw SaysoError.protectedTarget }
         guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
             throw SaysoError.invalidAction("Text field rejected insertion")
         }
