@@ -457,6 +457,7 @@ public enum SelectedTextEdit {
 
     public final class Capture {
         public let selectedText: String
+        public let targetProcessIdentifier: pid_t
         fileprivate let field: AXUIElement
         fileprivate let processIdentifier: pid_t
         fileprivate let applicationIdentity: TextOutputTargetIdentity
@@ -470,6 +471,7 @@ public enum SelectedTextEdit {
         ) {
             self.field = field
             self.processIdentifier = processIdentifier
+            targetProcessIdentifier = processIdentifier
             self.applicationIdentity = applicationIdentity
             self.anchor = anchor
             selectedText = anchor.selectedText
