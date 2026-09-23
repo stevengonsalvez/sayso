@@ -201,7 +201,8 @@ final class SaysoAppModel: ObservableObject {
     private func translated(_ transcript: Transcript) async -> Transcript {
         let currentSettings = settings
         var corrected = transcript
-        corrected.text = LexiconCorrections.apply(transcript.text, replacements: currentSettings.lexicon)
+        corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
+        corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
         guard currentSettings.translationEnabled else { return corrected }
         guard currentSettings.cloudConsentGranted else {
             notice = "Translation needs cloud consent and a selected provider."
@@ -939,6 +940,11 @@ private struct SaysoSettingsView: View {
                     get: { model.settings.desktopControlEnabled },
                     set: { model.setAutomation($0) }
                 ))
+            }
+            Section("Dictation profile") {
+                TextField("Profile name", text: $model.settings.dictationProfile.name)
+                Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
+                Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
             }
             Section("Lexicon corrections") {
                 HStack {
