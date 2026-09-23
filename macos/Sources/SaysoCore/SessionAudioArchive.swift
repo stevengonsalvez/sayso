@@ -58,28 +58,40 @@ public final class SessionAudioArchive: @unchecked Sendable {
             .appendingPathComponent("Recordings", isDirectory: true)
     }
 
-    public static func isManagedRecording(_ url: URL, fileManager: FileManager = .default) -> Bool {
-        let directory = defaultDirectory(fileManager: fileManager).standardizedFileURL.path
+    public static func isManagedRecording(
+        _ url: URL,
+        directory: URL? = nil,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        let directory = (directory ?? defaultDirectory(fileManager: fileManager)).standardizedFileURL.path
         let candidate = url.standardizedFileURL.path
         return url.isFileURL
             && candidate.hasPrefix(directory + "/")
             && managedExtensions.contains(url.pathExtension.lowercased())
     }
 
-    public static func deleteManagedRecording(_ url: URL, fileManager: FileManager = .default) {
-        guard isManagedRecording(url, fileManager: fileManager) else { return }
+    public static func deleteManagedRecording(
+        _ url: URL,
+        directory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
+        guard isManagedRecording(url, directory: directory, fileManager: fileManager) else { return }
         try? fileManager.removeItem(at: url)
     }
 
-    public static func deleteAllManagedRecordings(fileManager: FileManager = .default) {
-        let directory = defaultDirectory(fileManager: fileManager)
-        let urls = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        urls.forEach { deleteManagedRecording($0, fileManager: fileManager) }
+    public static func deleteAllManagedRecordings(
+        directory: URL? = nil,
+        fileManager: FileManager = .default
+    ) {
+        let recordingDirectory = directory ?? defaultDirectory(fileManager: fileManager)
+        let urls = (try? fileManager.contentsOfDirectory(at: recordingDirectory, includingPropertiesForKeys: nil)) ?? []
+        urls.forEach { deleteManagedRecording($0, directory: recordingDirectory, fileManager: fileManager) }
     }
 
     public static func sweepUnreferencedRecordings(
         retaining retainedURLs: Set<URL>,
         directory: URL? = nil,
+        olderThan: Date? = nil,
         fileManager: FileManager = .default
     ) {
         let recordingDirectory = (directory ?? defaultDirectory(fileManager: fileManager)).standardizedFileURL
@@ -87,9 +99,12 @@ public final class SessionAudioArchive: @unchecked Sendable {
         let urls = (try? fileManager.contentsOfDirectory(at: recordingDirectory, includingPropertiesForKeys: nil)) ?? []
         for url in urls where managedExtensions.contains(url.pathExtension.lowercased()) {
             let standardizedURL = url.standardizedFileURL
-            if !retained.contains(standardizedURL) {
-                try? fileManager.removeItem(at: standardizedURL)
+            guard !retained.contains(standardizedURL) else { continue }
+            if let olderThan {
+                let values = try? standardizedURL.resourceValues(forKeys: [.contentModificationDateKey])
+                guard let date = values?.contentModificationDate, date < olderThan else { continue }
             }
+            try? fileManager.removeItem(at: standardizedURL)
         }
     }
 
