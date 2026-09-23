@@ -46,6 +46,11 @@ private func installedApplication(
         snapshot: namedApplicationSnapshot,
         installedApplications: [safari]
     )
+    let spokenColon = try ControlPlanner.plan(
+        command: "open Safari:",
+        snapshot: namedApplicationSnapshot,
+        installedApplications: [safari]
+    )
     let expected = DesktopAction.activateApplication(
         bundleIdentifier: "com.apple.Safari",
         applicationURL: URL(fileURLWithPath: "/Applications/Safari.app")
@@ -55,6 +60,7 @@ private func installedApplication(
     #expect(switchTo.action == expected)
     #expect(spokenPunctuation.action == expected)
     #expect(appFilename.action == expected)
+    #expect(spokenColon.action == expected)
     #expect(open.reason == "Launch Safari at /Applications/Safari.app")
     #expect(ControlPolicy.requiresConfirmation(open))
     #expect(!ControlPolicy.canAutoRun(open))
@@ -110,6 +116,7 @@ private func installedApplication(
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open http://localhost:8080"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open example.com"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open file:///tmp/example"))
+    #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari:"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "switch to Safari"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "activate com.apple.Safari"))
