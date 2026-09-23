@@ -63,6 +63,45 @@ import Testing
     #expect(VoiceEdits.apply("replace world", to: "Hello world") == nil)
 }
 
+@Test func voiceEditsApplyOneExactTargetAndRejectMissingTargets() {
+    #expect(
+        VoiceEdits.outcome("Sayso replace world with Stevie", to: "world world")
+            == .applied("Stevie world")
+    )
+    #expect(
+        VoiceEdits.outcome("Sayso delete missing", to: "Hello world")
+            == .targetNotFound
+    )
+}
+
+@Test func textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery() {
+    let start = Date(timeIntervalSinceReferenceDate: 123)
+    let captured = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: "ai.sayso.target",
+        launchDate: start
+    )
+
+    #expect(captured.matches(captured))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: true))
+    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
+    #expect(!captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
+    #expect(
+        !captured.matches(.init(
+            processIdentifier: 42,
+            bundleIdentifier: "ai.sayso.reused",
+            launchDate: start
+        ))
+    )
+    #expect(
+        !captured.matches(.init(
+            processIdentifier: 42,
+            bundleIdentifier: "ai.sayso.target",
+            launchDate: start.addingTimeInterval(1)
+        ))
+    )
+}
+
 @Test func historyInsightsCountWordsAndDays() {
     let entries = [Transcript(text: "two words", language: .english, route: .local, isFinal: true)]
     #expect(HistoryInsights.make(from: entries).words == 2)
@@ -111,6 +150,117 @@ import Testing
         focusedRole: "AXTextField", focusedValue: "after", isProtected: false
     )
     #expect(ControlOutcome.result(for: type, before: before, after: after) == "observed text change")
+}
+
+@Test func controlObservationStopsAtFirstObservedRecapture() async throws {
+    actor Snapshots {
+        private var values: [DesktopSnapshot]
+        private(set) var captures = 0
+
+        init(_ values: [DesktopSnapshot]) {
+            self.values = values
+        }
+
+        func capture() -> DesktopSnapshot? {
+            captures += 1
+            return values.isEmpty ? nil : values.removeFirst()
+        }
+    }
+
+    let before = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "before", isProtected: false
+    )
+    let after = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "after", isProtected: false
+    )
+    let snapshots = Snapshots([before, after, after])
+    let observation = try await ControlObservation.observe(
+        maximumAttempts: 3,
+        interval: .zero,
+        capture: { await snapshots.capture() },
+        hasObservedEffect: { $0.focusedValue != before.focusedValue }
+    )
+
+    #expect(observation.effectObserved)
+    #expect(observation.attempts == 2)
+    #expect(observation.snapshot == after)
+    #expect(await snapshots.captures == 2)
+}
+
+@Test func controlObservationReturnsLastRecaptureAtBound() async throws {
+    actor Snapshots {
+        private var captures = 0
+        private let snapshot: DesktopSnapshot
+
+        init(_ snapshot: DesktopSnapshot) {
+            self.snapshot = snapshot
+        }
+
+        func capture() -> DesktopSnapshot {
+            captures += 1
+            return snapshot
+        }
+
+        func captureCount() -> Int { captures }
+    }
+
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "same", isProtected: false
+    )
+    let snapshots = Snapshots(snapshot)
+    let observation = try await ControlObservation.observe(
+        maximumAttempts: 2,
+        interval: .zero,
+        capture: { await snapshots.capture() },
+        hasObservedEffect: { _ in false }
+    )
+
+    #expect(!observation.effectObserved)
+    #expect(observation.attempts == 2)
+    #expect(observation.snapshot == snapshot)
+    #expect(await snapshots.captureCount() == 2)
+}
+
+@Test func controlOutcomeRequiresObservedApplicationEffect() {
+    let before = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "", isProtected: false
+    )
+    let action = DesktopAction.activate(bundleIdentifier: "com.apple.Safari")
+
+    #expect(ControlOutcome.result(for: action, before: before, after: nil) == "unknown effect")
+    #expect(ControlOutcome.result(for: action, before: before, after: nil, externalEffectObserved: false) == "no observed target active")
+    #expect(ControlOutcome.result(for: action, before: before, after: nil, externalEffectObserved: true) == "observed target active")
+}
+
+@Test func externalControlEffectsRequireExactTargetAndNavigation() {
+    let targetURL = URL(string: "https://example.com/docs?version=1#read")!
+
+    #expect(ControlExternalEffect.isTargetActive(observedProcessIdentifier: 42, targetProcessIdentifier: 42))
+    #expect(!ControlExternalEffect.isTargetActive(observedProcessIdentifier: 43, targetProcessIdentifier: 42))
+    #expect(ControlExternalEffect.isProcessTerminated(targetProcessIdentifier: 42, runningProcessIdentifiers: [43]))
+    #expect(!ControlExternalEffect.isProcessTerminated(targetProcessIdentifier: 42, runningProcessIdentifiers: [42, 43]))
+    #expect(ControlExternalEffect.openedTarget(
+        targetBundleIdentifier: "com.apple.Safari",
+        observedBundleIdentifier: "com.apple.Safari",
+        targetURL: targetURL,
+        observedURL: targetURL
+    ))
+    #expect(!ControlExternalEffect.openedTarget(
+        targetBundleIdentifier: "com.apple.Safari",
+        observedBundleIdentifier: "com.google.Chrome",
+        targetURL: targetURL,
+        observedURL: targetURL
+    ))
+    #expect(!ControlExternalEffect.openedTarget(
+        targetBundleIdentifier: "com.apple.Safari",
+        observedBundleIdentifier: "com.apple.Safari",
+        targetURL: targetURL,
+        observedURL: URL(string: "https://example.com/other?version=1#read")!
+    ))
 }
 
 @Test func controlPlannerGroundsTypeAgainstCurrentTarget() throws {
