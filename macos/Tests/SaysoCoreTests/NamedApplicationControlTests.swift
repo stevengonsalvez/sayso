@@ -152,6 +152,18 @@ private func installedApplication(
         bundleIdentifier: "ai.sayso.test-app",
         applicationURL: contentsURL
     ))
+
+    let wrappedApplicationURL = root.appending(path: "Wrapped.app", directoryHint: .isDirectory)
+    let wrappedInfoURL = wrappedApplicationURL
+        .appending(path: "Wrapper", directoryHint: .isDirectory)
+        .appending(path: "Inner.app", directoryHint: .isDirectory)
+        .appending(path: "Info.plist")
+    try FileManager.default.createDirectory(at: wrappedInfoURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try data.write(to: wrappedInfoURL)
+    #expect(InstalledDesktopApplication.validatesLaunchTarget(
+        bundleIdentifier: "ai.sayso.test-app",
+        applicationURL: wrappedApplicationURL
+    ))
 }
 
 @Test func namedApplicationPlannerPreservesExplicitHTTPSNavigation() throws {
