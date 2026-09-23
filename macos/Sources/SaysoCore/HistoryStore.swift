@@ -1,11 +1,49 @@
 import Foundation
 
-public enum HistoryFilter {
-    public static func matching(_ entries: [Transcript], query: String) -> [Transcript] {
-        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return entries }
+public enum HistoryScope: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case onDevice
+    case appleSpeech
+    case translated
+    case recordings
 
-        return entries.filter { transcript in
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .all: "All"
+        case .onDevice: "On-device"
+        case .appleSpeech: "Apple Speech"
+        case .translated: "Translated"
+        case .recordings: "Recordings"
+        }
+    }
+}
+
+public enum HistoryFilter {
+    public static func matching(
+        _ entries: [Transcript],
+        query: String,
+        scope: HistoryScope = .all
+    ) -> [Transcript] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scoped = entries.filter { transcript in
+            switch scope {
+            case .all:
+                true
+            case .onDevice:
+                transcript.route == .local
+            case .appleSpeech:
+                transcript.route == .appleSpeech
+            case .translated:
+                !(transcript.translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .recordings:
+                transcript.audioFileURL != nil
+            }
+        }
+        guard !query.isEmpty else { return scoped }
+
+        return scoped.filter { transcript in
             [
                 transcript.text,
                 transcript.translatedText,
