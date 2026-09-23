@@ -102,3 +102,47 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
         return output
     }
 }
+
+/// An app-specific profile that takes precedence only for its exact bundle identifier.
+/// The profile itself stays unchanged, so normal dictation remains the fallback.
+public struct DictationProfileBundleOverride: Codable, Equatable, Sendable {
+    public var bundleIdentifier: String
+    public var profile: DictationProfile
+
+    public init(bundleIdentifier: String, profile: DictationProfile) {
+        self.bundleIdentifier = bundleIdentifier
+        self.profile = profile
+    }
+}
+
+/// Resolves a dictation profile without mutating stored defaults or app overrides.
+/// The first matching override in user order wins.
+public struct DictationProfileResolver: Sendable {
+    public let fallback: DictationProfile
+    public let overrides: [DictationProfileBundleOverride]
+
+    public init(fallback: DictationProfile, overrides: [DictationProfileBundleOverride]) {
+        self.fallback = fallback
+        self.overrides = overrides
+    }
+
+    public func resolve(forBundleIdentifier bundleIdentifier: String?) -> DictationProfile {
+        guard let target = Self.normalizedBundleIdentifier(bundleIdentifier) else {
+            return fallback
+        }
+
+        return overrides.first { override in
+            Self.normalizedBundleIdentifier(override.bundleIdentifier) == target
+        }?.profile ?? fallback
+    }
+
+    private static func normalizedBundleIdentifier(_ raw: String?) -> String? {
+        guard let normalized = raw?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+            !normalized.isEmpty else {
+            return nil
+        }
+        return normalized
+    }
+}
