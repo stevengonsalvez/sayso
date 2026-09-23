@@ -137,6 +137,11 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     public init() {}
 
+    public mutating func applyFirstRunDefaults() {
+        guard !onboardingCompleted, language == .automatic else { return }
+        language = .english
+    }
+
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage
         case autoInsert, restoreClipboardAfterPaste, handsFree, soundCues, onboardingCompleted
