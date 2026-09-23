@@ -1073,6 +1073,13 @@ extension SaysoAppModel {
             guard let path = request.path else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .invalidArgument, message: "transcribe_file requires an audio path."))
             }
+            guard !settings.route.transmitsData || settings.cloudConsentGranted else {
+                return .failure(
+                    id: request.id,
+                    command: request.command,
+                    error: .init(code: .transcriptionFailed, message: "Confirm the Apple Speech data path before transcribing audio.")
+                )
+            }
             do {
                 let transcript = try await FileTranscriber.transcribe(
                     fileURL: URL(fileURLWithPath: path), language: settings.language, route: settings.route
