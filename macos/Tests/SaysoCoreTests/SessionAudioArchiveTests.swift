@@ -44,6 +44,41 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(try Data(contentsOf: imported) == Data("audio".utf8))
 }
 
+@Test func importedAudioStaysUntilHistoryCanReferenceIt() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let source = root.appendingPathComponent("recording.m4a")
+    let recordings = root.appendingPathComponent("Recordings", isDirectory: true)
+    try Data("audio".utf8).write(to: source)
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date.distantPast],
+        ofItemAtPath: source.path
+    )
+    let launchDate = Date()
+
+    let imported = try SessionAudioArchive.importRecording(from: source, directory: recordings)
+    SessionAudioArchive.sweepUnreferencedRecordings(
+        retaining: [],
+        directory: recordings,
+        olderThan: launchDate
+    )
+
+    #expect(FileManager.default.fileExists(atPath: imported.path))
+}
+
+@Test func importedAudioRejectsUnsupportedFileTypes() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let unsupported = root.appendingPathComponent("recording.flac")
+    try Data("audio".utf8).write(to: unsupported)
+
+    #expect(throws: SaysoError.self) {
+        try SessionAudioArchive.importRecording(from: unsupported, directory: root.appendingPathComponent("Recordings"))
+    }
+}
+
 @Test func sessionAudioArchivePersistsReadableAudioOnlyAfterFramesArrive() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
