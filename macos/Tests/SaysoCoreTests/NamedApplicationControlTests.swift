@@ -55,7 +55,7 @@ private func installedApplication(
     #expect(switchTo.action == expected)
     #expect(spokenPunctuation.action == expected)
     #expect(appFilename.action == expected)
-    #expect(open.reason == "Exact installed application")
+    #expect(open.reason == "Launch Safari at /Applications/Safari.app")
     #expect(ControlPolicy.requiresConfirmation(open))
     #expect(!ControlPolicy.canAutoRun(open))
 }
@@ -88,6 +88,7 @@ private func installedApplication(
     )
 
     #expect(DesktopApplicationResolver.resolve("Safari", in: [workSafari, safari]) == .ambiguous([safari, workSafari]))
+    #expect(DesktopApplicationResolver.resolve("Safari.app", in: [workSafari, safari]) == .resolved(safari))
     #expect(throws: SaysoError.invalidAction("More than one installed application is named 'Safari'. Say an exact unique .app filename: Safari.app or WorkSafari.app, or remove a duplicate.")) {
         try ControlPlanner.plan(
             command: "open Safari",
