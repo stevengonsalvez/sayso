@@ -72,6 +72,19 @@ import Testing
     #expect(LexiconCorrections.apply("Ship say so", replacements: ["say so": "Sayso"]) == "Ship Sayso")
 }
 
+@Test func selectedTextEditAnchorRequiresExactUTF16Selection() throws {
+    let value = "Hi 👋 Stevie"
+    let location = "Hi 👋 ".utf16.count
+    let range = TextUTF16Range(location: location, length: "Stevie".utf16.count)
+    let anchor = try #require(SelectedTextEditAnchor(value: value, range: range))
+
+    #expect(anchor.selectedText == "Stevie")
+    #expect(anchor.stillMatches(value: value, range: range))
+    #expect(!anchor.stillMatches(value: "Hi 👋 Steven", range: range))
+    #expect(anchor.replacing(with: "team") == "Hi 👋 team")
+    #expect(SelectedTextEditAnchor(value: value, range: .init(location: location, length: 0)) == nil)
+}
+
 @Test func lexiconCorrectionsPreferLongestPhrase() {
     #expect(
         LexiconCorrections.apply(
