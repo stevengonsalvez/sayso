@@ -160,6 +160,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var route: ProviderRoute = .local
     public var translationEnabled = false
     public var outputLanguage: DictationLanguage = .english
+    public var speechLanguage: DictationLanguage = .english
     public var speechVoiceIdentifier: String?
     public var speechRate: Double = 0.5
     public var autoInsert = true
@@ -191,7 +192,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechVoiceIdentifier, speechRate
+        case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
@@ -210,6 +211,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         route = decoded(ProviderRoute.self, .route, fallback: route)
         translationEnabled = decoded(Bool.self, .translationEnabled, fallback: translationEnabled)
         outputLanguage = decoded(DictationLanguage.self, .outputLanguage, fallback: outputLanguage)
+        speechLanguage = decoded(DictationLanguage.self, .speechLanguage, fallback: speechLanguage)
         speechVoiceIdentifier = (try? values.decodeIfPresent(String.self, forKey: .speechVoiceIdentifier)) ?? speechVoiceIdentifier
         speechRate = min(max(decoded(Double.self, .speechRate, fallback: speechRate), 0.2), 0.6)
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
