@@ -115,6 +115,15 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    private var localEnglishModelStatus: String {
+        switch localEnglishModel.state {
+        case .notInstalled: "not-installed"
+        case .installing: "installing"
+        case .installed: "installed"
+        case .failed: "failed"
+        }
+    }
+
     func startOrStopDictation() {
         if transcriber.phase == .listening {
             transcriber.stop()
@@ -1038,7 +1047,7 @@ extension SaysoAppModel {
             return .success(
                 id: request.id, command: request.command,
                 result: .init(
-                    model: "\(settings.route.displayName); microphone=\(permissionSummary(.microphone)); raw=\(microphoneSystemStatus); speech=\(permissionSummary(.speechRecognition))",
+                    model: "\(settings.route.displayName); local-English=\(localEnglishModelStatus); microphone=\(permissionSummary(.microphone)); raw=\(microphoneSystemStatus); speech=\(permissionSummary(.speechRecognition))",
                     sessionActive: transcriber.phase == .listening,
                     appVersion: "1.0.0"
                 )
