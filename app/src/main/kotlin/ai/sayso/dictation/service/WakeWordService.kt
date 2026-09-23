@@ -94,7 +94,8 @@ class WakeWordService : Service() {
         isListening = true
 
         scope.launch(Dispatchers.Default) {
-            val d = WakeWordDetector(this@WakeWordService) { keyword ->
+            val phrase = ai.sayso.dictation.AppGraph.settings.wakeWordPhrase
+            val d = WakeWordDetector(this@WakeWordService, phrase) { keyword ->
                 Log.i(TAG, "Wake word trigger: $keyword")
                 triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
@@ -252,6 +253,11 @@ class WakeWordService : Service() {
             .build()
     }
 
+    fun updatePhrase(phrase: String) {
+        detector?.wakeWordPhrase = phrase
+        Log.i(TAG, "Updated wake word phrase in running detector: $phrase")
+    }
+
     companion object {
         private const val TAG = "SaysoWakeWord"
         private const val CHANNEL_ID = "sayso_wake_word"
@@ -261,6 +267,10 @@ class WakeWordService : Service() {
         @Volatile
         var instance: WakeWordService? = null
             private set
+
+        fun updatePhrase(phrase: String) {
+            instance?.updatePhrase(phrase)
+        }
 
         fun start(context: Context) {
             if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -282,6 +292,14 @@ class WakeWordService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, WakeWordService::class.java)
             context.stopService(intent)
+        }
+
+        fun restart(context: Context) {
+            if (instance != null) {
+                instance?.updatePhrase(ai.sayso.dictation.AppGraph.settings.wakeWordPhrase)
+            } else {
+                start(context)
+            }
         }
     }
 }

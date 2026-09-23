@@ -1,5 +1,5 @@
-▁HE Y ▁SAY S O @hey_sayso :2.0 #0.20
-▁HE Y ▁SAY ▁SO @hey_sayso :2.0 #0.20
-▁SAY S O @sayso :2.0 #0.20
-▁SAY ▁SO @sayso :2.0 #0.20
-▁HE Y ▁SAY @hey_sayso :1.5 #0.25
+▁HE Y ▁SAY S O @hey_sayso :2.5 #0.15
+▁HE Y ▁SAY ▁SO @hey_sayso :2.5 #0.15
+▁SAY S O @sayso :2.5 #0.15
+▁SAY ▁SO @sayso :2.5 #0.15
+▁HE Y ▁SAY @hey_sayso :2.0 #0.20
