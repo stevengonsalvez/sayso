@@ -447,7 +447,9 @@ private func openOutcome(
         focusedRole: "AXTextField", focusedValue: "", isProtected: false
     )
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "delete everything", snapshot: snapshot) }
-    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open example.com", snapshot: snapshot) }
+    #expect(throws: SaysoError.self) {
+        try ControlPlanner.plan(command: "open example.com", snapshot: snapshot, installedApplications: [])
+    }
 }
 
 @Test func controlPlannerUsesOnlyExactVisibleControlTitle() throws {
