@@ -89,6 +89,20 @@ import Testing
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: location, length: 0)) == nil)
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: value.utf16.count, length: 1)) == nil)
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: 4, length: 1)) == nil)
+
+    let decomposed = "Cafe\u{301}"
+    let accent = try #require(SelectedTextEditAnchor(
+        value: decomposed,
+        range: .init(location: "Caf".utf16.count, length: "e\u{301}".utf16.count)
+    ))
+    #expect(accent.selectedText == "e\u{301}")
+    #expect(accent.replacing(with: "é", in: decomposed) == "Café")
+
+    let flag = "A 🇮🇳 B"
+    let flagRange = TextUTF16Range(location: "A ".utf16.count, length: "🇮🇳".utf16.count)
+    let flagAnchor = try #require(SelectedTextEditAnchor(value: flag, range: flagRange))
+    #expect(flagAnchor.selectedText == "🇮🇳")
+    #expect(flagAnchor.replacing(with: "🇬🇧", in: flag) == "A 🇬🇧 B")
 }
 
 @Test func selectedTextEditUnverifiedWriteDoesNotAskForPaste() {
@@ -98,6 +112,7 @@ import Testing
 @Test func providerEndpointsRequireHTTPSOutsideLocalhost() throws {
     #expect(ProviderEndpointPolicy.allows(try #require(URL(string: "https://api.example.com/v1"))))
     #expect(ProviderEndpointPolicy.allows(try #require(URL(string: "http://localhost:11434/v1"))))
+    #expect(ProviderEndpointPolicy.allows(try #require(URL(string: "http://[::1]:11434/v1"))))
     #expect(!ProviderEndpointPolicy.allows(try #require(URL(string: "http://api.example.com/v1"))))
 }
 
