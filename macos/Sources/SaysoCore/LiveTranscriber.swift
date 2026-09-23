@@ -1,4 +1,5 @@
-import AVFoundation
+@preconcurrency import AVFoundation
+import FluidAudio
 import Speech
 
 public enum TranscriptionTermination: Equatable, Sendable {
@@ -20,9 +21,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     @Published public private(set) var error: SaysoError?
 
     private let audioEngine = AVAudioEngine()
+    private let fluidAudioModels: FluidAudioLocalModelManager
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var recognizer: SFSpeechRecognizer?
+    private var fluidAudioManager: StreamingEouAsrManager?
+    private var fluidAudioPump: FluidAudioBufferPump?
+    private var fluidAudioRunID: UUID?
+    private var usesFluidAudio = false
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
     private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
@@ -31,8 +37,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var handsFree = false
     private var silenceTask: Task<Void, Never>?
 
-    public override init() {
+    public init(fluidAudioModels: FluidAudioLocalModelManager = .init()) {
+        self.fluidAudioModels = fluidAudioModels
         super.init()
+    }
+
+    public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
+        !shouldUseFluidAudio(language: language, route: route)
     }
 
     public func start(
@@ -46,6 +57,24 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard route.supportsDictation else {
             fail(.unavailable("Your provider is available for translation, not transcription"))
             return false
+        }
+        guard phase != .listening, phase != .processing else {
+            error = .unavailable("Dictation is already active")
+            return false
+        }
+        stop()
+        self.onFinal = onFinal
+        self.onPartial = onPartial
+        self.onTermination = onTermination
+        activeLanguage = language
+        activeRoute = route
+        self.handsFree = handsFree
+        error = nil
+        partialText = ""
+
+        if shouldUseFluidAudio(language: language, route: route) {
+            guard await microphoneAuthorized() else { return false }
+            return await startFluidAudio(language: language, route: route)
         }
         guard SpeechCapabilities.supports(language) else {
             fail(.unavailable("Speech locale \(language.displayName)"))
@@ -63,16 +92,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             return false
         }
 
-        stop()
         self.recognizer = recognizer
-        self.onFinal = onFinal
-        self.onPartial = onPartial
-        self.onTermination = onTermination
-        activeLanguage = language
-        activeRoute = route
-        self.handsFree = handsFree
-        error = nil
-        partialText = ""
         phase = .listening
 
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -122,15 +142,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func stop() {
+        if usesFluidAudio {
+            stopFluidAudio()
+            return
+        }
         guard phase == .listening || audioEngine.isRunning else { return }
         phase = .processing
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        recognitionRequest?.endAudio()
-        recognitionTask?.cancel()
-        silenceTask?.cancel()
-        recognitionTask = nil
-        recognitionRequest = nil
+        stopAppleAudioCapture()
         if !partialText.isEmpty {
             finish(text: partialText, language: activeLanguage, route: activeRoute)
         } else {
@@ -150,8 +168,133 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
     }
 
+    private func shouldUseFluidAudio(language: DictationLanguage, route: ProviderRoute) -> Bool {
+        route == .local && language == .english && FluidAudioLocalModelManager.supportsCurrentHardware
+            && fluidAudioModels.state.isInstalled
+    }
+
+    private func startFluidAudio(language: DictationLanguage, route: ProviderRoute) async -> Bool {
+        do {
+            let manager = try await fluidAudioModels.makeReadyManager()
+            let runID = UUID()
+            fluidAudioManager = manager
+            fluidAudioRunID = runID
+            usesFluidAudio = true
+            await manager.reset()
+            await manager.setPartialCallback { [weak self] text in
+                Task { @MainActor [weak self] in self?.receiveFluidAudioPartial(text, runID: runID) }
+            }
+            let pump = FluidAudioBufferPump { [weak self, manager] buffer in
+                do {
+                    _ = try await manager.process(audioBuffer: buffer)
+                } catch {
+                    Task { @MainActor [weak self] in self?.stopFluidAudio() }
+                    throw error
+                }
+            }
+            fluidAudioPump = pump
+
+            let input = audioEngine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self, pump] buffer, _ in
+                pump.submit(buffer)
+                var level: Float = 0
+                if let channels = buffer.floatChannelData {
+                    let samples = channels[0]
+                    for index in 0..<Int(buffer.frameLength) {
+                        level = Swift.max(level, abs(samples[index]))
+                    }
+                }
+                Task { @MainActor [weak self] in self?.observeAudio(level: level) }
+            }
+            audioEngine.prepare()
+            try audioEngine.start()
+            phase = .listening
+            return true
+        } catch {
+            stopAudioEngine()
+            if let manager = fluidAudioManager { await manager.reset() }
+            clearFluidAudioRun()
+            fail(.unavailable("Local English model could not start: \(error.localizedDescription)"))
+            return false
+        }
+    }
+
+    private func receiveFluidAudioPartial(_ text: String, runID: UUID) {
+        guard fluidAudioRunID == runID, phase == .listening else { return }
+        partialText = text
+        onPartial?(text)
+    }
+
+    private func stopFluidAudio() {
+        guard usesFluidAudio, (phase == .listening || audioEngine.isRunning) else { return }
+        guard let runID = fluidAudioRunID, let manager = fluidAudioManager else { return }
+        phase = .processing
+        stopAudioEngine()
+        silenceTask?.cancel()
+        silenceTask = nil
+        let pump = fluidAudioPump
+        Task { [weak self] in
+            let terminal = await pump?.closeAndDrain()
+            guard let self else { return }
+            switch terminal {
+            case let .failed(_, _, message):
+                await manager.reset()
+                self.finishFluidAudioRun(runID: runID, result: .failure(SaysoError.unavailable(message)))
+            case .drained, .none:
+                do {
+                    let text = try await manager.finish()
+                    await manager.reset()
+                    self.finishFluidAudioRun(runID: runID, result: .success(text))
+                } catch {
+                    await manager.reset()
+                    self.finishFluidAudioRun(runID: runID, result: .failure(error))
+                }
+            }
+        }
+    }
+
+    private func finishFluidAudioRun(runID: UUID, result: Result<String, any Error>) {
+        guard fluidAudioRunID == runID else { return }
+        clearFluidAudioRun()
+        switch result {
+        case let .success(text):
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                phase = .idle
+                terminate(.cancelled)
+            } else {
+                finish(text: text, language: activeLanguage, route: activeRoute)
+            }
+        case let .failure(error):
+            fail(.unavailable("Local English transcription ended: \(error.localizedDescription)"))
+        }
+    }
+
+    private func clearFluidAudioRun() {
+        fluidAudioPump = nil
+        fluidAudioManager = nil
+        fluidAudioRunID = nil
+        usesFluidAudio = false
+    }
+
+    private func stopAudioEngine() {
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+    }
+
+    private func stopAppleAudioCapture() {
+        stopAudioEngine()
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        silenceTask?.cancel()
+        silenceTask = nil
+        recognitionTask = nil
+        recognitionRequest = nil
+    }
+
     private func finish(text: String, language: DictationLanguage, route: ProviderRoute) {
         guard phase != .idle else { return }
+        if !usesFluidAudio { stopAppleAudioCapture() }
         let transcript = Transcript(text: text, language: language, route: route, isFinal: true)
         phase = .idle
         onFinal?(transcript)
@@ -161,6 +304,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func fail(_ error: SaysoError) {
+        stopAppleAudioCapture()
         self.error = error
         phase = .failed
         terminate(.failed(error.localizedDescription))
