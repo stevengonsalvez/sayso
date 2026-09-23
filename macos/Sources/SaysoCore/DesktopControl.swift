@@ -93,10 +93,87 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     }
 }
 
+public struct InstalledDesktopApplication: Equatable, Sendable {
+    public let name: String
+    public let bundleIdentifier: String
+    public let applicationURL: URL
+
+    public init(name: String, bundleIdentifier: String, applicationURL: URL) {
+        self.name = name
+        self.bundleIdentifier = bundleIdentifier
+        self.applicationURL = applicationURL.standardizedFileURL
+    }
+
+    public static func available(fileManager: FileManager = .default) -> [InstalledDesktopApplication] {
+        let standardDirectories = fileManager.urls(
+            for: .applicationDirectory,
+            in: [.userDomainMask, .localDomainMask, .systemDomainMask]
+        ) + [URL(fileURLWithPath: "/System/Library/CoreServices", isDirectory: true)]
+        var applications: [InstalledDesktopApplication] = []
+        var seenPaths = Set<String>()
+
+        for directory in standardDirectories {
+            guard let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            for case let applicationURL as URL in enumerator where applicationURL.pathExtension == "app" {
+                let standardizedURL = applicationURL.standardizedFileURL
+                guard seenPaths.insert(standardizedURL.path).inserted,
+                      let bundle = Bundle(url: standardizedURL),
+                      let bundleIdentifier = bundle.bundleIdentifier else { continue }
+                let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+                    ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+                    ?? standardizedURL.deletingPathExtension().lastPathComponent
+                guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                applications.append(.init(name: name, bundleIdentifier: bundleIdentifier, applicationURL: standardizedURL))
+            }
+        }
+        return applications.sorted {
+            ($0.name, $0.bundleIdentifier, $0.applicationURL.path)
+                < ($1.name, $1.bundleIdentifier, $1.applicationURL.path)
+        }
+    }
+}
+
+public enum DesktopApplicationResolution: Equatable, Sendable {
+    case resolved(InstalledDesktopApplication)
+    case ambiguous([InstalledDesktopApplication])
+    case notFound
+}
+
+public enum DesktopApplicationResolver {
+    public static func resolve(
+        _ requestedName: String,
+        in applications: [InstalledDesktopApplication]
+    ) -> DesktopApplicationResolution {
+        let requested = normalizedName(requestedName)
+        guard !requested.isEmpty else { return .notFound }
+        let matches = applications
+            .filter { normalizedName($0.name) == requested }
+            .sorted {
+                ($0.bundleIdentifier, $0.applicationURL.path)
+                    < ($1.bundleIdentifier, $1.applicationURL.path)
+            }
+        guard !matches.isEmpty else { return .notFound }
+        return matches.count == 1 ? .resolved(matches[0]) : .ambiguous(matches)
+    }
+
+    private static func normalizedName(_ value: String) -> String {
+        value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+}
+
 public enum DesktopAction: Codable, Equatable, Sendable {
     case type(text: String, expectedFingerprint: String)
     case open(url: URL)
     case activate(bundleIdentifier: String)
+    case activateApplication(bundleIdentifier: String, applicationURL: URL)
     case quit(bundleIdentifier: String)
     case scroll(lines: Int, expectedFingerprint: String)
     case press(elementID: String, expectedFingerprint: String)
@@ -243,7 +320,7 @@ public enum ControlOutcome {
         case .key:
             // Caret moves are not represented in DesktopSnapshot. Do not mistake them for failed actions.
             return .unknown
-        case .open, .activate, .quit:
+        case .open, .activate, .activateApplication, .quit:
             return externalEffect
         }
     }
@@ -260,7 +337,7 @@ public enum ControlOutcome {
             return "keyboard event sent, effect not attributable"
         case .open:
             return observed ? "observed navigation" : "no observed navigation"
-        case .activate:
+        case .activate, .activateApplication:
             return observed ? "observed target active" : "no observed target active"
         case .quit:
             return observed ? "observed process termination" : "no observed process termination"
@@ -423,7 +500,11 @@ public enum ControlPlanner {
         return commands
     }
 
-    public static func plan(command: String, snapshot: DesktopSnapshot) throws -> ControlPlanStep {
+    public static func plan(
+        command: String,
+        snapshot: DesktopSnapshot,
+        installedApplications: [InstalledDesktopApplication]? = nil
+    ) throws -> ControlPlanStep {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
         if normalized == "scroll down" || normalized == "scroll down a bit" {
@@ -466,11 +547,27 @@ public enum ControlPlanner {
             )
         }
         if normalized.hasPrefix("open ") {
-            let address = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            guard let url = URL(string: address), let scheme = url.scheme, ["http", "https"].contains(scheme) else {
-                throw SaysoError.invalidAction("Open commands need an http or https address.")
+            let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            guard !target.isEmpty else {
+                throw SaysoError.invalidAction("Say an http address or exact installed application name after 'open'.")
             }
-            return .init(action: .open(url: url), confidence: 0.80, reason: "Explicit web address")
+            if let url = httpURL(target) {
+                return .init(action: .open(url: url), confidence: 0.80, reason: "Explicit web address")
+            }
+            return try namedApplicationPlan(
+                requestedName: target,
+                applications: installedApplications ?? InstalledDesktopApplication.available()
+            )
+        }
+        if normalized.hasPrefix("switch to ") {
+            let target = String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces)
+            guard !target.isEmpty else {
+                throw SaysoError.invalidAction("Say an exact installed application name after 'switch to'.")
+            }
+            return try namedApplicationPlan(
+                requestedName: target,
+                applications: installedApplications ?? InstalledDesktopApplication.available()
+            )
         }
         if normalized.hasPrefix("click ") {
             let title = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
@@ -491,7 +588,37 @@ public enum ControlPlanner {
         if normalized.hasPrefix("quit "), let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
             return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, go back, next tab, click exact title, scroll, open https URL, activate bundle ID, or quit bundle ID.")
+        throw SaysoError.invalidAction("Control supports: type, press key, go back, next tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit bundle ID.")
+    }
+
+    private static func namedApplicationPlan(
+        requestedName: String,
+        applications: [InstalledDesktopApplication]
+    ) throws -> ControlPlanStep {
+        switch DesktopApplicationResolver.resolve(requestedName, in: applications) {
+        case let .resolved(application):
+            return .init(
+                action: .activateApplication(
+                    bundleIdentifier: application.bundleIdentifier,
+                    applicationURL: application.applicationURL
+                ),
+                confidence: 0.85,
+                reason: "Exact installed application",
+                requiresConfirmation: true
+            )
+        case .notFound:
+            throw SaysoError.invalidAction("No installed application exactly named '\(requestedName)'.")
+        case .ambiguous:
+            throw SaysoError.invalidAction("More than one installed application is named '\(requestedName)'. Use its bundle identifier with 'activate'.")
+        }
+    }
+
+    private static func httpURL(_ value: String) -> URL? {
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else { return nil }
+        return url
     }
 
     private static func bundleIdentifier(from command: String, prefix: Int) -> String? {
@@ -599,6 +726,24 @@ public final class AXDesktopController: @unchecked Sendable {
             }
             targetProcessIdentifier = app.processIdentifier
             app.activate()
+        case let .activateApplication(bundleIdentifier, applicationURL):
+            let standardizedURL = applicationURL.standardizedFileURL
+            guard InstalledDesktopApplication.available().contains(where: {
+                $0.bundleIdentifier == bundleIdentifier && $0.applicationURL == standardizedURL
+            }) else {
+                throw SaysoError.unavailable("Installed application changed")
+            }
+            let app: NSRunningApplication
+            if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+                .first(where: { $0.bundleURL?.standardizedFileURL == standardizedURL }) {
+                app = running
+            } else {
+                app = try await launchApplication(at: standardizedURL)
+            }
+            targetProcessIdentifier = app.processIdentifier
+            guard app.activate() else {
+                throw SaysoError.unavailable("Activate \(bundleIdentifier)")
+            }
         case let .quit(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
@@ -679,6 +824,21 @@ public final class AXDesktopController: @unchecked Sendable {
         guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { throw SaysoError.protectedTarget }
         guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
             throw SaysoError.invalidAction("Text field rejected insertion")
+        }
+    }
+
+    private func launchApplication(at applicationURL: URL) async throws -> NSRunningApplication {
+        try await withCheckedThrowingContinuation { continuation in
+            NSWorkspace.shared.openApplication(
+                at: applicationURL,
+                configuration: .init()
+            ) { application, error in
+                if let application {
+                    continuation.resume(returning: application)
+                } else {
+                    continuation.resume(throwing: error ?? SaysoError.unavailable(applicationURL.lastPathComponent))
+                }
+            }
         }
     }
 
@@ -771,7 +931,7 @@ public final class AXDesktopController: @unchecked Sendable {
             )
             return .init(snapshot: observation.snapshot?.snapshot, open: openOutcome(observation.snapshot))
 
-        case .activate:
+        case .activate, .activateApplication:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
