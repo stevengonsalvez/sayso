@@ -1665,6 +1665,7 @@ private struct ControlWorkspace: View {
 private struct HistoryWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var entries: [Transcript] = []
+    @State private var availableRecordingIDs: Set<Transcript.ID> = []
     @State private var query = ""
     @State private var scope: HistoryScope = .all
     @State private var confirmClear = false
@@ -1672,12 +1673,27 @@ private struct HistoryWorkspace: View {
     @State private var isImportingAudio = false
     @StateObject private var playback = HistoryAudioPlayback()
 
+    private func refreshEntries() async {
+        let loaded = await model.history.all()
+        entries = loaded
+        availableRecordingIDs = Set(loaded.compactMap { transcript in
+            guard let audioFileURL = transcript.audioFileURL,
+                  FileManager.default.fileExists(atPath: audioFileURL.path) else { return nil }
+            return transcript.id
+        })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let displayedEntries = HistoryFilter.matching(entries, query: query, scope: scope)
+            let displayedEntries = HistoryFilter.matching(
+                entries,
+                query: query,
+                scope: scope,
+                availableRecordingIDs: availableRecordingIDs
+            )
             let insights = HistoryInsights.make(from: displayedEntries)
             HStack(spacing: 24) {
-                Label("\(insights.entries) entries", systemImage: "text.quote")
+                Label("\(insights.entries) \(scope == .all ? "entries" : "matching")", systemImage: "text.quote")
                 Label("\(insights.words) words", systemImage: "textformat")
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
@@ -1711,7 +1727,7 @@ private struct HistoryWorkspace: View {
                             Text(entry.language.displayName)
                             Text(entry.route.displayName)
                             if entry.hasTranslation { Text("Translated") }
-                            if entry.hasRecording { Text("Recording") }
+                            if availableRecordingIDs.contains(entry.id) { Text("Recording") }
                         }
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -1720,14 +1736,14 @@ private struct HistoryWorkspace: View {
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
-                    if let audioFileURL = entry.audioFileURL, entry.hasRecording {
+                    if let audioFileURL = entry.audioFileURL, availableRecordingIDs.contains(entry.id) {
                         Button {
                             Task {
                                 model.startReprocessingHistory(entry)
                                 while model.isHistoryAudioTaskRunning {
                                     try? await Task.sleep(for: .milliseconds(100))
                                 }
-                                entries = await model.history.all()
+                                await refreshEntries()
                             }
                         } label: {
                             Image(systemName: model.reprocessingHistoryID == entry.id ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
@@ -1748,7 +1764,7 @@ private struct HistoryWorkspace: View {
                         if entry.hasTranslation, let translatedText = entry.translatedText {
                             Button("Copy translation") { _ = TextOutput.copy(translatedText) }
                         }
-                        if let audioFileURL = entry.audioFileURL, entry.hasRecording {
+                        if let audioFileURL = entry.audioFileURL, availableRecordingIDs.contains(entry.id) {
                             Button("Reveal recording in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([audioFileURL])
                             }
@@ -1770,7 +1786,7 @@ private struct HistoryWorkspace: View {
             }
         }
         .navigationTitle("History")
-        .task { entries = await model.history.all() }
+        .task { await refreshEntries() }
         .onDisappear { playback.stop() }
         .fileImporter(
             isPresented: $isImportingAudio,
@@ -1784,7 +1800,7 @@ private struct HistoryWorkspace: View {
                     while model.isHistoryAudioTaskRunning {
                         try? await Task.sleep(for: .milliseconds(100))
                     }
-                    entries = await model.history.all()
+                    await refreshEntries()
                 }
             case .failure:
                 model.notice = "Could not access the selected audio."
@@ -1796,6 +1812,7 @@ private struct HistoryWorkspace: View {
                 Task {
                     if await model.clearHistory() {
                         entries = []
+                        availableRecordingIDs = []
                         model.lastTranscript = nil
                     } else if !model.isHistoryAudioTaskRunning, !model.isClearingHistory {
                         model.notice = "Could not clear saved history."
@@ -1814,6 +1831,7 @@ private struct HistoryWorkspace: View {
                     if playback.activeID == candidate.id { playback.stop() }
                     if await model.history.remove(id: candidate.id) {
                         entries.removeAll { $0.id == candidate.id }
+                        availableRecordingIDs.remove(candidate.id)
                         if model.lastTranscript?.id == candidate.id { model.lastTranscript = nil }
                     } else {
                         model.notice = "Could not delete saved transcript."
