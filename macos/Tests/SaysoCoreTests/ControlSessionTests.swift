@@ -32,12 +32,48 @@ import Testing
 @Test func controlSessionStopsAfterActionBudget() async {
     let session = ControlSession(limits: .init(maxActions: 2, maxConsecutiveNoEffect: 3))
     _ = await session.start()
-    _ = await session.record(.actionFailed)
+    let failed = await session.record(.actionFailed)
+    #expect(failed.actionCount == 1)
+    #expect(failed.canRunAction)
 
     let exhausted = await session.record(.effectObserved)
     #expect(exhausted.phase == .finished)
     #expect(exhausted.result == .actionBudgetExhausted)
     #expect(exhausted.actionCount == 2)
+}
+
+@Test func terminalControlSessionNeverRestartsImplicitly() async {
+    let session = ControlSession(limits: .init(maxActions: 1, maxConsecutiveNoEffect: 2))
+    _ = await session.start()
+    let exhausted = await session.record(.actionFailed)
+    let restarted = await session.start()
+
+    #expect(exhausted.phase == .finished)
+    #expect(exhausted.result == .actionBudgetExhausted)
+    #expect(restarted == exhausted)
+}
+
+@Test func explicitNewControlCommandGetsFreshBoundedSession() async {
+    let session = ControlSession(limits: .init(maxActions: 1, maxConsecutiveNoEffect: 2))
+    _ = await session.start()
+    let exhausted = await session.record(.effectObserved)
+    let fresh = await session.beginCommand()
+
+    #expect(exhausted.result == .actionBudgetExhausted)
+    #expect(fresh.phase == .running)
+    #expect(fresh.result == nil)
+    #expect(fresh.actionCount == 0)
+    #expect((await session.record(.effectObserved)).result == .actionBudgetExhausted)
+}
+
+@Test func cancelledControlSessionNeverRestartsImplicitly() async {
+    let session = ControlSession()
+    _ = await session.start()
+    let cancelled = await session.cancel()
+    let restarted = await session.start()
+
+    #expect(cancelled.result == .cancelled)
+    #expect(restarted == cancelled)
 }
 
 @Test func controlSessionCancellationPreventsFurtherSteps() async {
