@@ -412,9 +412,10 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
         self.range == range && Self.substring(in: value, at: range) == selectedText
     }
 
-    public func replacing(with text: String) -> String? {
-        guard let bounds = Self.stringRange(in: originalValue, at: range) else { return nil }
-        return String(originalValue[..<bounds.lowerBound]) + text + String(originalValue[bounds.upperBound...])
+    public func replacing(with text: String, in value: String) -> String? {
+        guard stillMatches(value: value, range: range),
+              let bounds = Self.stringRange(in: value, at: range) else { return nil }
+        return String(value[..<bounds.lowerBound]) + text + String(value[bounds.upperBound...])
     }
 
     private static func substring(in value: String, at range: TextUTF16Range) -> String? {
@@ -532,7 +533,7 @@ public enum SelectedTextEdit {
         guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else {
             return copy(rewrite, reason: "Protected field.")
         }
-        guard let expected = capture.anchor.replacing(with: rewrite),
+        guard let expected = capture.anchor.replacing(with: rewrite, in: currentValue),
               AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success else {
             return copy(rewrite, reason: "Could not verify replacement.")
         }
