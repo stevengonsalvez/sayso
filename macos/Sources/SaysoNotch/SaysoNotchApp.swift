@@ -45,7 +45,7 @@ final class SaysoAppModel: ObservableObject {
     private let notch: NotchPanelController
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
-    private var dictationTargetProcessIdentifier: pid_t?
+    private var dictationDestination: TextOutput.Destination?
     private var workspaceObserver: NSObjectProtocol?
 
     init() {
@@ -128,7 +128,9 @@ final class SaysoAppModel: ObservableObject {
             notice = "Confirm the Apple Speech data path before recording."
             return false
         }
-        dictationTargetProcessIdentifier = lastExternalApplication?.processIdentifier
+        dictationDestination = settings.autoInsert
+            ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
+            : nil
         await permissions.request(.microphone)
         guard permissions.states[.microphone] == .granted else {
             notice = "Microphone access is required before Sayso can listen."
@@ -208,14 +210,15 @@ final class SaysoAppModel: ObservableObject {
         lastTranscript = transcript
         await history.append(transcript)
         let finalText = transcript.translatedText ?? transcript.text
-        let targetProcessIdentifier = dictationTargetProcessIdentifier
-        dictationTargetProcessIdentifier = nil
+        let destination = dictationDestination
+        dictationDestination = nil
         if settings.autoInsert {
-            _ = TextOutput.insertOrCopy(
+            let inserted = TextOutput.insertOrCopy(
                 finalText,
-                targetProcessIdentifier: targetProcessIdentifier,
+                destination: destination,
                 restoreClipboardAfterPaste: settings.restoreClipboardAfterPaste
             )
+            if !inserted { notice = "Final text copied to clipboard." }
         } else {
             TextOutput.copy(finalText)
         }
