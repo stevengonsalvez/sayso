@@ -30,6 +30,29 @@ import Testing
     #expect(!(await store.remove(id: first.id)))
 }
 
+@Test func historyScopesFilterRouteTranslationAndRecordings() {
+    let onDeviceRecording = Transcript(
+        text: "Local",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: URL(fileURLWithPath: "/tmp/Recording-a.m4a")
+    )
+    let translated = Transcript(
+        text: "Original",
+        translatedText: "अनुवाद",
+        language: .hindi,
+        route: .appleSpeech,
+        isFinal: true
+    )
+    let entries = [onDeviceRecording, translated]
+
+    #expect(HistoryFilter.matching(entries, query: "", scope: .onDevice).map(\.id) == [onDeviceRecording.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .appleSpeech).map(\.id) == [translated.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .translated).map(\.id) == [translated.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .recordings).map(\.id) == [onDeviceRecording.id])
+}
+
 @Test func historyReplaysJournalAfterSnapshotWriteFailure() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
