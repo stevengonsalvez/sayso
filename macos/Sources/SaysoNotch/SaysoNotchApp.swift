@@ -57,6 +57,7 @@ final class SaysoAppModel: ObservableObject {
         self.localEnglishModel = localEnglishModel
         transcriber = LiveTranscriber(fluidAudioModels: localEnglishModel)
         var saved = UserDefaultsSettingsStore().load()
+        saved.applyFirstRunDefaults()
         if !saved.route.supportsDictation { saved.route = .local }
         if CommandLine.arguments.contains("--automation-server") {
             saved.desktopControlEnabled = true
