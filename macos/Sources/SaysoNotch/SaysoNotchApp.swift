@@ -78,6 +78,7 @@ final class SaysoAppModel: ObservableObject {
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
     private var dictationDestination: TextOutput.Destination?
+    private var voiceEditCapture: SelectedTextEdit.Capture?
     private var activeRecordingSession: RecordingSession?
     private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
@@ -114,6 +115,9 @@ final class SaysoAppModel: ObservableObject {
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.startOrStopDictation()
+        }
+        hotKeyEngine.register(gesture: .doubleTap) { [weak self] in
+            self?.startOrStopVoiceEdit()
         }
         hotKeyEngine.start(for: dictationHotKey)
         observeExternalApplications()
@@ -217,6 +221,36 @@ final class SaysoAppModel: ObservableObject {
         requestDictationStart(onboardingTest: true)
     }
 
+    func startOrStopVoiceEdit() {
+        if voiceEditCapture != nil, transcriber.canStop {
+            transcriber.stop()
+            return
+        }
+        guard !isStartingDictation, transcriber.canStart else {
+            notice = "Finish current dictation before voice edit."
+            return
+        }
+        guard settings.voiceEditCloudConsent else {
+            notice = "Confirm selected-text cloud consent in Settings before voice edit."
+            return
+        }
+        guard secrets.secret(named: "byok-api-key") != nil,
+              URL(string: settings.byokBaseURL) != nil else {
+            notice = "Configure a compatible BYOK provider before voice edit."
+            return
+        }
+        guard let capture = SelectedTextEdit.capture() else {
+            notice = "Select editable text in another app before voice edit."
+            return
+        }
+        switch reserveDictationStart() {
+        case .reserved:
+            Task { _ = await performDictationStart(voiceEditCapture: capture) }
+        case let .rejected(_, message):
+            notice = message
+        }
+    }
+
     func clearOnboardingTestResult() {
         guard !isOnboardingTestActive else { return }
         onboardingTestTranscriptID = nil
@@ -251,13 +285,17 @@ final class SaysoAppModel: ObservableObject {
         return .reserved
     }
 
-    private func performDictationStart(onboardingTest: Bool = false) async -> Bool {
+    private func performDictationStart(
+        onboardingTest: Bool = false,
+        voiceEditCapture capture: SelectedTextEdit.Capture? = nil
+    ) async -> Bool {
         defer {
             isStartingDictation = false
             dictationStartCancellationRequested = false
         }
         notch.show()
-        dictationDestination = !onboardingTest && settings.autoInsert
+        voiceEditCapture = capture
+        dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
         let session = RecordingSession(
@@ -305,7 +343,10 @@ final class SaysoAppModel: ObservableObject {
                 route: settings.route,
                 handsFree: settings.handsFree,
                 onPartial: { [weak self] text in
-                    Task { @MainActor [weak self] in self?.handleVoiceModeSwitch(text) }
+                    Task { @MainActor [weak self] in
+                        guard self?.voiceEditCapture == nil else { return }
+                        self?.handleVoiceModeSwitch(text)
+                    }
                 },
                 onTermination: { [weak self] termination in
                     Task { @MainActor [weak self] in self?.handleTranscriptionTermination(termination) }
@@ -335,7 +376,8 @@ final class SaysoAppModel: ObservableObject {
     /// A first-run permission sheet activates Sayso. Hand focus back to the
     /// captured app so auto-insert still passes its frontmost-target check.
     private func restoreDictationTargetFocus() {
-        guard let target = dictationDestination?.recordingDestination.processIdentifier,
+        guard let target = dictationDestination?.recordingDestination.processIdentifier
+                ?? voiceEditCapture?.targetProcessIdentifier,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier else { return }
         NSRunningApplication(processIdentifier: target)?.activate()
     }
@@ -349,6 +391,15 @@ final class SaysoAppModel: ObservableObject {
 
     func accept(_ transcript: Transcript) {
         if applyPendingVoiceMode() { return }
+        if let capture = voiceEditCapture {
+            voiceEditCapture = nil
+            guard let delivery = takeActiveDictationDelivery() else {
+                notice = "Voice edit session was no longer active."
+                return
+            }
+            Task { await finishVoiceEdit(transcript, session: delivery.session, capture: capture) }
+            return
+        }
         if let testID = onboardingTestSessionID, activeRecordingSession?.id == testID {
             guard let delivery = takeActiveDictationDelivery() else { return }
             Task { await finishOnboardingTest(transcript, session: delivery.session) }
@@ -469,6 +520,52 @@ final class SaysoAppModel: ObservableObject {
         if activeRecordingSession == nil { notch.hideAfterDelay() }
     }
 
+    private func finishVoiceEdit(
+        _ transcript: Transcript,
+        session: RecordingSession,
+        capture: SelectedTextEdit.Capture
+    ) async {
+        let instruction = VoiceEditPolicy.normalizedInstruction(transcript.text)
+        guard !instruction.isEmpty else {
+            await failVoiceEdit(session, message: "Voice edit needs an instruction.")
+            return
+        }
+        guard settings.voiceEditCloudConsent,
+              let key = secrets.secret(named: "byok-api-key"),
+              let baseURL = URL(string: settings.byokBaseURL) else {
+            await failVoiceEdit(session, message: "Voice edit provider or consent changed before rewrite.")
+            return
+        }
+        notice = "Rewriting selected text."
+        do {
+            let rewrite = try await OpenAICompatibleRewriter(
+                baseURL: baseURL, apiKey: key, model: settings.byokRewriteModel
+            ).rewrite(selection: capture.selectedText, instruction: instruction)
+            let result = SelectedTextEdit.replace(rewrite, in: capture)
+            var completed = session
+            switch result {
+            case .replaced, .replacementUnverified:
+                completed.completeVoiceEdit(rewrite)
+            case .noRewrite, .copiedToClipboard:
+                completed.fail(result.userMessage)
+            }
+            await sessions.upsert(completed)
+            notice = result.userMessage
+        } catch {
+            await failVoiceEdit(session, message: "Voice edit failed: \(error.localizedDescription)")
+            return
+        }
+        notch.hideAfterDelay()
+    }
+
+    private func failVoiceEdit(_ session: RecordingSession, message: String) async {
+        var failed = session
+        failed.fail(message)
+        await sessions.upsert(failed)
+        notice = message
+        notch.hideAfterDelay()
+    }
+
     private func finishOnboardingTest(_ transcript: Transcript, session: RecordingSession) async {
         onboardingTestTranscriptID = transcript.id
         onboardingTestSessionID = nil
@@ -506,6 +603,7 @@ final class SaysoAppModel: ObservableObject {
         updateActiveSession { $0.fail(message) }
         activeRecordingSession = nil
         dictationDestination = nil
+        voiceEditCapture = nil
     }
 
     private func cancelActiveRecordingSession() {
@@ -513,6 +611,7 @@ final class SaysoAppModel: ObservableObject {
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
         dictationDestination = nil
+        voiceEditCapture = nil
     }
 
     private func handleTranscriptionTermination(_ termination: TranscriptionTermination) {
@@ -524,6 +623,7 @@ final class SaysoAppModel: ObservableObject {
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
             dictationDestination = nil
+            voiceEditCapture = nil
         case let .failed(message):
             failActiveSession(message)
         }
@@ -664,6 +764,7 @@ final class SaysoAppModel: ObservableObject {
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
         dictationDestination = nil
+        voiceEditCapture = nil
         applyMode(target)
         notice = target == .control ? "Control ready." : "Dictation ready."
         return true
@@ -1355,6 +1456,7 @@ private struct ModelsWorkspace: View {
                     .font(.caption).foregroundStyle(.secondary)
                 TextField("Base URL", text: $model.settings.byokBaseURL)
                 TextField("Translation model", text: $model.settings.byokTranslationModel)
+                TextField("Voice edit model", text: $model.settings.byokRewriteModel)
                 SecureField("API key", text: $apiKey)
                 Button("Store key") { model.saveBYOKKey(apiKey); apiKey = "" }
             }
@@ -1440,7 +1542,7 @@ private struct SaysoSettingsView: View {
                     get: { model.dictationHotKey },
                     set: { model.setDictationHotKey($0) }
                 ))
-                Text("Default: ⌥ Space. Use any supported global shortcut.")
+                Text("Default: ⌥ Space. Double-tap it with selected text to voice edit.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1456,6 +1558,7 @@ private struct SaysoSettingsView: View {
             }
             Section("Privacy") {
                 Toggle("I understand selected cloud routes transmit data", isOn: $model.settings.cloudConsentGranted)
+                Toggle("Allow selected text to go to voice-edit provider", isOn: $model.settings.voiceEditCloudConsent)
                 Toggle("Enable desktop control and local automation", isOn: Binding(
                     get: { model.settings.desktopControlEnabled },
                     set: { model.setAutomation($0) }
@@ -1591,6 +1694,7 @@ private struct CloudProviderSettings: View {
                 .font(.caption).foregroundStyle(.secondary)
             TextField("Base URL", text: $model.settings.byokBaseURL)
             TextField("Translation model", text: $model.settings.byokTranslationModel)
+            TextField("Voice edit model", text: $model.settings.byokRewriteModel)
             SecureField("API key", text: $apiKey)
             Button("Store key") { model.saveBYOKKey(apiKey); apiKey = "" }
         }
