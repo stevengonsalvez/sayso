@@ -44,3 +44,50 @@ import Testing
     #expect(FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: true))
     #expect(!FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: false))
 }
+
+@Test @MainActor func installedNativeMultilingualModelRoutesIndianLanguagesWithoutSpeechPermission() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = FluidAudioLocalModelManager(modelsDirectory: root)
+    let modelDirectory = root
+        .appending(path: Repo.nemotronMultilingual.folderName, directoryHint: .isDirectory)
+        .appending(path: "multilingual", directoryHint: .isDirectory)
+        .appending(path: "\(FluidAudioLocalModelManager.multilingualChunkMilliseconds)ms", directoryHint: .isDirectory)
+    let artifacts = [
+        ModelNames.NemotronMultilingualStreaming.metadata,
+        ModelNames.NemotronMultilingualStreaming.tokenizer,
+        ModelNames.NemotronMultilingualStreaming.encoderFile,
+        ModelNames.NemotronMultilingualStreaming.decoderFile,
+        ModelNames.NemotronMultilingualStreaming.jointFile,
+    ]
+    for artifact in artifacts {
+        let artifactURL = modelDirectory.appending(path: artifact)
+        try FileManager.default.createDirectory(at: artifactURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: artifactURL)
+    }
+
+    manager.refresh()
+
+    let transcriber = LiveTranscriber(fluidAudioModels: manager)
+    let supportedLanguages: [(DictationLanguage, String)] = [
+        (.hindi, "hi-IN"), (.tamil, "ta-IN"), (.malayalam, "ml-IN"),
+        (.bengali, "bn-IN"), (.gujarati, "gu-IN"), (.kannada, "kn-IN"),
+        (.marathi, "mr-IN"), (.telugu, "te-IN"), (.urdu, "ur-PK"),
+    ]
+    for (language, languageCode) in supportedLanguages {
+        #expect(!transcriber.requiresSpeechRecognition(language: language, route: .local))
+        #expect(FileTranscriber.prefersFluidAudio(language: language, route: .local, localModelReady: true))
+        #expect(FluidAudioLocalModelManager.nemotronLanguageCode(for: language) == languageCode)
+    }
+    #expect(!FileTranscriber.prefersFluidAudio(language: .punjabi, route: .local, localModelReady: true))
+}
+
+@Test @MainActor func localPunjabiFailsBeforeAudioOrSpeechSetup() async throws {
+    let fileURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+    try Data().write(to: fileURL)
+
+    await #expect(throws: SaysoError.unavailable("On-device recognition is unavailable for Punjabi")) {
+        try await FileTranscriber.transcribe(fileURL: fileURL, language: .punjabi, route: .local)
+    }
+}
