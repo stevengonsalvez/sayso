@@ -28,6 +28,22 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     }
 }
 
+@Test func importedAudioIsCopiedIntoManagedStorage() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = root.appendingPathComponent("meeting.m4a")
+    let recordings = root.appendingPathComponent("Recordings", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try Data("audio".utf8).write(to: source)
+
+    let imported = try SessionAudioArchive.importRecording(from: source, directory: recordings)
+
+    #expect(imported != source)
+    #expect(FileManager.default.fileExists(atPath: imported.path))
+    #expect(SessionAudioArchive.isManagedRecording(imported, directory: recordings))
+    #expect(try Data(contentsOf: imported) == Data("audio".utf8))
+}
+
 @Test func sessionAudioArchivePersistsReadableAudioOnlyAfterFramesArrive() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -323,6 +339,25 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     let historyURL = root.appendingPathComponent("history.json")
     let recordingDirectory = root.appendingPathComponent("InjectedRecordings", isDirectory: true)
     let retainedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let orphanedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    try Data("truncated \(retainedAudioURL.lastPathComponent) history".utf8).write(to: historyURL)
+    let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+
+    #expect(await store.appendResult(.init(text: "Recovered", language: .english, route: .local, isFinal: true)) == .recovered)
+    await store.reclaimUnreferencedAudio(olderThan: Date().addingTimeInterval(1))
+
+    #expect(FileManager.default.fileExists(atPath: retainedAudioURL.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedAudioURL.path))
+}
+
+@Test func corruptHistoryRecoveryRetainsImportedAudioNamedInUnreadableBackup() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("InjectedRecordings", isDirectory: true)
+    try FileManager.default.createDirectory(at: recordingDirectory, withIntermediateDirectories: true)
+    let retainedAudioURL = recordingDirectory.appendingPathComponent("Imported-\(UUID().uuidString).m4a")
+    try Data("saved audio".utf8).write(to: retainedAudioURL)
     let orphanedAudioURL = try finishedManagedRecording(in: recordingDirectory)
     try Data("truncated \(retainedAudioURL.lastPathComponent) history".utf8).write(to: historyURL)
     let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
