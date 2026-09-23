@@ -72,11 +72,30 @@ public struct OpenAICompatibleTranscriptCleaner: Sendable {
             lexiconDirectives: lexiconDirectives,
             lexiconContextTags: lexiconContextTags
         )
-        return try await client.complete(
-            systemPrompt: systemPrompt,
-            userPrompt: TranscriptCleanupPolicy.userMessage(transcript: transcript),
-            failureLabel: "Transcript cleanup"
-        )
+        let cleaned = try await withThrowingTaskGroup(of: String.self, returning: String.self) { group in
+            group.addTask {
+                try await client.complete(
+                    systemPrompt: systemPrompt,
+                    userPrompt: TranscriptCleanupPolicy.userMessage(transcript: transcript),
+                    failureLabel: "Transcript cleanup"
+                )
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try Task.checkCancellation()
+                throw SaysoError.unavailable("Transcript cleanup timed out")
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw SaysoError.unavailable("Transcript cleanup")
+            }
+            return result
+        }
+        let maximumLength = max(transcript.count + 32, transcript.count * 3 / 2)
+        guard cleaned.count <= maximumLength else {
+            throw SaysoError.unavailable("Transcript cleanup response")
+        }
+        return cleaned
     }
 }
 
