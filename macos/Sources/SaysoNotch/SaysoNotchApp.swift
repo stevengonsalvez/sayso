@@ -1711,7 +1711,7 @@ private struct HistoryWorkspace: View {
                             Text(entry.language.displayName)
                             Text(entry.route.displayName)
                             if entry.hasTranslation { Text("Translated") }
-                            if entry.audioFileURL != nil { Text("Recording") }
+                            if entry.hasRecording { Text("Recording") }
                         }
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -1720,8 +1720,7 @@ private struct HistoryWorkspace: View {
                             .foregroundStyle(.tertiary)
                     }
                     Spacer()
-                    if let audioFileURL = entry.audioFileURL,
-                       FileManager.default.fileExists(atPath: audioFileURL.path) {
+                    if let audioFileURL = entry.audioFileURL, entry.hasRecording {
                         Button {
                             Task {
                                 model.startReprocessingHistory(entry)
@@ -1749,8 +1748,7 @@ private struct HistoryWorkspace: View {
                         if entry.hasTranslation, let translatedText = entry.translatedText {
                             Button("Copy translation") { _ = TextOutput.copy(translatedText) }
                         }
-                        if let audioFileURL = entry.audioFileURL,
-                           FileManager.default.fileExists(atPath: audioFileURL.path) {
+                        if let audioFileURL = entry.audioFileURL, entry.hasRecording {
                             Button("Reveal recording in Finder") {
                                 NSWorkspace.shared.activateFileViewerSelecting([audioFileURL])
                             }
