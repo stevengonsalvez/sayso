@@ -119,7 +119,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
 public struct SaysoSettings: Codable, Equatable, Sendable {
     public var mode: SaysoMode = .dictation
     public var overlayPresentation: OverlayPresentation = .notch
-    public var language: DictationLanguage = .automatic
+    public var language: DictationLanguage = .english
     public var route: ProviderRoute = .local
     public var translationEnabled = false
     public var outputLanguage: DictationLanguage = .english
