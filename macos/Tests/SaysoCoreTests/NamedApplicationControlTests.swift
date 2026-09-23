@@ -147,3 +147,20 @@ private func installedApplication(
 
     #expect(plan.action == .open(url: URL(string: "https://example.com/docs")!))
 }
+
+@Test func namedApplicationPlannerRejectsUnschemedWebAddresses() {
+    #expect(throws: SaysoError.invalidAction("Open web addresses must include http:// or https://.")) {
+        try ControlPlanner.plan(
+            command: "open example.com",
+            snapshot: namedApplicationSnapshot,
+            installedApplications: []
+        )
+    }
+    #expect(throws: SaysoError.invalidAction("Open web addresses must include http:// or https://.")) {
+        try ControlPlanner.plan(
+            command: "open file:///tmp/example",
+            snapshot: namedApplicationSnapshot,
+            installedApplications: []
+        )
+    }
+}
