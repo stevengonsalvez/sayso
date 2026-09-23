@@ -447,10 +447,11 @@ final class SaysoAppModel: ObservableObject {
                 updated.translatedText = nil
                 lastTranscript = updated
                 Task {
-                    let saved = await history.append(updated)
-                    if await history.takeRecoveryNotice() {
+                    let historyResult = await history.appendResult(updated)
+                    guard lastTranscript?.id == updated.id else { return }
+                    if historyResult == .recovered {
                         notice = "Voice edit applied. Recovered unreadable history to a local backup."
-                    } else if !saved {
+                    } else if historyResult == .failed {
                         notice = "Voice edit applied, but history could not save."
                     }
                 }
@@ -489,15 +490,14 @@ final class SaysoAppModel: ObservableObject {
         let settingsSnapshot = settings
         let completed = await translated(transcript, settings: settingsSnapshot)
         lastTranscript = completed
-        let historySaved = await history.append(completed)
-        let recoveredHistory = await history.takeRecoveryNotice()
+        let historyResult = await history.appendResult(completed)
         let finalText = completed.translatedText ?? completed.text
         let copied = TextOutput.copy(finalText)
-        if recoveredHistory {
+        if historyResult == .recovered {
             notice = copied
                 ? "Final text copied. Recovered unreadable history to a local backup."
                 : "Dictation finished. Recovered unreadable history to a local backup."
-        } else if !historySaved {
+        } else if historyResult == .failed {
             notice = copied ? "Final text copied, but history could not save." : "Dictation finished, but text and history could not save."
         } else {
             notice = copied ? "Final text copied to clipboard." : "Dictation finished, but final text could not be copied."
@@ -534,8 +534,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
         lastTranscript = transcript
-        let historySaved = await history.append(transcript)
-        let recoveredHistory = await history.takeRecoveryNotice()
+        let historyResult = await history.appendResult(transcript)
         let finalText = transcript.translatedText ?? transcript.text
         let output: TextOutput.DeliveryResult
         if pendingDelivery.settings.autoInsert {
@@ -566,14 +565,21 @@ final class SaysoAppModel: ObservableObject {
                 notice = failure.userMessage
             }
         }
-        if recoveredHistory {
-            notice = "Final text delivered. Recovered unreadable history to a local backup."
-        } else if !historySaved {
-            switch output {
-            case .delivered:
-                notice = "Final text delivered, but history could not save."
-            case .pasteFailed:
-                notice = "Dictation finished, but text delivery and history save failed."
+        if activeRecordingSession == nil {
+            if historyResult == .recovered {
+                switch output {
+                case .delivered:
+                    notice = "Final text delivered. Recovered unreadable history to a local backup."
+                case let .pasteFailed(failure):
+                    notice = "\(failure.userMessage) Recovered unreadable history to a local backup."
+                }
+            } else if historyResult == .failed {
+                switch output {
+                case .delivered:
+                    notice = "Final text delivered, but history could not save."
+                case let .pasteFailed(failure):
+                    notice = "\(failure.userMessage) History could not save."
+                }
             }
         }
         await sessions.upsert(session)
