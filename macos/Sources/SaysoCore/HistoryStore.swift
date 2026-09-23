@@ -71,6 +71,21 @@ public actor HistoryStore {
         try? data.write(to: fileURL, options: .atomic)
     }
 
+    @discardableResult
+    public func remove(id: Transcript.ID) -> Bool {
+        var entries = all()
+        let originalCount = entries.count
+        entries.removeAll { $0.id == id }
+        guard entries.count != originalCount,
+              let data = try? JSONEncoder().encode(entries) else { return false }
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     public func clear() {
         try? FileManager.default.removeItem(at: fileURL)
     }
