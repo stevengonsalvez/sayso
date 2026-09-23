@@ -238,6 +238,12 @@ import Testing
     #expect(await store.plainTextExport().contains("नमस्ते"))
 }
 
+@Test func historyExportFallsBackFromWhitespaceTranslation() async {
+    let store = HistoryStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    await store.append(Transcript(text: "hello", translatedText: "   ", language: .english, route: .local, isFinal: true))
+    #expect(await store.plainTextExport().contains("hello"))
+}
+
 @Test func controlRejectsLowConfidence() {
     let step = ControlPlanStep(
         action: .scroll(lines: 1, expectedFingerprint: "target"), confidence: 0.59, reason: "uncertain target"
