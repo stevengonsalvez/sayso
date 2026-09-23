@@ -66,20 +66,24 @@ private func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
 // ponytail: keep these factories outside LiveTranscriber so realtime audio taps never inherit MainActor isolation.
 private func makeSpeechTap(
     request: SFSpeechAudioBufferRecognitionRequest,
+    archive: SessionAudioArchive?,
     levelReporter: AudioLevelReporter
 ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
     { [weak request, levelReporter] buffer, _ in
         request?.append(buffer)
+        archive?.append(buffer)
         levelReporter.report(audioLevel(in: buffer))
     }
 }
 
 private func makePumpTap(
     pump: FluidAudioBufferPump,
+    archive: SessionAudioArchive?,
     levelReporter: AudioLevelReporter
 ) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
     { [pump, levelReporter] buffer, _ in
         pump.submit(buffer)
+        archive?.append(buffer)
         levelReporter.report(audioLevel(in: buffer))
     }
 }
@@ -114,6 +118,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var startGate = TranscriptionRunGate()
     private var appleRecognitionRun = TranscriptionRunGate()
     private var appleFinalizationTask: Task<Void, Never>?
+    private var sessionAudioArchive: SessionAudioArchive?
 
     @Published public private(set) var isStarting = false
     public var canStop: Bool { isStarting || phase == .listening }
@@ -146,6 +151,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         language: DictationLanguage,
         route: ProviderRoute,
         handsFree: Bool = false,
+        saveAudio: Bool = false,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
@@ -172,6 +178,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         self.handsFree = handsFree
         error = nil
         partialText = ""
+        discardSessionAudio()
         phase = .requestingPermission
 
         if route == .local, language == .punjabi {
@@ -180,7 +187,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                 return false
             }
             guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
-            return await startSherpaPunjabi(language: language, route: route, attempt: attempt)
+            return await startSherpaPunjabi(language: language, route: route, saveAudio: saveAudio, attempt: attempt)
         }
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
@@ -188,7 +195,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         if shouldUseFluidAudio(language: language, route: route) {
             guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
-            return await startFluidAudio(language: language, route: route, attempt: attempt)
+            return await startFluidAudio(language: language, route: route, saveAudio: saveAudio, attempt: attempt)
         }
         guard SpeechCapabilities.supports(language) else {
             fail(.unavailable("Speech locale \(language.displayName)"))
@@ -222,8 +229,19 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
+        do {
+            try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
+        } catch {
+            fail(.unavailable("Audio history storage could not start"))
+            return false
+        }
         let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makeSpeechTap(request: request, levelReporter: levelReporter))
+        input.installTap(
+            onBus: 0,
+            bufferSize: 1_024,
+            format: format,
+            block: makeSpeechTap(request: request, archive: sessionAudioArchive, levelReporter: levelReporter)
+        )
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, recognitionError in
             Task { @MainActor [weak self] in
@@ -250,6 +268,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     public func stop() {
         if startGate.isPending {
             cancelStartAttempt()
+            discardSessionAudio()
             silenceTask?.cancel()
             silenceTask = nil
             phase = .idle
@@ -321,7 +340,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         Self.prefersNativeFluidAudio(language: language, route: route, models: fluidAudioModels)
     }
 
-    private func startFluidAudio(language: DictationLanguage, route: ProviderRoute, attempt: UUID) async -> Bool {
+    private func startFluidAudio(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        saveAudio: Bool,
+        attempt: UUID
+    ) async -> Bool {
         do {
             let session = try await fluidAudioModels.makeReadySession(for: language)
             guard isStartCurrent(attempt) else {
@@ -354,8 +378,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
+            try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makePumpTap(pump: pump, levelReporter: levelReporter))
+            input.installTap(
+                onBus: 0,
+                bufferSize: 1_024,
+                format: format,
+                block: makePumpTap(pump: pump, archive: sessionAudioArchive, levelReporter: levelReporter)
+            )
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
@@ -363,6 +393,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         } catch {
             guard isStartCurrent(attempt) else { return false }
             stopAudioEngine()
+            discardSessionAudio()
             if let session = fluidAudioSession { await session.reset() }
             clearFluidAudioRun()
             fail(.unavailable("Local \(language.displayName) model could not start: \(error.localizedDescription)"))
@@ -376,7 +407,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onPartial?(text)
     }
 
-    private func startSherpaPunjabi(language: DictationLanguage, route: ProviderRoute, attempt: UUID) async -> Bool {
+    private func startSherpaPunjabi(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        saveAudio: Bool,
+        attempt: UUID
+    ) async -> Bool {
         do {
             let session = try sherpaPunjabiModels.makeReadySession(for: language)
             guard isStartCurrent(attempt) else {
@@ -401,8 +437,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
+            try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makePumpTap(pump: pump, levelReporter: levelReporter))
+            input.installTap(
+                onBus: 0,
+                bufferSize: 1_024,
+                format: format,
+                block: makePumpTap(pump: pump, archive: sessionAudioArchive, levelReporter: levelReporter)
+            )
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
@@ -410,6 +452,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         } catch {
             guard isStartCurrent(attempt) else { return false }
             stopAudioEngine()
+            discardSessionAudio()
             if let session = sherpaPunjabiSession { await session.reset() }
             clearSherpaPunjabiRun()
             fail(.unavailable("Local Punjabi model could not start: \(error.localizedDescription)"))
@@ -491,6 +534,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         switch result {
         case let .success(text):
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                discardSessionAudio()
                 phase = .idle
                 terminate(.cancelled)
             } else {
@@ -515,6 +559,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         switch result {
         case let .success(text):
             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                discardSessionAudio()
                 phase = .idle
                 terminate(.cancelled)
             } else {
@@ -535,6 +580,17 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func stopAudioEngine() {
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
+    }
+
+    private func prepareSessionAudio(enabled: Bool, inputFormat: AVAudioFormat) throws {
+        discardSessionAudio()
+        guard enabled else { return }
+        sessionAudioArchive = try SessionAudioArchive(inputFormat: inputFormat)
+    }
+
+    private func discardSessionAudio() {
+        sessionAudioArchive?.discard()
+        sessionAudioArchive = nil
     }
 
     private func finishAppleAudioCapture() {
@@ -560,6 +616,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard appleRecognitionRun.isCurrent(runID), phase == .processing else { return }
         if partialText.isEmpty {
             stopAppleAudioCapture()
+            discardSessionAudio()
             phase = .idle
             terminate(.cancelled)
         } else {
@@ -582,8 +639,22 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func finish(text: String, language: DictationLanguage, route: ProviderRoute) {
         guard phase != .idle else { return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            discardSessionAudio()
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
         if !usesFluidAudio { stopAppleAudioCapture() }
-        let transcript = Transcript(text: text, language: language, route: route, isFinal: true)
+        let audioFileURL = sessionAudioArchive?.finish()
+        sessionAudioArchive = nil
+        let transcript = Transcript(
+            text: text,
+            language: language,
+            route: route,
+            isFinal: true,
+            audioFileURL: audioFileURL
+        )
         phase = .idle
         onFinal?(transcript)
         onFinal = nil
@@ -594,6 +665,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func fail(_ error: SaysoError) {
         cancelStartAttempt()
         stopAppleAudioCapture()
+        discardSessionAudio()
         self.error = error
         phase = .failed
         terminate(.failed(error.localizedDescription))
