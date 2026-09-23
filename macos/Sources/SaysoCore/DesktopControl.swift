@@ -95,7 +95,7 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         case .quit:
             return true
         case .press, .key:
-            // Element IDs are opaque AX locators. Treat an unlabelled press as review-only.
+            // AX locators are opaque, and keyboard events may commit or dismiss state. Review both.
             return true
         default:
             return false
@@ -225,9 +225,12 @@ public enum ControlOutcome {
         case .type:
             guard let after else { return .unknown }
             return after.focusedValue != before.focusedValue ? .observed : .notObserved
-        case .press, .scroll, .key:
+        case .press, .scroll:
             guard let after else { return .unknown }
             return after.fingerprint != before.fingerprint ? .observed : .notObserved
+        case .key:
+            // Caret moves are not represented in DesktopSnapshot. Do not mistake them for failed actions.
+            return .unknown
         case .open, .activate, .quit:
             return externalEffect
         }
@@ -239,8 +242,10 @@ public enum ControlOutcome {
         switch action {
         case .type:
             return observed ? "observed text change" : "no observed text change"
-        case .press, .scroll, .key:
+        case .press, .scroll:
             return observed ? "observed interface change" : "no observed interface change"
+        case .key:
+            return "keyboard event sent, effect not attributable"
         case .open:
             return observed ? "observed navigation" : "no observed navigation"
         case .activate:
@@ -428,7 +433,7 @@ public enum ControlPlanner {
             return .init(
                 action: .key(key, expectedFingerprint: snapshot.fingerprint),
                 confidence: 0.85,
-                reason: "Exact key command",
+                reason: "Press \(key.rawValue)",
                 requiresConfirmation: true
             )
         }
@@ -590,7 +595,13 @@ public final class AXDesktopController: @unchecked Sendable {
             try candidateCapture.press(candidateID: .init(rawValue: elementID), application: target)
         case let .key(key, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
-            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier), target.activate(),
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
+                throw SaysoError.staleTarget
+            }
+            guard target.activate() else {
+                throw SaysoError.unavailable("Activate \(before.applicationName)")
+            }
+            guard
                   let source = CGEventSource(stateID: .combinedSessionState),
                   let keyDown = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: true),
                   let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: false) else {
@@ -675,7 +686,7 @@ public final class AXDesktopController: @unchecked Sendable {
         openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
-        case .type, .press, .scroll, .key:
+        case .type, .press, .scroll:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
@@ -693,6 +704,9 @@ public final class AXDesktopController: @unchecked Sendable {
                 action: action,
                 effect: ControlOutcome.effect(for: action, before: before, after: observation.snapshot)
             )
+
+        case .key:
+            return .init(snapshot: nil, action: action, effect: .unknown)
 
         case let .open(url):
             // Redirects and already-open targets settle as unknown, never as observed.
