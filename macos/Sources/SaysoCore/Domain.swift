@@ -119,6 +119,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     public let createdAt: Date
     public var text: String
     public var translatedText: String?
+    public var translatedLanguage: DictationLanguage?
     public var language: DictationLanguage
     public var route: ProviderRoute
     public var isFinal: Bool
@@ -133,7 +134,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     }
 
     public func spokenLanguage(outputLanguage: DictationLanguage) -> DictationLanguage {
-        hasTranslation ? outputLanguage : language
+        hasTranslation ? (translatedLanguage ?? outputLanguage) : language
     }
 
     public init(
@@ -141,6 +142,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         createdAt: Date = .now,
         text: String,
         translatedText: String? = nil,
+        translatedLanguage: DictationLanguage? = nil,
         language: DictationLanguage,
         route: ProviderRoute,
         isFinal: Bool,
@@ -150,6 +152,7 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.text = text
         self.translatedText = translatedText
+        self.translatedLanguage = translatedLanguage
         self.language = language
         self.route = route
         self.isFinal = isFinal
