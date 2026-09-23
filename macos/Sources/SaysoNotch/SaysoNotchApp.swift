@@ -9,15 +9,20 @@ import UniformTypeIdentifiers
 
 @main
 struct SaysoNotchApp: App {
-    private let instanceLock: SingleInstanceLock
+    private let instanceLock: SingleInstanceLock?
     @StateObject private var model: SaysoAppModel
 
     init() {
-        guard let instanceLock = SingleInstanceLock() else {
+        switch SingleInstanceLock.acquire() {
+        case let .acquired(instanceLock):
+            self.instanceLock = instanceLock
+        case .unavailable:
+            self.instanceLock = nil
+        case .held:
             Self.activateExistingInstance()
+            DistributedNotificationCenter.default().post(name: saysoReopenNotification, object: nil)
             exit(0)
         }
-        self.instanceLock = instanceLock
         _model = StateObject(wrappedValue: SaysoAppModel())
     }
 
@@ -41,30 +46,40 @@ struct SaysoNotchApp: App {
 }
 
 private final class SingleInstanceLock {
+    enum Acquisition {
+        case acquired(SingleInstanceLock)
+        case held
+        case unavailable
+    }
+
     private let descriptor: Int32
 
-    init?() {
+    private init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    static func acquire() -> Acquisition {
         guard let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first else {
-            return nil
+            return .unavailable
         }
         let directory = applicationSupport.appendingPathComponent("Sayso Notch", isDirectory: true)
         guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
-            return nil
+            return .unavailable
         }
         let descriptor = open(
             directory.appendingPathComponent("instance.lock").path,
             O_CREAT | O_RDWR,
             S_IRUSR | S_IWUSR
         )
-        guard descriptor >= 0 else { return nil }
+        guard descriptor >= 0 else { return .unavailable }
         guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
             close(descriptor)
-            return nil
+            return .held
         }
-        self.descriptor = descriptor
+        return .acquired(Self(descriptor: descriptor))
     }
 
     deinit {
@@ -72,6 +87,8 @@ private final class SingleInstanceLock {
         close(descriptor)
     }
 }
+
+private let saysoReopenNotification = Notification.Name("ai.sayso.notch.reopen")
 
 @MainActor
 final class SaysoAppModel: ObservableObject {
@@ -111,7 +128,17 @@ final class SaysoAppModel: ObservableObject {
     @Published var controlEntries: [ControlAuditEntry] = []
     @Published var pendingControlStep: ControlPlanStep?
     @Published var selectedTab = 0
-    @Published var notice: String?
+    @Published var notice: String? {
+        didSet {
+            noticeDismissalTask?.cancel()
+            guard notice != nil else { return }
+            noticeDismissalTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled else { return }
+                self?.notice = nil
+            }
+        }
+    }
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
@@ -154,6 +181,8 @@ final class SaysoAppModel: ObservableObject {
     private var controlPreparationTask: Task<Void, Never>?
     private var controlPreparationID: UUID?
     private var historyAudioTask: Task<Void, Never>?
+    private var noticeDismissalTask: Task<Void, Never>?
+    private var reopenObserver: NSObjectProtocol?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
     private var onboardingTestSessionID: UUID?
@@ -194,6 +223,13 @@ final class SaysoAppModel: ObservableObject {
             self?.startOrStopVoiceEdit()
         }
         hotKeyEngine.start(for: dictationHotKey)
+        reopenObserver = DistributedNotificationCenter.default().addObserver(
+            forName: saysoReopenNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.showMainWindow() }
+        }
         observeExternalApplications()
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
