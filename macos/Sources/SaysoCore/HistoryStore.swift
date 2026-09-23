@@ -68,11 +68,14 @@ public actor HistoryStore {
     private let maximumEntries: Int?
     private let fileManager: FileManager
     private let persistEntries: @Sendable (Data, URL) -> Bool
+    private let persistJournal: @Sendable (Data, URL) -> Bool
 
+    /// A nil maximum retains complete history. Managed deployments may opt into a cap.
     public init(
         fileManager: FileManager = .default,
         maximumEntries: Int? = nil,
-        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
+        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write,
+        persistJournal: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SaysoNotch", isDirectory: true)
@@ -83,6 +86,7 @@ public actor HistoryStore {
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
         self.persistEntries = persistEntries
+        self.persistJournal = persistJournal
     }
 
     public init(
@@ -90,7 +94,8 @@ public actor HistoryStore {
         maximumEntries: Int? = nil,
         recordingsDirectory: URL? = nil,
         fileManager: FileManager = .default,
-        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
+        persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write,
+        persistJournal: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         self.fileURL = fileURL
         self.walURL = fileURL.appendingPathExtension("wal")
@@ -99,6 +104,7 @@ public actor HistoryStore {
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
         self.persistEntries = persistEntries
+        self.persistJournal = persistJournal
     }
 
     public func all() -> [Transcript] {
@@ -278,13 +284,20 @@ public actor HistoryStore {
             return .journaled
         }
         try? fileManager.removeItem(at: walURL)
-        releaseManagedAudio(Array(deferredAudioFileURLs).map(Optional.some), unlessReferencedBy: entries)
+        releaseManagedAudio(
+            Array(deferredAudioFileURLs).map(Optional.some),
+            retaining: recoverableAudioURLs(),
+            unlessReferencedBy: entries
+        )
         return .snapshot
     }
 
     public static func write(_ data: Data, _ fileURL: URL) -> Bool {
         do {
             try data.write(to: fileURL, options: .atomic)
+            let handle = try FileHandle(forWritingTo: fileURL)
+            defer { try? handle.close() }
+            try handle.synchronize()
             return true
         } catch {
             return false
@@ -307,7 +320,11 @@ public actor HistoryStore {
         guard let snapshotData = try? JSONEncoder().encode(entries) else { return .entries(entries) }
         if persistEntries(snapshotData, fileURL) {
             try? fileManager.removeItem(at: walURL)
-            releaseManagedAudio(journal.deferredAudioFileURLs.map(Optional.some), unlessReferencedBy: entries)
+            releaseManagedAudio(
+                journal.deferredAudioFileURLs.map(Optional.some),
+                retaining: recoverableAudioURLs(),
+                unlessReferencedBy: entries
+            )
             if case let .entries(previousEntries) = snapshot {
                 releaseManagedAudio(previousEntries.map(\.audioFileURL), unlessReferencedBy: entries)
             }
@@ -323,15 +340,7 @@ public actor HistoryStore {
     }
 
     private func writeWAL(_ data: Data) -> Bool {
-        do {
-            try data.write(to: walURL, options: .atomic)
-            let handle = try FileHandle(forWritingTo: walURL)
-            try handle.synchronize()
-            try handle.close()
-            return true
-        } catch {
-            return false
-        }
+        persistJournal(data, walURL)
     }
 
     private func journal() -> HistoryJournal? {
