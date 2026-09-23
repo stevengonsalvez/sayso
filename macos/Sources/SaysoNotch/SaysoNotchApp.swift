@@ -1146,11 +1146,13 @@ private struct ControlWorkspace: View {
 private struct HistoryWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var entries: [Transcript] = []
+    @State private var query = ""
     @State private var confirmClear = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let insights = HistoryInsights.make(from: entries)
+            let displayedEntries = HistoryFilter.matching(entries, query: query)
+            let insights = HistoryInsights.make(from: displayedEntries)
             HStack(spacing: 24) {
                 Label("\(insights.entries) entries", systemImage: "text.quote")
                 Label("\(insights.words) words", systemImage: "textformat")
@@ -1160,7 +1162,10 @@ private struct HistoryWorkspace: View {
                 Button("Clear history", role: .destructive) { confirmClear = true }
             }
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal)
-            List(entries) { entry in
+            TextField("Search words, translations, language, or route", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal)
+            List(displayedEntries) { entry in
                 VStack(alignment: .leading) {
                     Text(entry.translatedText ?? entry.text)
                     Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
