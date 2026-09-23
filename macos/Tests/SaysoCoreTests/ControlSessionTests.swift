@@ -85,3 +85,19 @@ import Testing
     #expect(cancelled.result == .cancelled)
     #expect(afterCancelledRecord == cancelled)
 }
+
+@Test func controlSessionFailureIsTerminalUntilNewCommand() async {
+    let session = ControlSession()
+    _ = await session.start()
+    _ = await session.record(.actionFailed)
+    let failed = await session.fail()
+    let afterFailure = await session.record(.effectObserved)
+    let restarted = await session.beginCommand()
+
+    #expect(failed.result == .failed)
+    #expect(!failed.canRunAction)
+    #expect(afterFailure == failed)
+    #expect(restarted.phase == .running)
+    #expect(restarted.result == nil)
+    #expect(restarted.actionCount == 0)
+}
