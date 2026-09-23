@@ -25,6 +25,18 @@ import Testing
     #expect(settings.dictationProfile == .default)
 }
 
+@Test func firstRunMigratesAutomaticLanguageToEnglish() {
+    var settings = SaysoSettings()
+    settings.language = .automatic
+    settings.applyFirstRunDefaults()
+    #expect(settings.language == .english)
+
+    settings.onboardingCompleted = true
+    settings.language = .automatic
+    settings.applyFirstRunDefaults()
+    #expect(settings.language == .automatic)
+}
+
 @Test func permissionRequestsOpenTheirExactPrivacyPanes() {
     #expect(PermissionKind.microphone.settingsURL.absoluteString.contains("Privacy_Microphone"))
     #expect(PermissionKind.speechRecognition.settingsURL.absoluteString.contains("Privacy_SpeechRecognition"))
