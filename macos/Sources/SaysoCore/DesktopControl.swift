@@ -91,19 +91,40 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
     public let action: DesktopAction
     public let beforeFingerprint: String
     public let afterFingerprint: String?
+    public let effect: ControlEffect
+    /// Human-readable description of `effect`. Never parse it; branch on `effect`.
     public let result: String
 
     public init(
         id: UUID = UUID(), timestamp: Date = .now, action: DesktopAction,
-        beforeFingerprint: String, afterFingerprint: String?, result: String
+        beforeFingerprint: String, afterFingerprint: String?, effect: ControlEffect, result: String
     ) {
         self.id = id
         self.timestamp = timestamp
         self.action = action
         self.beforeFingerprint = beforeFingerprint
         self.afterFingerprint = afterFingerprint
+        self.effect = effect
         self.result = result
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        action = try container.decode(DesktopAction.self, forKey: .action)
+        beforeFingerprint = try container.decode(String.self, forKey: .beforeFingerprint)
+        afterFingerprint = try container.decodeIfPresent(String.self, forKey: .afterFingerprint)
+        // Entries written before typed effects carry only prose; do not infer from it.
+        effect = try container.decodeIfPresent(ControlEffect.self, forKey: .effect) ?? .unknown
+        result = try container.decode(String.self, forKey: .result)
+    }
+}
+
+public enum ControlEffect: String, Codable, Equatable, Sendable {
+    case observed
+    case notObserved
+    case unknown
 }
 
 public enum ControlPolicy {
@@ -128,35 +149,27 @@ public enum ControlPolicy {
 }
 
 public enum ControlOutcome {
-    public static func effectObserved(
+    public static func effect(
         for action: DesktopAction,
         before: DesktopSnapshot,
         after: DesktopSnapshot?,
-        externalEffectObserved: Bool? = nil
-    ) -> Bool? {
+        externalEffect: ControlEffect = .unknown
+    ) -> ControlEffect {
         switch action {
         case .type:
-            return after.map { $0.focusedValue != before.focusedValue }
+            guard let after else { return .unknown }
+            return after.focusedValue != before.focusedValue ? .observed : .notObserved
         case .press, .scroll:
-            return after.map { $0.fingerprint != before.fingerprint }
+            guard let after else { return .unknown }
+            return after.fingerprint != before.fingerprint ? .observed : .notObserved
         case .open, .activate, .quit:
-            return externalEffectObserved
+            return externalEffect
         }
     }
 
-    public static func result(
-        for action: DesktopAction,
-        before: DesktopSnapshot,
-        after: DesktopSnapshot?,
-        externalEffectObserved: Bool? = nil
-    ) -> String {
-        guard let observed = effectObserved(
-            for: action,
-            before: before,
-            after: after,
-            externalEffectObserved: externalEffectObserved
-        ) else { return "unknown effect" }
-
+    public static func result(for action: DesktopAction, effect: ControlEffect) -> String {
+        guard effect != .unknown else { return "unknown effect" }
+        let observed = effect == .observed
         switch action {
         case .type:
             return observed ? "observed text change" : "no observed text change"
@@ -168,6 +181,37 @@ public enum ControlOutcome {
             return observed ? "observed target active" : "no observed target active"
         case .quit:
             return observed ? "observed process termination" : "no observed process termination"
+        }
+    }
+}
+
+/// What an `open` action can honestly claim from before/after document URLs.
+public enum OpenNavigationOutcome: Equatable, Sendable {
+    /// Handler app shows the target URL, and did not before the action.
+    case navigated
+    /// Target URL was already showing, so a new navigation cannot be attributed.
+    case alreadyOpen
+    /// Target app was already frontmost, but Accessibility exposed no current URL.
+    case targetAlreadyActive
+    /// Handler app moved to a different URL: a redirect, or something else.
+    case differentURL(URL)
+    case notObserved
+
+    public var effect: ControlEffect {
+        switch self {
+        case .navigated: .observed
+        case .alreadyOpen, .targetAlreadyActive, .differentURL: .unknown
+        case .notObserved: .notObserved
+        }
+    }
+
+    public var result: String {
+        switch self {
+        case .navigated: "observed navigation"
+        case .alreadyOpen: "target already open, navigation not attributable"
+        case .targetAlreadyActive: "target app already active, navigation not attributable"
+        case let .differentURL(url): "handler shows \(url.absoluteString), navigation not attributable, possible redirect"
+        case .notObserved: "no observed navigation"
         }
     }
 }
@@ -187,16 +231,25 @@ public enum ControlExternalEffect {
         !runningProcessIdentifiers.contains(targetProcessIdentifier)
     }
 
-    public static func openedTarget(
+    public static func openNavigation(
         targetBundleIdentifier: String,
-        observedBundleIdentifier: String?,
         targetURL: URL,
+        targetWasFrontmost: Bool,
+        beforeURL: URL?,
+        observedBundleIdentifier: String?,
         observedURL: URL?
-    ) -> Bool {
-        guard targetBundleIdentifier == observedBundleIdentifier,
-              let observedURL,
-              let target = URLComponents(url: targetURL, resolvingAgainstBaseURL: false),
-              let observed = URLComponents(url: observedURL, resolvingAgainstBaseURL: false) else { return false }
+    ) -> OpenNavigationOutcome {
+        guard targetBundleIdentifier == observedBundleIdentifier, let observedURL else { return .notObserved }
+        if targetWasFrontmost, beforeURL == nil { return .targetAlreadyActive }
+        if let beforeURL, sameDocument(beforeURL, targetURL) { return .alreadyOpen }
+        if sameDocument(observedURL, targetURL) { return .navigated }
+        if let beforeURL, sameDocument(observedURL, beforeURL) { return .notObserved }
+        return .differentURL(observedURL)
+    }
+
+    static func sameDocument(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let target = URLComponents(url: lhs, resolvingAgainstBaseURL: false),
+              let observed = URLComponents(url: rhs, resolvingAgainstBaseURL: false) else { return false }
         return target.scheme?.lowercased() == observed.scheme?.lowercased()
             && target.host?.lowercased() == observed.host?.lowercased()
             && normalizedPath(target) == normalizedPath(observed)
@@ -369,6 +422,8 @@ public final class AXDesktopController: @unchecked Sendable {
         guard !before.isProtected else { throw SaysoError.protectedTarget }
         var targetProcessIdentifier: Int32?
         var openTargetBundleIdentifier: String?
+        var openTargetWasFrontmost = false
+        var openBeforeURL: URL?
 
         switch step.action {
         case let .type(text, expectedFingerprint):
@@ -378,6 +433,11 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let targetApplicationURL = NSWorkspace.shared.urlForApplication(toOpen: url),
                   let targetBundleIdentifier = Bundle(url: targetApplicationURL)?.bundleIdentifier else {
                 throw SaysoError.unavailable("Application for \(url.host ?? url.absoluteString)")
+            }
+            if let frontmost = NSWorkspace.shared.frontmostApplication,
+               frontmost.bundleIdentifier == targetBundleIdentifier {
+                openTargetWasFrontmost = true
+                openBeforeURL = documentURL(in: frontmost)
             }
             guard NSWorkspace.shared.open(url) else {
                 throw SaysoError.unavailable("Open \(url.host ?? url.absoluteString)")
@@ -418,20 +478,17 @@ public final class AXDesktopController: @unchecked Sendable {
             before: before,
             targetApplication: targetApplication,
             targetProcessIdentifier: targetProcessIdentifier,
-            openTargetBundleIdentifier: openTargetBundleIdentifier
+            openTargetBundleIdentifier: openTargetBundleIdentifier,
+            openTargetWasFrontmost: openTargetWasFrontmost,
+            openBeforeURL: openBeforeURL
         )
-        let entry = ControlAuditEntry(
+        return ControlAuditEntry(
             action: step.action,
             beforeFingerprint: before.fingerprint,
             afterFingerprint: observation.snapshot?.fingerprint,
-            result: ControlOutcome.result(
-                for: step.action,
-                before: before,
-                after: observation.snapshot,
-                externalEffectObserved: observation.externalEffectObserved
-            )
+            effect: observation.effect,
+            result: observation.result
         )
-        return entry
     }
 
     public func verify(
@@ -458,7 +515,20 @@ public final class AXDesktopController: @unchecked Sendable {
 
     private struct ActionObservation {
         let snapshot: DesktopSnapshot?
-        let externalEffectObserved: Bool?
+        let effect: ControlEffect
+        let result: String
+
+        init(snapshot: DesktopSnapshot?, action: DesktopAction, effect: ControlEffect) {
+            self.snapshot = snapshot
+            self.effect = effect
+            result = ControlOutcome.result(for: action, effect: effect)
+        }
+
+        init(snapshot: DesktopSnapshot?, open outcome: OpenNavigationOutcome) {
+            self.snapshot = snapshot
+            effect = outcome.effect
+            result = outcome.result
+        }
     }
 
     private struct OpenObservation: Sendable {
@@ -472,7 +542,9 @@ public final class AXDesktopController: @unchecked Sendable {
         before: DesktopSnapshot,
         targetApplication: NSRunningApplication?,
         targetProcessIdentifier: Int32?,
-        openTargetBundleIdentifier: String?
+        openTargetBundleIdentifier: String?,
+        openTargetWasFrontmost: Bool,
+        openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
         case .type, .press, .scroll:
@@ -485,12 +557,28 @@ public final class AXDesktopController: @unchecked Sendable {
                     catch { return nil }
                 },
                 hasObservedEffect: { after in
-                    ControlOutcome.effectObserved(for: action, before: before, after: after) == true
+                    ControlOutcome.effect(for: action, before: before, after: after) == .observed
                 }
             )
-            return .init(snapshot: observation.snapshot, externalEffectObserved: nil)
+            return .init(
+                snapshot: observation.snapshot,
+                action: action,
+                effect: ControlOutcome.effect(for: action, before: before, after: observation.snapshot)
+            )
 
         case let .open(url):
+            // Redirects and already-open targets settle as unknown, never as observed.
+            func openOutcome(_ after: OpenObservation?) -> OpenNavigationOutcome {
+                guard let openTargetBundleIdentifier, let after else { return .notObserved }
+                return ControlExternalEffect.openNavigation(
+                    targetBundleIdentifier: openTargetBundleIdentifier,
+                    targetURL: url,
+                    targetWasFrontmost: openTargetWasFrontmost,
+                    beforeURL: openBeforeURL,
+                    observedBundleIdentifier: after.bundleIdentifier,
+                    observedURL: after.documentURL
+                )
+            }
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
@@ -505,16 +593,11 @@ public final class AXDesktopController: @unchecked Sendable {
                     )
                 },
                 hasObservedEffect: { after in
-                    guard let openTargetBundleIdentifier else { return false }
-                    return ControlExternalEffect.openedTarget(
-                        targetBundleIdentifier: openTargetBundleIdentifier,
-                        observedBundleIdentifier: after.bundleIdentifier,
-                        targetURL: url,
-                        observedURL: after.documentURL
-                    )
+                    let outcome = openOutcome(after)
+                    return outcome == .navigated || outcome == .alreadyOpen
                 }
             )
-            return .init(snapshot: observation.snapshot?.snapshot, externalEffectObserved: observation.effectObserved)
+            return .init(snapshot: observation.snapshot?.snapshot, open: openOutcome(observation.snapshot))
 
         case .activate:
             let observation = try await ControlObservation.observe(
@@ -533,7 +616,11 @@ public final class AXDesktopController: @unchecked Sendable {
                     )
                 }
             )
-            return .init(snapshot: observation.snapshot, externalEffectObserved: observation.effectObserved)
+            return .init(
+                snapshot: observation.snapshot,
+                action: action,
+                effect: observation.effectObserved ? .observed : .notObserved
+            )
 
         case .quit:
             let observation = try await ControlObservation.observe(
@@ -550,7 +637,7 @@ public final class AXDesktopController: @unchecked Sendable {
                     )
                 }
             )
-            return .init(snapshot: nil, externalEffectObserved: observation.effectObserved)
+            return .init(snapshot: nil, action: action, effect: observation.effectObserved ? .observed : .notObserved)
         }
     }
 
