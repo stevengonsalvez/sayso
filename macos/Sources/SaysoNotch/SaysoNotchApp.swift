@@ -1064,15 +1064,16 @@ struct ModePicker: View {
 
     private func modeButton(_ mode: SaysoMode, title: String, icon: String) -> some View {
         let isSelected = model.settings.mode == mode
+        let selectedColor = mode == .dictation ? SaysoPalette.amber : SaysoPalette.cobalt
         return Button {
             model.switchMode(mode)
         } label: {
             Label(title, systemImage: icon)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(isSelected ? .white : SaysoPalette.muted)
+                .foregroundStyle(isSelected ? (mode == .dictation ? SaysoPalette.obsidian : .white) : SaysoPalette.muted)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(isSelected ? SaysoPalette.cobalt : .clear, in: Capsule())
+                .background(isSelected ? selectedColor : .clear, in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
