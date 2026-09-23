@@ -199,29 +199,28 @@ final class SaysoAppModel: ObservableObject {
             notice = "Cancelling dictation start."
             return
         }
-        guard transcriber.canStart else {
-            notice = "Finishing current dictation."
+        if let message = beginDictationStart() {
+            notice = message
             return
         }
-        guard beginDictationStart() else { return }
         Task {
             _ = await performDictationStart()
         }
     }
 
-    private func startDictation() async -> Bool {
-        guard beginDictationStart() else { return false }
-        return await performDictationStart()
-    }
-
-    private func beginDictationStart() -> Bool {
+    private func beginDictationStart() -> String? {
         guard !isStartingDictation, transcriber.canStart else {
-            notice = transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
-            return false
+            return transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
+        }
+        guard settings.route.supportsDictation else {
+            return "Your provider supports translation, not transcription."
+        }
+        guard !settings.route.transmitsData || settings.cloudConsentGranted else {
+            return "Confirm the Apple Speech data path before recording."
         }
         isStartingDictation = true
         dictationStartCancellationRequested = false
-        return true
+        return nil
     }
 
     private func performDictationStart() async -> Bool {
@@ -230,14 +229,6 @@ final class SaysoAppModel: ObservableObject {
             dictationStartCancellationRequested = false
         }
         notch.show()
-        guard settings.route.supportsDictation else {
-            notice = "Your provider supports translation, not transcription."
-            return false
-        }
-        guard !settings.route.transmitsData || settings.cloudConsentGranted else {
-            notice = "Confirm the Apple Speech data path before recording."
-            return false
-        }
         dictationDestination = settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
@@ -1447,9 +1438,11 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
-            guard beginDictationStart() else {
-                let message = isStartingDictation || transcriber.isStarting ? "Sayso is already starting." : "Sayso is finishing the current dictation."
-                return .failure(id: request.id, command: request.command, error: .init(code: .alreadyRecording, message: message))
+            if let startError = beginDictationStart() {
+                let alreadyStarting = isStartingDictation || transcriber.isStarting
+                let message = alreadyStarting ? "Sayso is already starting." : startError
+                let code: AutomationErrorCode = alreadyStarting ? .alreadyRecording : .transcriptionFailed
+                return .failure(id: request.id, command: request.command, error: .init(code: code, message: message))
             }
             Task { [weak self] in
                 guard let self else { return }
@@ -1458,7 +1451,7 @@ extension SaysoAppModel {
             return .success(
                 id: request.id,
                 command: request.command,
-                result: .init(model: "Preparing local speech.", sessionActive: false)
+                result: .init(model: settings.route.displayName, sessionActive: false)
             )
         case .stopDictation:
             guard transcriber.canStop || isStartingDictation else {
