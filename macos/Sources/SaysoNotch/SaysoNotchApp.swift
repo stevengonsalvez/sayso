@@ -833,7 +833,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func openSettings() {
-        selectedTab = 5
+        selectedTab = 6
         showMainWindow()
     }
 
@@ -964,14 +964,18 @@ final class SaysoAppModel: ObservableObject {
         return true
     }
 
-    func speakLatest() {
-        guard let text = lastTranscript?.displayText else { return }
+    func speak(_ text: String) {
         speech.speak(
             text,
             language: settings.speechLanguage,
             voiceIdentifier: settings.speechVoiceIdentifier,
             rate: settings.speechRate
         )
+    }
+
+    func speakLatest() {
+        guard let text = lastTranscript?.displayText else { return }
+        speak(text)
     }
 
     func reprocessHistory(_ entry: Transcript) async {
@@ -1440,8 +1444,9 @@ private struct SettingsHome: View {
                     Section("Voice") {
                         Label("Languages", systemImage: "character.bubble").tag(3)
                         Label("Models", systemImage: "cpu").tag(4)
+                        Label("Voice output", systemImage: "speaker.wave.2").tag(5)
                     }
-                    Label("Settings", systemImage: "gearshape").tag(5)
+                    Label("Settings", systemImage: "gearshape").tag(6)
                 }
                 .listStyle(.sidebar)
 
@@ -1463,6 +1468,7 @@ private struct SettingsHome: View {
             case 2: HistoryWorkspace(model: model)
             case 3: LanguageWorkspace(model: model)
             case 4: ModelsWorkspace(model: model)
+            case 5: VoiceOutputWorkspace(model: model, speech: model.speech)
             default: SaysoSettingsView(model: model)
             }
         }
@@ -1523,6 +1529,139 @@ private struct DictationWorkspace: View {
             Spacer()
         }
         .padding(32)
+    }
+}
+
+private struct VoiceOutputWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+    @ObservedObject var speech: SpeechOutput
+    @State private var text = ""
+    @State private var historyEntries: [Transcript] = []
+    @State private var historyID: Transcript.ID?
+    @State private var voices: [SpeechOutput.Voice] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack {
+                HStack(spacing: 12) {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(SaysoPalette.amber, in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Voice output").font(.largeTitle.bold())
+                        Text("Speak any saved or pasted text.").foregroundStyle(SaysoPalette.muted)
+                    }
+                }
+                Spacer()
+                if speech.isSpeaking {
+                    Label("Speaking", systemImage: "waveform")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(SaysoPalette.amber)
+                }
+            }
+            HStack(spacing: 10) {
+                Button("Use latest") {
+                    guard let transcript = model.lastTranscript else {
+                        model.notice = "Dictate or select saved text first."
+                        return
+                    }
+                    text = transcript.displayText
+                }
+                .disabled(model.lastTranscript == nil)
+                Button("Use clipboard") {
+                    guard let clipboard = NSPasteboard.general.string(forType: .string), !clipboard.isEmpty else {
+                        model.notice = "Clipboard has no text to speak."
+                        return
+                    }
+                    text = clipboard
+                }
+                Picker("Saved transcript", selection: $historyID) {
+                    Text("Choose saved text").tag(nil as Transcript.ID?)
+                    ForEach(historyEntries) { entry in
+                        Text(entry.displayText).lineLimit(1).tag(entry.id as Transcript.ID?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: historyID) { _, id in
+                    if let entry = historyEntries.first(where: { $0.id == id }) { text = entry.displayText }
+                }
+            }
+            .buttonStyle(.bordered)
+            TextEditor(text: $text)
+                .font(.body)
+                .frame(minHeight: 180)
+                .padding(10)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(SaysoPalette.cobalt.opacity(0.35), lineWidth: 1)
+                }
+            VStack(spacing: 14) {
+                HStack {
+                    Picker("Spoken language", selection: $model.settings.speechLanguage) {
+                        ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) {
+                            Text($0.displayName).tag($0)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Picker("Voice", selection: $model.settings.speechVoiceIdentifier) {
+                        Text("System default").tag(nil as String?)
+                        ForEach(voices) { voice in
+                            Text("\(voice.name) (\(voice.language))").tag(voice.id as String?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                HStack(spacing: 12) {
+                    Text("Rate \(model.settings.speechRate, format: .number.precision(.fractionLength(2)))")
+                        .font(.caption.weight(.semibold))
+                    Slider(value: $model.settings.speechRate, in: 0.2 ... 0.6, step: 0.05)
+                    Text("Slower")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Faster")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+            HStack {
+                Button {
+                    model.speak(text)
+                } label: {
+                    Label("Speak", systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SaysoPalette.amber)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || speech.isSpeaking)
+                Button("Stop", role: .cancel) { speech.stop() }
+                    .buttonStyle(.bordered)
+                    .disabled(!speech.isSpeaking)
+            }
+            Spacer()
+        }
+        .padding(32)
+        .task {
+            historyEntries = await model.history.all()
+            refreshVoices()
+        }
+        .onChange(of: model.settings.speechLanguage) { _, _ in
+            refreshVoices()
+            model.save()
+        }
+        .onChange(of: model.settings.speechVoiceIdentifier) { _, _ in model.save() }
+        .onChange(of: model.settings.speechRate) { _, _ in model.save() }
+    }
+
+    private func refreshVoices() {
+        voices = SpeechOutput.availableVoices(for: model.settings.speechLanguage)
+        if let selected = model.settings.speechVoiceIdentifier,
+           !voices.contains(where: { $0.id == selected }) {
+            model.settings.speechVoiceIdentifier = nil
+        }
     }
 }
 
