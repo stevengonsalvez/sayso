@@ -974,8 +974,12 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func speakLatest() {
-        guard let text = lastTranscript?.displayText else { return }
-        speak(text)
+        guard let transcript = lastTranscript else { return }
+        let language = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
+        let voiceIdentifier = settings.speechVoiceIdentifier.flatMap { selected in
+            SpeechOutput.availableVoices(for: language).contains(where: { $0.id == selected }) ? selected : nil
+        }
+        speech.speak(transcript.displayText, language: language, voiceIdentifier: voiceIdentifier, rate: settings.speechRate)
     }
 
     func reprocessHistory(_ entry: Transcript) async {
@@ -1671,7 +1675,7 @@ private struct VoiceOutputWorkspace: View {
     }
 
     private func refreshHistory() async {
-        historyEntries = await model.history.all()
+        historyEntries = Array((await model.history.all()).prefix(20))
     }
 }
 
