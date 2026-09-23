@@ -480,6 +480,7 @@ public enum SelectedTextEdit {
     public static func capture() -> Capture? {
         guard AXIsProcessTrusted(),
               let application = NSWorkspace.shared.frontmostApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
               !application.isTerminated else { return nil }
         let root = AXUIElementCreateApplication(application.processIdentifier)
         guard let field = copyElement(kAXFocusedUIElementAttribute as CFString, from: root) else { return nil }
@@ -531,9 +532,11 @@ public enum SelectedTextEdit {
         guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else {
             return copy(rewrite, reason: "Protected field.")
         }
-        guard let expected = capture.anchor.replacing(with: rewrite, in: currentValue),
-              AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success else {
-            return copy(rewrite, reason: "Could not verify replacement.")
+        guard let expected = capture.anchor.replacing(with: rewrite, in: currentValue) else {
+            return copy(rewrite, reason: "Selection changed.")
+        }
+        guard AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success else {
+            return copy(rewrite, reason: "Could not replace selection.")
         }
         return (copyAttribute(kAXValueAttribute as CFString, from: capture.field) as? String) == expected
             ? .replaced
