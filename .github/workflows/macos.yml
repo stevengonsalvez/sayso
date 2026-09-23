@@ -1,0 +1,63 @@
+name: macOS
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Test and package
+    runs-on: macos-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install icon tooling
+        run: |
+          if ! command -v rsvg-convert >/dev/null; then
+            brew install librsvg
+          fi
+
+      - name: Run native tests
+        run: swift test --parallel
+
+      - name: Package development artifact
+        env:
+          SAYSO_CODESIGN_IDENTITY: "-"
+        run: ./Scripts/package-app.sh
+
+      - name: Validate app bundle
+        run: |
+          app_path='.artifacts/Sayso Notch.app'
+          test -x "$app_path/Contents/MacOS/SaysoNotch"
+          plutil -lint "$app_path/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          codesign -d --entitlements :- "$app_path" 2>&1 | grep -q 'com.apple.security.device.audio-input'
+
+      # This artifact is ad-hoc signed for CI. Gatekeeper rejection is expected
+      # and acceptance would not demonstrate signing or notarization readiness.
+      - name: Report Gatekeeper development-artifact status
+        continue-on-error: true
+        run: spctl --assess --type execute --verbose=4 '.artifacts/Sayso Notch.app'
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sayso-notch-development-build
+          path: macos/.artifacts/Sayso Notch.app
+          retention-days: 7
