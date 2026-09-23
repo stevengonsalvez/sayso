@@ -202,18 +202,16 @@ public enum VoiceEdits {
             let target = String(source[..<divider.lowerBound]).trimmingCharacters(in: .whitespaces)
             let replacement = String(source[divider.upperBound...]).trimmingCharacters(in: .whitespaces)
             guard !target.isEmpty, !replacement.isEmpty else { return .notCommand }
-            guard let match = transcript.range(of: target, options: .caseInsensitive) else {
-                return .targetNotFound
-            }
-            return .applied(transcript.replacingCharacters(in: match, with: replacement))
+            let matches = tokenMatches(of: target, in: transcript)
+            guard !matches.isEmpty else { return .targetNotFound }
+            return .applied(replacing(matches, in: transcript, with: replacement))
         }
         if let source = commandPart(after: "sayso delete ", in: value) {
             let target = source.trimmingCharacters(in: .whitespaces)
             guard !target.isEmpty else { return .notCommand }
-            guard let match = transcript.range(of: target, options: .caseInsensitive) else {
-                return .targetNotFound
-            }
-            return .applied(transcript.replacingCharacters(in: match, with: ""))
+            let matches = tokenMatches(of: target, in: transcript)
+            guard !matches.isEmpty else { return .targetNotFound }
+            return .applied(deleting(matches, from: transcript))
         }
         return .notCommand
     }
@@ -221,6 +219,85 @@ public enum VoiceEdits {
     public static func apply(_ command: String, to transcript: String) -> String? {
         guard case let .applied(edited) = outcome(command, to: transcript) else { return nil }
         return edited
+    }
+
+    /// All case-insensitive whole-token occurrences of `target`, so "cat"
+    /// never edits "concatenate".
+    private static func tokenMatches(of target: String, in transcript: String) -> [Range<String.Index>] {
+        var matches: [Range<String.Index>] = []
+        var searchRange = transcript.startIndex ..< transcript.endIndex
+        while let match = transcript.range(of: target, options: .caseInsensitive, range: searchRange) {
+            let startsOnBoundary = match.lowerBound == transcript.startIndex
+                || !isWordCharacter(transcript[transcript.index(before: match.lowerBound)])
+            let endsOnBoundary = match.upperBound == transcript.endIndex
+                || !isWordCharacter(transcript[match.upperBound])
+            if startsOnBoundary, endsOnBoundary {
+                matches.append(match)
+                searchRange = match.upperBound ..< transcript.endIndex
+            } else {
+                searchRange = transcript.index(after: match.lowerBound) ..< transcript.endIndex
+            }
+        }
+        return matches
+    }
+
+    private static func replacing(
+        _ matches: [Range<String.Index>], in transcript: String, with replacement: String
+    ) -> String {
+        var result = ""
+        var cursor = transcript.startIndex
+        for match in matches {
+            result += transcript[cursor..<match.lowerBound]
+            result += replacement
+            cursor = match.upperBound
+        }
+        result += transcript[cursor...]
+        return result
+    }
+
+    /// Removes matches and one adjoining space at each deletion seam, preserving all other spacing.
+    private static func deleting(_ matches: [Range<String.Index>], from transcript: String) -> String {
+        var result = ""
+        var cursor = transcript.startIndex
+        for range in deletionRanges(for: matches, in: transcript) {
+            if cursor < range.lowerBound { result += transcript[cursor..<range.lowerBound] }
+            if cursor < range.upperBound { cursor = range.upperBound }
+        }
+        result += transcript[cursor...]
+        return result
+    }
+
+    private static func deletionRanges(
+        for matches: [Range<String.Index>], in transcript: String
+    ) -> [Range<String.Index>] {
+        guard var cluster = matches.first else { return [] }
+        var ranges: [Range<String.Index>] = []
+        for match in matches.dropFirst() {
+            let gap = transcript[cluster.upperBound..<match.lowerBound]
+            if !gap.isEmpty, gap.allSatisfy({ $0 == " " }) {
+                cluster = cluster.lowerBound ..< match.upperBound
+            } else {
+                ranges.append(deletionRange(for: cluster, in: transcript))
+                cluster = match
+            }
+        }
+        ranges.append(deletionRange(for: cluster, in: transcript))
+        return ranges
+    }
+
+    private static func deletionRange(for match: Range<String.Index>, in transcript: String) -> Range<String.Index> {
+        var range = match
+        if range.upperBound < transcript.endIndex, transcript[range.upperBound] == " ",
+           range.lowerBound == transcript.startIndex || transcript[transcript.index(before: range.lowerBound)] == " " {
+            range = range.lowerBound ..< transcript.index(after: range.upperBound)
+        } else if range.lowerBound > transcript.startIndex, transcript[transcript.index(before: range.lowerBound)] == " " {
+            range = transcript.index(before: range.lowerBound) ..< range.upperBound
+        }
+        return range
+    }
+
+    private static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || character == "_" || character == "'" || character == "’"
     }
 
     private static func commandPart(after prefix: String, in value: String) -> Substring? {
