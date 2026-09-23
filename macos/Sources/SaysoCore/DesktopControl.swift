@@ -164,8 +164,13 @@ public enum DesktopApplicationResolver {
     ) -> DesktopApplicationResolution {
         let requested = normalizedName(requestedName)
         guard !requested.isEmpty else { return .notFound }
+        let requestsFilename = requestedApplicationFilename(requestedName)
         let matches = applications
-            .filter { normalizedName($0.name) == requested || normalizedName($0.applicationURL.deletingPathExtension().lastPathComponent) == requested }
+            .filter { application in
+                let filename = normalizedName(application.applicationURL.deletingPathExtension().lastPathComponent)
+                if requestsFilename { return filename == requested }
+                return normalizedName(application.name) == requested || filename == requested
+            }
             .sorted {
                 ($0.bundleIdentifier, $0.applicationURL.path)
                 < ($1.bundleIdentifier, $1.applicationURL.path)
@@ -188,6 +193,16 @@ public enum DesktopApplicationResolver {
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private static func requestedApplicationFilename(_ value: String) -> Bool {
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = trimmed.unicodeScalars.last,
+              CharacterSet.punctuationCharacters.contains(last),
+              !trimmed.lowercased().hasSuffix(".app") {
+            trimmed.unicodeScalars.removeLast()
+        }
+        return trimmed.lowercased().hasSuffix(".app")
     }
 }
 
@@ -638,7 +653,7 @@ public enum ControlPlanner {
                     applicationURL: application.applicationURL
                 ),
                 confidence: 0.85,
-                reason: "Exact installed application",
+                reason: "Launch \(application.name) at \(application.applicationURL.path)",
                 requiresConfirmation: true
             )
         case .notFound:
