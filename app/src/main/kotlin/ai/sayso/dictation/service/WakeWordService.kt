@@ -94,7 +94,8 @@ class WakeWordService : Service() {
         isListening = true
 
         scope.launch(Dispatchers.Default) {
-            val d = WakeWordDetector(this@WakeWordService) { keyword ->
+            val phrase = ai.sayso.dictation.AppGraph.settings.wakeWordPhrase
+            val d = WakeWordDetector(this@WakeWordService, phrase) { keyword ->
                 Log.i(TAG, "Wake word trigger: $keyword")
                 triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
@@ -282,6 +283,13 @@ class WakeWordService : Service() {
         fun stop(context: Context) {
             val intent = Intent(context, WakeWordService::class.java)
             context.stopService(intent)
+        }
+
+        fun restart(context: Context) {
+            if (instance != null) {
+                stop(context)
+                start(context)
+            }
         }
     }
 }
