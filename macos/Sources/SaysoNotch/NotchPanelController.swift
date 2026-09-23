@@ -149,7 +149,7 @@ private struct NotchHUD: View {
             }
             .buttonStyle(.plain)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 6) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -168,26 +168,29 @@ private struct NotchHUD: View {
                 }
 
                 HStack {
+                    Spacer()
                     ModePicker(model: model)
                     Spacer()
                 }
 
-                HStack(alignment: .bottom, spacing: 12) {
-                    Text(model.transcriber.partialText.isEmpty ? "Live words appear here." : model.transcriber.partialText)
-                        .font(.system(size: 15, weight: .medium))
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Button {
-                        model.startOrStopDictation()
-                    } label: {
-                        Label(
-                            model.transcriber.phase == .listening ? "Stop" : "Start",
-                            systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                Text(model.transcriber.partialText.isEmpty ? "Live words appear here." : model.transcriber.partialText)
+                    .font(.system(size: 15, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
+
+                Button {
+                    model.startOrStopDictation()
+                } label: {
+                    Label(
+                        model.transcriber.phase == .listening ? "Stop listening" : "Start dictation",
+                        systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
+                    )
+                    .font(.callout.weight(.bold))
+                    .frame(maxWidth: .infinity, minHeight: 34)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
             }
             .padding(.horizontal, 16)
             .padding(.top, 38)
