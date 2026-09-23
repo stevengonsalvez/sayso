@@ -314,6 +314,9 @@ final class SaysoAppModel: ObservableObject {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
         }
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil else {
+            return .rejected(.alreadyRecording, "Finish the current history audio task before dictating.")
+        }
         guard settings.route.supportsDictation else {
             return .rejected(.transcriptionFailed, "Your provider supports translation, not transcription.")
         }
@@ -968,6 +971,10 @@ final class SaysoAppModel: ObservableObject {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
+        guard !isStartingDictation, transcriber.phase == .idle else {
+            notice = "Stop dictation before reprocessing saved audio."
+            return
+        }
         guard let audioFileURL = entry.audioFileURL,
               FileManager.default.fileExists(atPath: audioFileURL.path) else {
             notice = "This history item has no saved audio to reprocess."
@@ -1004,6 +1011,10 @@ final class SaysoAppModel: ObservableObject {
     func importHistoryAudio(_ sourceURLs: [URL]) async {
         guard !isImportingHistoryAudio, reprocessingHistoryID == nil else {
             notice = "Finish the current history audio task before importing."
+            return
+        }
+        guard !isStartingDictation, transcriber.phase == .idle else {
+            notice = "Stop dictation before importing audio."
             return
         }
         let settingsSnapshot = settings
@@ -1638,7 +1649,7 @@ private struct HistoryWorkspace: View {
         .onDisappear { playback.stop() }
         .fileImporter(
             isPresented: $isImportingAudio,
-            allowedContentTypes: [.mpeg4Audio, .wav, .mp3, .aiff, .mpeg4Movie, UTType(filenameExtension: "caf")!],
+            allowedContentTypes: [.mpeg4Audio, .wav, .mp3, .aiff, UTType(filenameExtension: "caf")!],
             allowsMultipleSelection: true
         ) { result in
             switch result {
