@@ -203,12 +203,20 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
     }
 
-    private func shouldUseFluidAudio(language: DictationLanguage, route: ProviderRoute) -> Bool {
+    static func prefersNativeFluidAudio(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        models: FluidAudioLocalModelManager
+    ) -> Bool {
         FileTranscriber.prefersFluidAudio(
             language: language,
             route: route,
-            localModelReady: fluidAudioModels.state.isInstalled
+            localModelReady: models.isInstalled(for: language)
         )
+    }
+
+    private func shouldUseFluidAudio(language: DictationLanguage, route: ProviderRoute) -> Bool {
+        Self.prefersNativeFluidAudio(language: language, route: route, models: fluidAudioModels)
     }
 
     private func startFluidAudio(language: DictationLanguage, route: ProviderRoute) async -> Bool {
