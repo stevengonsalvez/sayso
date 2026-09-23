@@ -41,4 +41,6 @@ import Testing
     #expect(!transcriber.requiresSpeechRecognition(language: .english, route: .local))
     #expect(transcriber.requiresSpeechRecognition(language: .tamil, route: .local))
     #expect(transcriber.requiresSpeechRecognition(language: .english, route: .appleSpeech))
+    #expect(FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: true))
+    #expect(!FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: false))
 }
