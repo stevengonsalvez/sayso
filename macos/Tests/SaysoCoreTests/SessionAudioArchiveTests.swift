@@ -529,7 +529,7 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(FileManager.default.fileExists(atPath: replacementAudioURL.path))
 }
 
-@Test func clearRetainsJournaledHistoryWhenReplayCannotPersist() async throws {
+@Test func clearRemovesJournaledHistoryWhenReplayCannotPersist() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -541,9 +541,37 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     let journaledStore = HistoryStore(fileURL: historyURL, persistEntries: { _, _ in false })
     #expect(await journaledStore.append(pending))
 
-    #expect(!(await journaledStore.clear()))
-    #expect(await journaledStore.all().map(\.id) == [pending.id, original.id])
-    #expect(FileManager.default.fileExists(atPath: historyURL.appendingPathExtension("wal").path))
+    #expect(await journaledStore.clear())
+    #expect(await journaledStore.all().isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: historyURL.appendingPathExtension("wal").path))
+}
+
+@Test func journaledHistoryRemovalReleasesAudioAfterReplay() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let audioURL = try finishedManagedRecording(in: recordingDirectory)
+    let transcript = Transcript(
+        text: "Journaled recording",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: audioURL
+    )
+    let journaledStore = HistoryStore(
+        fileURL: historyURL,
+        recordingsDirectory: recordingDirectory,
+        persistEntries: { _, _ in false }
+    )
+
+    #expect(await journaledStore.append(transcript))
+    #expect(await journaledStore.remove(id: transcript.id))
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
+
+    let recoveredStore = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+    #expect(await recoveredStore.all().isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: audioURL.path))
 }
 
 @Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
