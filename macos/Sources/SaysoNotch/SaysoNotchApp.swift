@@ -218,7 +218,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func reserveDictationStart() -> DictationStartReservation {
         guard !isStartingDictation, transcriber.canStart else {
-            let message = transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
+            let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
         }
         guard settings.route.supportsDictation else {
@@ -256,7 +256,6 @@ final class SaysoAppModel: ObservableObject {
         }
         guard await permissions.authorize(.microphone) == .granted else {
             notice = "Microphone access is required before Sayso can listen. Grant it in Settings."
-            lastDictationStartError = notice
             failActiveSession(notice ?? "Microphone access denied")
             return false
         }
@@ -268,7 +267,6 @@ final class SaysoAppModel: ObservableObject {
         if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
             guard await permissions.authorize(.speechRecognition) == .granted else {
                 notice = "Speech Recognition access is required before Sayso can transcribe. Grant it in Settings."
-                lastDictationStartError = notice
                 failActiveSession(notice ?? "Speech Recognition access denied")
                 return false
             }
@@ -302,10 +300,10 @@ final class SaysoAppModel: ObservableObject {
                 return false
             }
             let error = transcriber.error?.localizedDescription ?? "Could not start dictation"
-            lastDictationStartError = error
             failActiveSession(error)
             return false
         }
+        lastDictationStartError = nil
         updateActiveSession { $0.transition(to: .listening) }
         try? await Task.sleep(for: .milliseconds(250))
         return transcriber.phase == .listening
@@ -464,6 +462,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func failActiveSession(_ message: String) {
+        lastDictationStartError = message
         updateActiveSession { $0.fail(message) }
         activeRecordingSession = nil
         dictationDestination = nil
