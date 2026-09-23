@@ -343,6 +343,16 @@ public enum ControlPolicy {
         step.confidence >= minimumConfidence && !requiresConfirmation(step)
     }
 
+    /// Text and UI interactions must not be sent to a background app.
+    public static func requiresActiveTarget(for action: DesktopAction) -> Bool {
+        switch action {
+        case .type, .scroll, .press, .key:
+            true
+        case .open, .activate, .activateApplication, .quit:
+            false
+        }
+    }
+
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
         if case .press = step.action {
             guard let candidateTitle = step.candidateTitle else { return true }
@@ -795,8 +805,16 @@ public final class AXDesktopController: @unchecked Sendable {
         guard approved || !ControlPolicy.requiresConfirmation(step) else {
             throw SaysoError.invalidAction("Review required before this action can run")
         }
-        let before = try capture(application: targetApplication)
+        var before = try capture(application: targetApplication)
         guard !before.isProtected else { throw SaysoError.protectedTarget }
+        if ControlPolicy.requiresActiveTarget(for: step.action) {
+            try await activateInteractionTarget(
+                processIdentifier: before.processIdentifier,
+                applicationName: before.applicationName
+            )
+            before = try capture(application: targetApplication)
+            guard !before.isProtected else { throw SaysoError.protectedTarget }
+        }
         var targetProcessIdentifier: Int32?
         var openTargetBundleIdentifier: String?
         var openTargetWasFrontmost = false
@@ -856,10 +874,9 @@ public final class AXDesktopController: @unchecked Sendable {
             app.terminate()
         case let .scroll(lines, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
-            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
+            guard NSRunningApplication(processIdentifier: before.processIdentifier) != nil else {
                 throw SaysoError.unavailable(before.applicationName)
             }
-            target.activate()
             guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: Int32(lines), wheel2: 0, wheel3: 0) else {
                 throw SaysoError.unavailable("Scroll event")
             }
@@ -874,9 +891,6 @@ public final class AXDesktopController: @unchecked Sendable {
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
-            }
-            guard target.activate() else {
-                throw SaysoError.unavailable("Activate \(before.applicationName)")
             }
             guard
                   let source = CGEventSource(stateID: .combinedSessionState),
@@ -928,6 +942,27 @@ public final class AXDesktopController: @unchecked Sendable {
         guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { throw SaysoError.protectedTarget }
         guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
             throw SaysoError.invalidAction("Text field rejected insertion")
+        }
+    }
+
+    private func activateInteractionTarget(
+        processIdentifier: Int32,
+        applicationName: String
+    ) async throws {
+        guard let target = NSRunningApplication(processIdentifier: processIdentifier), !target.isTerminated else {
+            throw SaysoError.staleTarget
+        }
+        guard target.activate() else {
+            throw SaysoError.unavailable("Activate \(applicationName)")
+        }
+        let observation = try await ControlObservation.observe(
+            maximumAttempts: Self.observationAttempts,
+            interval: Self.observationInterval,
+            capture: { NSWorkspace.shared.frontmostApplication?.processIdentifier },
+            hasObservedEffect: { $0 == processIdentifier }
+        )
+        guard observation.effectObserved else {
+            throw SaysoError.unavailable("Activate \(applicationName)")
         }
     }
 
