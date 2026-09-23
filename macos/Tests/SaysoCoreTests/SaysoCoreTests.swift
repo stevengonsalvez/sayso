@@ -23,6 +23,8 @@ import Testing
     #expect(settings.mode == .control)
     #expect(settings.language == .english)
     #expect(settings.dictationProfile == .default)
+    #expect(!settings.voiceEditCloudConsent)
+    #expect(settings.byokRewriteModel == "gpt-4.1-mini")
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
