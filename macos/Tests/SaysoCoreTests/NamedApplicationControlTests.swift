@@ -108,7 +108,7 @@ private func installedApplication(
 @Test func namedApplicationCatalogIsOnlyNeededForNamedTargets() {
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open https://example.com/docs"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open http://localhost:8080"))
-    #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open example.com"))
+    #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open example.com"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open file:///tmp/example"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "switch to Safari"))
@@ -172,4 +172,23 @@ private func installedApplication(
             installedApplications: []
         )
     }
+}
+
+@Test func namedApplicationPlannerResolvesDottedApplicationNames() throws {
+    let application = installedApplication(
+        "draw.io",
+        bundleIdentifier: "com.drawio.desktop",
+        path: "/Applications/draw.io.app"
+    )
+
+    let plan = try ControlPlanner.plan(
+        command: "open draw.io",
+        snapshot: namedApplicationSnapshot,
+        installedApplications: [application]
+    )
+
+    #expect(plan.action == .activateApplication(
+        bundleIdentifier: "com.drawio.desktop",
+        applicationURL: URL(fileURLWithPath: "/Applications/draw.io.app")
+    ))
 }
