@@ -7,6 +7,12 @@ import Testing
     #expect(!AXCandidateCapturePolicy.isProtected(role: "AXTextField", subrole: ""))
 }
 
+@Test func capturePolicyRedactsSecureFocusedValues() {
+    #expect(AXCandidateCapturePolicy.focusedValue("password", role: "AXSecureTextField", subrole: "") == "")
+    #expect(AXCandidateCapturePolicy.focusedValue("password", role: "AXTextField", subrole: "AXSecureTextField") == "")
+    #expect(AXCandidateCapturePolicy.focusedValue("message", role: "AXTextField", subrole: "") == "message")
+}
+
 @Test func capturePolicyRequiresSafeInteractiveLocator() {
     #expect(!AXCandidateCapturePolicy.includesCandidate(
         role: "AXButton",
