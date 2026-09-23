@@ -11,6 +11,11 @@ import Testing
     #expect(DictationLanguage.kannada.localeIdentifier == "kn-IN")
 }
 
+@Test func onlyImplementedSpeechRoutesAreSelectable() {
+    #expect(ProviderRoute.dictationRoutes == [.local, .appleSpeech])
+    #expect(!ProviderRoute.byok.supportsDictation)
+}
+
 @Test func permissionRequestsOpenTheirExactPrivacyPanes() {
     #expect(PermissionKind.microphone.settingsURL.absoluteString.contains("Privacy_Microphone"))
     #expect(PermissionKind.speechRecognition.settingsURL.absoluteString.contains("Privacy_SpeechRecognition"))
