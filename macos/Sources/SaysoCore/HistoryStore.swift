@@ -62,24 +62,41 @@ public actor HistoryStore {
         HistoryFilter.matching(all(), query: query)
     }
 
-    public func append(_ transcript: Transcript) {
-        guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    @discardableResult
+    public func append(_ transcript: Transcript) -> Bool {
+        guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            transcript.audioFileURL.map { SessionAudioArchive.deleteManagedRecording($0) }
+            return false
+        }
         var entries = all()
         entries.insert(transcript, at: 0)
-        if entries.count > maximumEntries { entries.removeLast(entries.count - maximumEntries) }
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        let expired = entries.count > maximumEntries ? entries.suffix(entries.count - maximumEntries) : []
+        if !expired.isEmpty { entries.removeLast(expired.count) }
+        guard let data = try? JSONEncoder().encode(entries) else {
+            transcript.audioFileURL.map { SessionAudioArchive.deleteManagedRecording($0) }
+            return false
+        }
+        guard (try? data.write(to: fileURL, options: .atomic)) != nil else {
+            transcript.audioFileURL.map { SessionAudioArchive.deleteManagedRecording($0) }
+            return false
+        }
+        expired.compactMap(\.audioFileURL).forEach { SessionAudioArchive.deleteManagedRecording($0) }
+        return true
     }
 
     @discardableResult
     public func remove(id: Transcript.ID) -> Bool {
         var entries = all()
+        let removed = entries.filter { $0.id == id }
         let originalCount = entries.count
         entries.removeAll { $0.id == id }
         guard entries.count != originalCount,
               let data = try? JSONEncoder().encode(entries) else { return false }
         do {
             try data.write(to: fileURL, options: .atomic)
+            removed
+                .compactMap(\.audioFileURL)
+                .forEach { SessionAudioArchive.deleteManagedRecording($0) }
             return true
         } catch {
             return false
@@ -88,6 +105,7 @@ public actor HistoryStore {
 
     public func clear() {
         try? FileManager.default.removeItem(at: fileURL)
+        SessionAudioArchive.deleteAllManagedRecordings()
     }
 
     public func plainTextExport() -> String {
