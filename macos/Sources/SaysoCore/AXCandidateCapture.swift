@@ -19,6 +19,10 @@ public enum AXCandidateCapturePolicy {
         role == "AXSecureTextField" || subrole == kAXSecureTextFieldSubrole as String
     }
 
+    public static func focusedValue(_ value: String, role: String, subrole: String) -> String {
+        isProtected(role: role, subrole: subrole) ? "" : value
+    }
+
     public static func includesCandidate(
         role: String,
         title: String,
