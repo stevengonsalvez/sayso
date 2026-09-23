@@ -7,6 +7,11 @@ private enum SaysoMCP {
     static let protocolVersion = "2025-06-18"
     static var tools: [[String: Any]] { [
         [
+            "name": AutomationCommand.status.rawValue,
+            "description": "Return Sayso Notch readiness. After start_dictation, require sessionActive true before speaking.",
+            "inputSchema": ["type": "object", "properties": [:]]
+        ],
+        [
             "name": AutomationCommand.transcribeFile.rawValue,
             "description": "Transcribe a local audio file with Sayso Notch.",
             "inputSchema": [
@@ -27,7 +32,7 @@ private enum SaysoMCP {
         ],
         [
             "name": AutomationCommand.startDictation.rawValue,
-            "description": "Start Sayso Notch dictation.",
+            "description": "Begin Sayso Notch dictation. This accepts preparation only. Call status and require sessionActive true before speaking.",
             "inputSchema": ["type": "object", "properties": [:]]
         ],
         [
@@ -72,8 +77,7 @@ private enum SaysoMCP {
 
     private static func call(id: Any, params: [String: Any], client: UnixSocketAutomationClient) -> [String: Any] {
         guard let name = params["name"] as? String,
-              let command = AutomationCommand(rawValue: name),
-              command != .status else {
+              let command = AutomationCommand(rawValue: name) else {
             return error(id: id, code: -32602, message: "Unknown tool.")
         }
         let arguments = params["arguments"] as? [String: Any] ?? [:]
