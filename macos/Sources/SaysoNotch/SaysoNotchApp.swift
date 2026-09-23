@@ -66,6 +66,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isStartingDictation = false
     @Published private(set) var reprocessingHistoryID: UUID?
     @Published private(set) var isImportingHistoryAudio = false
+    @Published private(set) var isClearingHistory = false
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
@@ -967,7 +968,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func reprocessHistory(_ entry: Transcript) async {
-        guard reprocessingHistoryID == nil, !isImportingHistoryAudio else {
+        guard reprocessingHistoryID == nil, !isImportingHistoryAudio, !isClearingHistory else {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
@@ -1013,7 +1014,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func importHistoryAudio(_ sourceURLs: [URL]) async {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil else {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
             notice = "Finish the current history audio task before importing."
             return
         }
@@ -1048,6 +1049,9 @@ final class SaysoAppModel: ObservableObject {
                 guard !completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw SaysoError.invalidAction("No speech detected.")
                 }
+                guard FileManager.default.fileExists(atPath: importedURL.path) else {
+                    throw SaysoError.unavailable("Imported audio was removed before it could be saved")
+                }
                 guard await history.append(completed) else {
                     throw SaysoError.unavailable("History storage")
                 }
@@ -1072,12 +1076,22 @@ final class SaysoAppModel: ObservableObject {
             : " \(processingWarnings.sorted().joined(separator: " "))"
         switch (importedCount, failedCount) {
         case (0, _):
-            notice = "Could not import the selected audio."
+            notice = "Could not import the selected audio: \(lastFailure ?? "Unknown error")."
         case (_, 0):
             notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files") into history.\(processingWarningSuffix)"
         default:
             notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be imported: \(lastFailure ?? "Unknown error").\(processingWarningSuffix)"
         }
+    }
+
+    func clearHistory() async -> Bool {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
+            notice = "Finish the current history audio task before clearing history."
+            return false
+        }
+        isClearingHistory = true
+        defer { isClearingHistory = false }
+        return await history.clear()
     }
 
     func copyLastVoiceEditRewrite() {
@@ -1612,9 +1626,10 @@ private struct HistoryWorkspace: View {
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
                 Button("Import audio") { isImportingAudio = true }
-                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil)
+                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
                 Button("Copy all history") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
                 Button("Clear all history", role: .destructive) { confirmClear = true }
+                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
             }
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal)
             TextField("Search words, translations, language, or route", text: $query)
@@ -1638,7 +1653,7 @@ private struct HistoryWorkspace: View {
                             Image(systemName: model.reprocessingHistoryID == entry.id ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(model.reprocessingHistoryID != nil || model.isImportingHistoryAudio)
+                        .disabled(model.reprocessingHistoryID != nil || model.isImportingHistoryAudio || model.isClearingHistory)
                         .accessibilityLabel("Reprocess recording")
                         Button {
                             playback.toggle(entryID: entry.id, url: audioFileURL)
@@ -1680,14 +1695,15 @@ private struct HistoryWorkspace: View {
             Button("Clear", role: .destructive) {
                 playback.stop()
                 Task {
-                    if await model.history.clear() {
+                    if await model.clearHistory() {
                         entries = []
                         model.lastTranscript = nil
-                    } else {
+                    } else if !model.isImportingHistoryAudio, model.reprocessingHistoryID == nil {
                         model.notice = "Could not clear saved history."
                     }
                 }
             }
+            .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil || model.isClearingHistory)
             Button("Cancel", role: .cancel) {}
         } message: { Text("This removes saved transcripts and retained audio from this Mac.") }
         .alert("Delete transcript?", isPresented: Binding(
