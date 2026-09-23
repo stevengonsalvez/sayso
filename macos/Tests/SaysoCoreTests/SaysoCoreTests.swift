@@ -16,6 +16,15 @@ import Testing
     #expect(!ProviderRoute.byok.supportsDictation)
 }
 
+@Test func settingsMigrationDefaultsMissingDictationProfile() throws {
+    let legacy = Data("{\"mode\":\"control\",\"language\":\"en-GB\"}".utf8)
+    let settings = try JSONDecoder().decode(SaysoSettings.self, from: legacy)
+
+    #expect(settings.mode == .control)
+    #expect(settings.language == .english)
+    #expect(settings.dictationProfile == .default)
+}
+
 @Test func permissionRequestsOpenTheirExactPrivacyPanes() {
     #expect(PermissionKind.microphone.settingsURL.absoluteString.contains("Privacy_Microphone"))
     #expect(PermissionKind.speechRecognition.settingsURL.absoluteString.contains("Privacy_SpeechRecognition"))
