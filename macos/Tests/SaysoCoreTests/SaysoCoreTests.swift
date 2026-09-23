@@ -59,19 +59,32 @@ import Testing
 
 @Test func voiceEditsRequireExactCommandShape() {
     #expect(VoiceEdits.apply("Sayso replace world with Stevie", to: "Hello world") == "Hello Stevie")
-    #expect(VoiceEdits.apply("Sayso delete world", to: "Hello world") == "Hello ")
+    #expect(VoiceEdits.apply("Sayso delete world", to: "Hello world") == "Hello")
     #expect(VoiceEdits.apply("replace world", to: "Hello world") == nil)
 }
 
-@Test func voiceEditsApplyOneExactTargetAndRejectMissingTargets() {
+@Test func voiceEditsApplyEveryExactTargetAndRejectMissingTargets() {
     #expect(
         VoiceEdits.outcome("Sayso replace world with Stevie", to: "world world")
-            == .applied("Stevie world")
+            == .applied("Stevie Stevie")
     )
     #expect(
         VoiceEdits.outcome("Sayso delete missing", to: "Hello world")
             == .targetNotFound
     )
+}
+
+@Test func voiceEditsMatchWholeTokensOnly() {
+    #expect(VoiceEdits.outcome("Sayso delete cat", to: "concatenate cat cat") == .applied("concatenate"))
+    #expect(VoiceEdits.outcome("Sayso delete cat", to: "one cat two cat three") == .applied("one two three"))
+    #expect(VoiceEdits.outcome("Sayso delete cat", to: "concatenate") == .targetNotFound)
+    #expect(VoiceEdits.outcome("Sayso replace art with craft", to: "start art artful art") == .applied("start craft artful craft"))
+    #expect(VoiceEdits.outcome("Sayso replace new york with Delhi", to: "I love New York.") == .applied("I love Delhi."))
+    #expect(VoiceEdits.outcome("Sayso delete world", to: "world's end") == .targetNotFound)
+    #expect(VoiceEdits.outcome("Sayso delete world", to: "world’s end") == .targetNotFound)
+    #expect(VoiceEdits.outcome("Sayso delete very", to: "a very good day") == .applied("a good day"))
+    #expect(VoiceEdits.outcome("Sayso delete Hello", to: "Hello world") == .applied("world"))
+    #expect(VoiceEdits.outcome("Sayso delete world", to: "Hello world.") == .applied("Hello."))
 }
 
 @Test func textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery() {
@@ -143,13 +156,15 @@ import Testing
         focusedRole: "AXTextField", focusedValue: "before", isProtected: false
     )
     let type = DesktopAction.type(text: "after", expectedFingerprint: before.fingerprint)
-    #expect(ControlOutcome.result(for: type, before: before, after: before) == "no observed text change")
+    #expect(ControlOutcome.effect(for: type, before: before, after: before) == .notObserved)
+    #expect(ControlOutcome.effect(for: type, before: before, after: nil) == .unknown)
 
     let after = DesktopSnapshot(
         processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
         focusedRole: "AXTextField", focusedValue: "after", isProtected: false
     )
-    #expect(ControlOutcome.result(for: type, before: before, after: after) == "observed text change")
+    #expect(ControlOutcome.effect(for: type, before: before, after: after) == .observed)
+    #expect(ControlOutcome.result(for: type, effect: .observed) == "observed text change")
 }
 
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
@@ -231,9 +246,11 @@ import Testing
     )
     let action = DesktopAction.activate(bundleIdentifier: "com.apple.Safari")
 
-    #expect(ControlOutcome.result(for: action, before: before, after: nil) == "unknown effect")
-    #expect(ControlOutcome.result(for: action, before: before, after: nil, externalEffectObserved: false) == "no observed target active")
-    #expect(ControlOutcome.result(for: action, before: before, after: nil, externalEffectObserved: true) == "observed target active")
+    #expect(ControlOutcome.effect(for: action, before: before, after: before) == .unknown)
+    #expect(ControlOutcome.effect(for: action, before: before, after: nil, externalEffect: .notObserved) == .notObserved)
+    #expect(ControlOutcome.result(for: action, effect: .unknown) == "unknown effect")
+    #expect(ControlOutcome.result(for: action, effect: .notObserved) == "no observed target active")
+    #expect(ControlOutcome.result(for: action, effect: .observed) == "observed target active")
 }
 
 @Test func externalControlEffectsRequireExactTargetAndNavigation() {
@@ -243,24 +260,79 @@ import Testing
     #expect(!ControlExternalEffect.isTargetActive(observedProcessIdentifier: 43, targetProcessIdentifier: 42))
     #expect(ControlExternalEffect.isProcessTerminated(targetProcessIdentifier: 42, runningProcessIdentifiers: [43]))
     #expect(!ControlExternalEffect.isProcessTerminated(targetProcessIdentifier: 42, runningProcessIdentifiers: [42, 43]))
-    #expect(ControlExternalEffect.openedTarget(
+    #expect(openOutcome(beforeURL: nil, observedURL: targetURL) == .navigated)
+    #expect(openOutcome(beforeURL: URL(string: "https://example.com/")!, observedURL: targetURL) == .navigated)
+    #expect(openOutcome(beforeURL: nil, targetWasFrontmost: true, observedURL: targetURL) == .targetAlreadyActive)
+    #expect(openOutcome(beforeURL: nil, targetWasFrontmost: true, observedURL: targetURL).effect == .unknown)
+    #expect(openOutcome(beforeURL: nil, observedBundle: "com.google.Chrome", observedURL: targetURL) == .notObserved)
+    #expect(openOutcome(beforeURL: nil, observedURL: nil) == .notObserved)
+}
+
+@Test func openNavigationDoesNotClaimAlreadyOpenOrRedirectedTargets() {
+    let targetURL = URL(string: "https://example.com/docs?version=1#read")!
+    let redirected = URL(string: "https://www.example.com/docs?version=1#read")!
+    let previous = URL(string: "https://news.example.org/")!
+
+    #expect(openOutcome(beforeURL: targetURL, observedURL: targetURL) == .alreadyOpen)
+    #expect(openOutcome(beforeURL: targetURL, observedURL: targetURL).effect == .unknown)
+    #expect(openOutcome(beforeURL: previous, observedURL: redirected) == .differentURL(redirected))
+    #expect(openOutcome(beforeURL: previous, observedURL: redirected).effect == .unknown)
+    #expect(openOutcome(beforeURL: previous, observedURL: previous) == .notObserved)
+    #expect(openOutcome(beforeURL: previous, observedURL: previous).effect == .notObserved)
+}
+
+private func openOutcome(
+    beforeURL: URL?,
+    targetWasFrontmost: Bool = false,
+    observedBundle: String = "com.apple.Safari",
+    observedURL: URL?
+) -> OpenNavigationOutcome {
+    ControlExternalEffect.openNavigation(
         targetBundleIdentifier: "com.apple.Safari",
-        observedBundleIdentifier: "com.apple.Safari",
-        targetURL: targetURL,
-        observedURL: targetURL
-    ))
-    #expect(!ControlExternalEffect.openedTarget(
-        targetBundleIdentifier: "com.apple.Safari",
-        observedBundleIdentifier: "com.google.Chrome",
-        targetURL: targetURL,
-        observedURL: targetURL
-    ))
-    #expect(!ControlExternalEffect.openedTarget(
-        targetBundleIdentifier: "com.apple.Safari",
-        observedBundleIdentifier: "com.apple.Safari",
-        targetURL: targetURL,
-        observedURL: URL(string: "https://example.com/other?version=1#read")!
-    ))
+        targetURL: URL(string: "https://example.com/docs?version=1#read")!,
+        targetWasFrontmost: targetWasFrontmost,
+        beforeURL: beforeURL,
+        observedBundleIdentifier: observedBundle,
+        observedURL: observedURL
+    )
+}
+
+@Test func controlSessionStepResultComesFromTypedEffect() {
+    #expect(ControlSessionStepResult(ControlEffect.observed) == .effectObserved)
+    #expect(ControlSessionStepResult(ControlEffect.notObserved) == .noEffectObserved)
+    #expect(ControlSessionStepResult(ControlEffect.unknown) == .effectUnknown)
+}
+
+@Test func controlAuditEntryDecodesLegacyEntriesAsUnknownEffect() throws {
+    let entry = ControlAuditEntry(
+        action: .activate(bundleIdentifier: "com.apple.Safari"),
+        beforeFingerprint: "before", afterFingerprint: nil,
+        effect: .notObserved, result: "observed target active"
+    )
+    let encoded = try JSONEncoder().encode(entry)
+    #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).effect == .notObserved)
+
+    var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    legacy["effect"] = nil
+    let decoded = try JSONDecoder().decode(
+        ControlAuditEntry.self, from: JSONSerialization.data(withJSONObject: legacy)
+    )
+    #expect(decoded.effect == .unknown)
+    #expect(decoded.result == "observed target active")
+}
+
+@Test func permissionInteractionsKeepDecidedDictationInTargetAndRefreshSettingsGrants() {
+    for kind in [PermissionKind.microphone, .speechRecognition] {
+        #expect(PermissionCenter.needsSystemPrompt(kind, state: .undetermined))
+        #expect(!PermissionCenter.needsSystemPrompt(kind, state: .granted))
+        #expect(!PermissionCenter.needsSystemPrompt(kind, state: .denied))
+        #expect(PermissionCenter.interaction(for: kind, state: .granted) == .none)
+        #expect(PermissionCenter.interaction(for: kind, state: .denied) == .systemSettings)
+    }
+    for kind in [PermissionKind.accessibility, .inputMonitoring] {
+        #expect(!PermissionCenter.needsSystemPrompt(kind, state: .denied))
+        #expect(PermissionCenter.interaction(for: kind, state: .denied) == .systemSettings)
+    }
 }
 
 @Test func controlPlannerGroundsTypeAgainstCurrentTarget() throws {
