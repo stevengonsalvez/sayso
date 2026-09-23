@@ -639,7 +639,7 @@ public enum ControlPlanner {
         let normalized = trimmed.lowercased()
         if normalized.hasPrefix("open ") {
             let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-            return !target.isEmpty && httpURL(target) == nil && URL(string: target)?.scheme == nil
+            return !target.isEmpty && httpURL(target) == nil && !target.contains("://")
         }
         if normalized.hasPrefix("switch to ") {
             return !String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces).isEmpty
@@ -794,7 +794,7 @@ public final class AXDesktopController: @unchecked Sendable {
             targetProcessIdentifier = app.processIdentifier
             app.activate()
         case let .activateApplication(bundleIdentifier, applicationURL):
-            let standardizedURL = applicationURL.standardizedFileURL
+            let standardizedURL = applicationURL.standardizedFileURL.resolvingSymlinksInPath()
             guard InstalledDesktopApplication.validatesLaunchTarget(
                 bundleIdentifier: bundleIdentifier,
                 applicationURL: standardizedURL
@@ -803,7 +803,7 @@ public final class AXDesktopController: @unchecked Sendable {
             }
             let app: NSRunningApplication
             if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
-                .first(where: { $0.bundleURL?.standardizedFileURL == standardizedURL }) {
+                .first(where: { $0.bundleURL?.standardizedFileURL.resolvingSymlinksInPath() == standardizedURL }) {
                 app = running
             } else {
                 app = try await launchApplication(at: standardizedURL)
