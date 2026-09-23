@@ -72,6 +72,7 @@ public struct OpenAICompatibleTranscriptCleaner: Sendable {
             lexiconDirectives: lexiconDirectives,
             lexiconContextTags: lexiconContextTags
         )
+        // ponytail: 5s cap keeps final delivery responsive, make configurable only with measured need.
         let cleaned = try await withThrowingTaskGroup(of: String.self, returning: String.self) { group in
             group.addTask {
                 try await client.complete(
