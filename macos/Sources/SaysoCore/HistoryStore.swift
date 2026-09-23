@@ -1,5 +1,23 @@
 import Foundation
 
+public enum HistoryFilter {
+    public static func matching(_ entries: [Transcript], query: String) -> [Transcript] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return entries }
+
+        return entries.filter { transcript in
+            [
+                transcript.text,
+                transcript.translatedText,
+                transcript.language.displayName,
+                transcript.route.displayName
+            ]
+            .compactMap { $0 }
+            .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+}
+
 public struct HistoryInsights: Equatable, Sendable {
     public let entries: Int
     public let words: Int
@@ -38,6 +56,10 @@ public actor HistoryStore {
     public func all() -> [Transcript] {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
         return (try? JSONDecoder().decode([Transcript].self, from: data)) ?? []
+    }
+
+    public func matching(_ query: String) -> [Transcript] {
+        HistoryFilter.matching(all(), query: query)
     }
 
     public func append(_ transcript: Transcript) {
