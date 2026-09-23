@@ -1666,6 +1666,7 @@ private struct HistoryWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var entries: [Transcript] = []
     @State private var query = ""
+    @State private var scope: HistoryScope = .all
     @State private var confirmClear = false
     @State private var deletionCandidate: Transcript?
     @State private var isImportingAudio = false
@@ -1673,7 +1674,7 @@ private struct HistoryWorkspace: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            let displayedEntries = HistoryFilter.matching(entries, query: query)
+            let displayedEntries = HistoryFilter.matching(entries, query: query, scope: scope)
             let insights = HistoryInsights.make(from: displayedEntries)
             HStack(spacing: 24) {
                 Label("\(insights.entries) entries", systemImage: "text.quote")
@@ -1693,11 +1694,30 @@ private struct HistoryWorkspace: View {
             TextField("Search words, translations, language, or route", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .padding(.horizontal)
+            Picker("History filter", selection: $scope) {
+                ForEach(HistoryScope.allCases) { scope in
+                    Text(scope.displayName).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal)
             List(displayedEntries) { entry in
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 5) {
                         Text(entry.translatedText ?? entry.text)
-                        Text(entry.createdAt, style: .date).foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        HStack(spacing: 6) {
+                            Text(entry.language.displayName)
+                            Text(entry.route.displayName)
+                            if entry.translatedText != nil { Text("Translated") }
+                            if entry.audioFileURL != nil { Text("Recording") }
+                        }
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        Text(entry.createdAt, format: .dateTime.year().month().day().hour().minute())
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
                     Spacer()
                     if let audioFileURL = entry.audioFileURL,
@@ -1724,6 +1744,22 @@ private struct HistoryWorkspace: View {
                         .buttonStyle(.borderless)
                         .accessibilityLabel(playback.activeID == entry.id ? "Stop recording" : "Play recording")
                     }
+                    Menu {
+                        Button("Copy transcript") { _ = TextOutput.copy(entry.text) }
+                        if let translatedText = entry.translatedText {
+                            Button("Copy translation") { _ = TextOutput.copy(translatedText) }
+                        }
+                        if let audioFileURL = entry.audioFileURL,
+                           FileManager.default.fileExists(atPath: audioFileURL.path) {
+                            Button("Reveal recording in Finder") {
+                                NSWorkspace.shared.activateFileViewerSelecting([audioFileURL])
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityLabel("History actions")
                     Button {
                         deletionCandidate = entry
                     } label: {
