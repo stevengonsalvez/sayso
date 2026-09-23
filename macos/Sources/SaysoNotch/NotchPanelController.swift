@@ -186,7 +186,7 @@ private struct NotchHUD: View {
                     Spacer()
                 }
 
-                Text(model.transcriber.partialText.isEmpty ? "Live words appear here." : model.transcriber.partialText)
+                Text(model.transcriber.partialText.isEmpty ? (model.notice ?? "Live words appear here.") : model.transcriber.partialText)
                     .font(.system(size: 15, weight: .medium))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
