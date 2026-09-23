@@ -158,6 +158,7 @@ final class SaysoAppModel: ObservableObject {
 
     func save() {
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
+        if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         settingsStore.save(settings)
     }
 
