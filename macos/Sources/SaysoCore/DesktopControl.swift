@@ -764,7 +764,8 @@ public final class AXDesktopController: @unchecked Sendable {
         let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
         let focusedRole = focused.flatMap { copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String } ?? ""
         let focusedSubrole = focused.flatMap { copyAttribute(kAXSubroleAttribute as CFString, from: $0) as? String } ?? ""
-        let focusedValue = focused.flatMap { copyAttribute(kAXValueAttribute as CFString, from: $0) as? String } ?? ""
+        let isProtected = AXCandidateCapturePolicy.isProtected(role: focusedRole, subrole: focusedSubrole)
+        let focusedValue = isProtected ? "" : (focused.flatMap { copyAttribute(kAXValueAttribute as CFString, from: $0) as? String } ?? "")
         let candidateSnapshot = try candidateCapture.capture(application: app)
         return DesktopSnapshot(
             processIdentifier: app.processIdentifier,
@@ -776,7 +777,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 role: focusedRole,
                 subrole: focusedSubrole
             ),
-            isProtected: AXCandidateCapturePolicy.isProtected(role: focusedRole, subrole: focusedSubrole),
+            isProtected: isProtected,
             elements: candidateSnapshot.candidates.filter(\.state.isTargetable).map {
                 DesktopElement(id: $0.id.rawValue, role: $0.role, title: $0.title)
             }
