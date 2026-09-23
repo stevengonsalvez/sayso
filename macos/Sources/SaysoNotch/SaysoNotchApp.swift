@@ -157,6 +157,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func save() {
+        if !settings.cloudConsentGranted { settings.cloudCleanupEnabled = false }
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         settingsStore.save(settings)
@@ -560,7 +561,10 @@ final class SaysoAppModel: ObservableObject {
         settings currentSettings: SaysoSettings
     ) async -> String {
         guard currentSettings.cleanupEnabled else { return text }
-        let local = TranscriptCleanup.processLocally(text)
+        let local = TranscriptCleanup.processLocally(
+            text,
+            capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
+        )
         guard currentSettings.cloudCleanupEnabled,
               currentSettings.cloudConsentGranted,
               let key = secrets.secret(named: "byok-api-key"),
@@ -570,9 +574,16 @@ final class SaysoAppModel: ObservableObject {
             return local
         }
         do {
-            return try await OpenAICompatibleTranscriptCleaner(
+            let cloud = try await OpenAICompatibleTranscriptCleaner(
                 baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
             ).clean(text, language: language)
+            var cleaned = TranscriptCleanup.processLocally(
+                cloud,
+                capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
+            )
+            cleaned = currentSettings.dictationProfile.postProcess(cleaned)
+            cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
+            return corrections.apply(to: cleaned).transformedText
         } catch {
             notice = "Cloud cleanup unavailable. Applied local cleanup."
             return local
