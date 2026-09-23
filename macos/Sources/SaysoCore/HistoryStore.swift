@@ -117,6 +117,7 @@ public actor HistoryStore {
             existing = []
             recovered = true
         case .unavailable:
+            // Keep opted-in audio while history storage may be temporarily unavailable.
             return .failed
         }
         guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -175,11 +176,13 @@ public actor HistoryStore {
             }
         }
 
+        guard succeeded,
+              !fileManager.fileExists(atPath: fileURL.path),
+              corruptBackupURLs().isEmpty else {
+            return false
+        }
         SessionAudioArchive.deleteAllManagedRecordings(directory: recordingsDirectory, fileManager: fileManager)
-        return succeeded
-            && !fileManager.fileExists(atPath: fileURL.path)
-            && corruptBackupURLs().isEmpty
-            && managedRecordings().isEmpty
+        return managedRecordings().isEmpty
     }
 
     public func reclaimUnreferencedAudio(olderThan: Date? = nil) {
