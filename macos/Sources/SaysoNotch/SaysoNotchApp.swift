@@ -1577,6 +1577,12 @@ private struct VoiceOutputWorkspace: View {
                     }
                     text = clipboard
                 }
+                Button {
+                    Task { await refreshHistory() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Refresh saved transcripts")
                 Picker("Saved transcript", selection: $historyID) {
                     Text("Choose saved text").tag(nil as Transcript.ID?)
                     ForEach(historyEntries) { entry in
@@ -1617,10 +1623,10 @@ private struct VoiceOutputWorkspace: View {
                 HStack(spacing: 12) {
                     Text("Rate \(model.settings.speechRate, format: .number.precision(.fractionLength(2)))")
                         .font(.caption.weight(.semibold))
-                    Slider(value: $model.settings.speechRate, in: 0.2 ... 0.6, step: 0.05)
                     Text("Slower")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Slider(value: $model.settings.speechRate, in: 0.2 ... 0.6, step: 0.05)
                     Text("Faster")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1645,7 +1651,7 @@ private struct VoiceOutputWorkspace: View {
         }
         .padding(32)
         .task {
-            historyEntries = await model.history.all()
+            await refreshHistory()
             refreshVoices()
         }
         .onChange(of: model.settings.speechLanguage) { _, _ in
@@ -1662,6 +1668,10 @@ private struct VoiceOutputWorkspace: View {
            !voices.contains(where: { $0.id == selected }) {
             model.settings.speechVoiceIdentifier = nil
         }
+    }
+
+    private func refreshHistory() async {
+        historyEntries = await model.history.all()
     }
 }
 
