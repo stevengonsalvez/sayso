@@ -164,6 +164,18 @@ private func installedApplication(
         bundleIdentifier: "ai.sayso.test-app",
         applicationURL: wrappedApplicationURL
     ))
+    #expect(!InstalledDesktopApplication.validatesLaunchTarget(
+        bundleIdentifier: "ai.sayso.other-app",
+        applicationURL: wrappedApplicationURL
+    ))
+    #expect(InstalledDesktopApplication.matchesRunningApplication(
+        bundleURL: wrappedInfoURL.deletingLastPathComponent(),
+        plannedApplicationURL: wrappedApplicationURL
+    ))
+    #expect(!InstalledDesktopApplication.matchesRunningApplication(
+        bundleURL: applicationURL,
+        plannedApplicationURL: wrappedApplicationURL
+    ))
 }
 
 @Test func namedApplicationPlannerPreservesExplicitHTTPSNavigation() throws {
