@@ -63,6 +63,7 @@ import Testing
     #expect(HistoryFilter.matching(entries, query: "", scope: .recordings, availableRecordingIDs: [onDeviceRecording.id]).map(\.id) == [onDeviceRecording.id])
     #expect(HistoryFilter.matching(entries, query: "Local", scope: .appleSpeech).isEmpty)
     #expect(HistoryFilter.matching(entries, query: "अनुवाद", scope: .translated).map(\.id) == [translated.id])
+    #expect(translated.displayText == "अनुवाद")
     #expect(!emptyTranslation.hasTranslation)
     #expect(emptyTranslation.displayText == "Fallback")
 }
