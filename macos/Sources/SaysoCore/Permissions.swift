@@ -117,10 +117,14 @@ public final class PermissionCenter: ObservableObject {
             _ = CGRequestListenEventAccess()
             openSettings(for: kind)
         }
-        // TCC can report its prior state for one main-run-loop turn after its sheet closes.
-        await Task.yield()
-        try? await Task.sleep(for: .milliseconds(150))
-        refresh()
+        // TCC can lag its sheet completion. Keep the displayed state aligned with
+        // the actual system grant, without leaving the request UI stale.
+        for _ in 0 ..< 20 {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(100))
+            refresh()
+            if states[kind] != .undetermined { break }
+        }
     }
 
     private func openSettings(for kind: PermissionKind) {
