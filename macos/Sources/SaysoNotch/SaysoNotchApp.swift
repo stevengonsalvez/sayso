@@ -23,6 +23,24 @@ struct SaysoNotchApp: App {
 
 @MainActor
 final class SaysoAppModel: ObservableObject {
+    private struct PendingDictationDelivery {
+        let session: RecordingSession
+        let destination: TextOutput.Destination?
+        let settings: SaysoSettings
+    }
+
+    private final class ControlCommandRun {
+        let commands: [String]
+        let target: NSRunningApplication
+        var nextCommandIndex = 0
+        var hasStarted = false
+
+        init(commands: [String], target: NSRunningApplication) {
+            self.commands = commands
+            self.target = target
+        }
+    }
+
     @Published var settings: SaysoSettings
     @Published var lastTranscript: Transcript?
     @Published var controlStatus = "Ready"
@@ -32,6 +50,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var selectedTab = 0
     @Published var notice: String?
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
+    @Published private(set) var isStartingDictation = false
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -55,6 +74,9 @@ final class SaysoAppModel: ObservableObject {
     private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
+    private var controlRun: ControlCommandRun?
+    private var controlExecutionTask: Task<Void, Never>?
+    private var dictationStartCancellationRequested = false
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
@@ -168,8 +190,17 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startOrStopDictation() {
-        if transcriber.phase == .listening {
+        if transcriber.canStop {
             transcriber.stop()
+            return
+        }
+        if isStartingDictation {
+            dictationStartCancellationRequested = true
+            notice = "Cancelling dictation start."
+            return
+        }
+        guard transcriber.canStart else {
+            notice = "Finishing current dictation."
             return
         }
         Task {
@@ -178,6 +209,16 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func startDictation() async -> Bool {
+        guard !isStartingDictation, transcriber.canStart else {
+            notice = transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
+            return false
+        }
+        isStartingDictation = true
+        dictationStartCancellationRequested = false
+        defer {
+            isStartingDictation = false
+            dictationStartCancellationRequested = false
+        }
         notch.show()
         guard settings.route.supportsDictation else {
             notice = "Your provider supports translation, not transcription."
@@ -197,9 +238,17 @@ final class SaysoAppModel: ObservableObject {
         )
         activeRecordingSession = session
         await sessions.upsert(session)
+        guard !dictationStartCancellationRequested else {
+            handleTranscriptionTermination(.cancelled)
+            return false
+        }
         guard await permissions.authorize(.microphone) == .granted else {
             notice = "Microphone access is required before Sayso can listen. Grant it in Settings."
             failActiveSession(notice ?? "Microphone access denied")
+            return false
+        }
+        guard !dictationStartCancellationRequested else {
+            handleTranscriptionTermination(.cancelled)
             return false
         }
         if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
@@ -208,6 +257,10 @@ final class SaysoAppModel: ObservableObject {
                 failActiveSession(notice ?? "Speech Recognition access denied")
                 return false
             }
+        }
+        guard !dictationStartCancellationRequested else {
+            handleTranscriptionTermination(.cancelled)
+            return false
         }
         restoreDictationTargetFocus()
         let started = await transcriber.start(
@@ -220,13 +273,17 @@ final class SaysoAppModel: ObservableObject {
                 onTermination: { [weak self] termination in
                     Task { @MainActor [weak self] in self?.handleTranscriptionTermination(termination) }
                 }
-            ) { [weak self] transcript in
+        ) { [weak self] transcript in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.accept(transcript)
                 }
-            }
+        }
         guard started else {
+            guard transcriber.error != nil else {
+                handleTranscriptionTermination(.cancelled)
+                return false
+            }
             failActiveSession(transcriber.error?.localizedDescription ?? "Could not start dictation")
             return false
         }
@@ -246,6 +303,9 @@ final class SaysoAppModel: ObservableObject {
     func accept(_ transcript: Transcript) {
         if applyPendingVoiceMode() { return }
         guard settings.mode == .dictation else {
+            updateActiveSession { $0.completeControlCommand(transcript.text) }
+            activeRecordingSession = nil
+            dictationDestination = nil
             runControl(transcript.text)
             return
         }
@@ -257,23 +317,42 @@ final class SaysoAppModel: ObservableObject {
                 updated.translatedText = nil
                 lastTranscript = updated
                 Task { await history.append(updated) }
+                updateActiveSession { $0.completeVoiceEdit(edited) }
+                activeRecordingSession = nil
+                dictationDestination = nil
                 notice = "Voice edit applied."
                 return
             case .targetNotFound:
+                cancelActiveRecordingSession()
                 notice = "Voice edit target was not found."
                 return
             case .notCommand:
                 break
             }
         }
-        updateActiveSession { $0.transition(to: .processing) }
+        guard let delivery = takeActiveDictationDelivery() else {
+            Task { await deliverUnboundTranscript(transcript) }
+            return
+        }
         Task {
-            await finish(await translated(transcript))
+            await sessions.upsert(delivery.session)
+            await finish(await translated(transcript, settings: delivery.settings), delivery: delivery)
         }
     }
 
-    private func translated(_ transcript: Transcript) async -> Transcript {
-        let currentSettings = settings
+    /// Preserve a final transcript even if an already-terminated recording lost its session record.
+    private func deliverUnboundTranscript(_ transcript: Transcript) async {
+        let settingsSnapshot = settings
+        let completed = await translated(transcript, settings: settingsSnapshot)
+        lastTranscript = completed
+        await history.append(completed)
+        let finalText = completed.translatedText ?? completed.text
+        notice = TextOutput.copy(finalText)
+            ? "Final text copied to clipboard."
+            : "Dictation finished, but final text could not be copied."
+    }
+
+    private func translated(_ transcript: Transcript, settings currentSettings: SaysoSettings) async -> Transcript {
         var corrected = transcript
         corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
         corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
@@ -301,27 +380,54 @@ final class SaysoAppModel: ObservableObject {
         return translated
     }
 
-    private func finish(_ transcript: Transcript) async {
+    private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
         lastTranscript = transcript
         await history.append(transcript)
         let finalText = transcript.translatedText ?? transcript.text
-        let destination = dictationDestination
-        dictationDestination = nil
-        let delivery: TextDeliveryMethod
-        if settings.autoInsert {
-            delivery = TextOutput.insertOrCopy(
+        let output: TextOutput.DeliveryResult
+        if pendingDelivery.settings.autoInsert {
+            output = TextOutput.insertOrCopy(
                 finalText,
-                destination: destination,
-                restoreClipboardAfterPaste: settings.restoreClipboardAfterPaste
+                destination: pendingDelivery.destination,
+                restoreClipboardAfterPaste: pendingDelivery.settings.restoreClipboardAfterPaste
             )
         } else {
-            TextOutput.copy(finalText)
-            delivery = .clipboard
+            output = TextOutput.copy(finalText)
+                ? .delivered(.clipboard)
+                : .pasteFailed(.clipboardUnavailable)
         }
-        if delivery == .clipboard { notice = "Final text copied to clipboard." }
-        updateActiveSession { $0.complete(text: finalText, delivery: delivery) }
+        var session = pendingDelivery.session
+        switch output {
+        case let .delivered(method):
+            if method == .clipboard, activeRecordingSession == nil {
+                notice = "Final text copied to clipboard."
+            }
+            session.complete(text: finalText, delivery: method)
+        case let .pasteFailed(failure):
+            if let fallbackDelivery = failure.fallbackDelivery {
+                session.complete(text: finalText, delivery: fallbackDelivery)
+            } else {
+                session.fail(failure.userMessage)
+            }
+            if activeRecordingSession == nil {
+                notice = failure.userMessage
+            }
+        }
+        await sessions.upsert(session)
+        if activeRecordingSession == nil { notch.hideAfterDelay() }
+    }
+
+    private func takeActiveDictationDelivery() -> PendingDictationDelivery? {
+        guard var session = activeRecordingSession else { return nil }
+        session.transition(to: .processing)
+        let delivery = PendingDictationDelivery(
+            session: session,
+            destination: dictationDestination,
+            settings: settings
+        )
         activeRecordingSession = nil
-        notch.hideAfterDelay()
+        dictationDestination = nil
+        return delivery
     }
 
     private func updateActiveSession(_ update: (inout RecordingSession) -> Void) {
@@ -333,6 +439,12 @@ final class SaysoAppModel: ObservableObject {
 
     private func failActiveSession(_ message: String) {
         updateActiveSession { $0.fail(message) }
+        activeRecordingSession = nil
+        dictationDestination = nil
+    }
+
+    private func cancelActiveRecordingSession() {
+        updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
         dictationDestination = nil
     }
@@ -351,7 +463,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func switchMode(_ mode: SaysoMode) {
-        guard mode == settings.mode || (transcriber.phase != .listening && transcriber.phase != .processing) else {
+        guard mode == settings.mode || (!isStartingDictation && transcriber.phase != .requestingPermission && transcriber.phase != .listening && transcriber.phase != .processing) else {
             notice = "Stop dictation before changing modes."
             return
         }
@@ -433,7 +545,7 @@ final class SaysoAppModel: ObservableObject {
         } else {
             automation.stop()
             pendingControlStep = nil
-            Task { _ = await desktopControlSession.cancel() }
+            if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
         }
         save()
     }
@@ -522,18 +634,15 @@ final class SaysoAppModel: ObservableObject {
 
     func runControl(_ command: String) {
         guard desktopControlEnabled() else { return }
+        guard controlRun == nil else {
+            controlStatus = "Control command already active."
+            return
+        }
         do {
             let target = try controlTarget()
-            let snapshot = try controller.capture(application: target)
-            currentSnapshot = snapshot
-            let step = try ControlPlanner.plan(command: command, snapshot: snapshot)
-            controlStatus = "Planned: \(step.reason)"
-            if ControlPolicy.requiresConfirmation(step) {
-                pendingControlStep = step
-                controlStatus = "Review required: \(step.reason)"
-                return
-            }
-            execute(step, target: target, approved: false)
+            let run = ControlCommandRun(commands: try ControlPlanner.commands(from: command), target: target)
+            controlRun = run
+            executeControlRun(run)
         } catch {
             controlStatus = error.localizedDescription
         }
@@ -542,45 +651,117 @@ final class SaysoAppModel: ObservableObject {
     func approvePendingControl() {
         guard desktopControlEnabled() else {
             pendingControlStep = nil
+            if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
             return
         }
-        guard let step = pendingControlStep else { return }
+        guard let step = pendingControlStep, let run = controlRun else { return }
         pendingControlStep = nil
-        do {
-            try execute(step, target: controlTarget(), approved: true)
-        } catch {
-            controlStatus = error.localizedDescription
-        }
+        executeControlRun(run, approvedStep: step)
     }
 
     func discardPendingControl() {
         pendingControlStep = nil
-        controlStatus = "Action discarded"
+        guard let run = controlRun else {
+            controlStatus = "Action discarded"
+            return
+        }
+        requestControlCancellation(run, status: "Action discarded")
     }
 
     func cancelControl() {
         pendingControlStep = nil
-        Task {
-            let state = await desktopControlSession.cancel()
-            controlStatus = state.result == .cancelled ? "Control cancelled" : "No active control task"
+        guard let run = controlRun else {
+            controlStatus = "No active control task"
+            return
+        }
+        requestControlCancellation(run, status: "Cancellation requested. Current macOS action may still finish.")
+    }
+
+    private func executeControlRun(_ run: ControlCommandRun, approvedStep: ControlPlanStep? = nil) {
+        guard controlRun === run, controlExecutionTask == nil else { return }
+        guard desktopControlEnabled() else {
+            requestControlCancellation(run, status: "Desktop control disabled.")
+            return
+        }
+        controlExecutionTask = Task { [weak self] in
+            guard let self else { return }
+            var actionWasDispatched = false
+            do {
+                if !run.hasStarted {
+                    _ = await desktopControlSession.beginCommand()
+                    run.hasStarted = true
+                }
+                var carriedStep = approvedStep
+                while run.nextCommandIndex < run.commands.count {
+                    try Task.checkCancellation()
+                    let step: ControlPlanStep
+                    let isApprovedStep: Bool
+                    if let approvedStep = carriedStep {
+                        step = approvedStep
+                        carriedStep = nil
+                        isApprovedStep = true
+                    } else {
+                        let snapshot = try controller.capture(application: run.target)
+                        currentSnapshot = snapshot
+                        step = try ControlPlanner.plan(command: run.commands[run.nextCommandIndex], snapshot: snapshot)
+                        isApprovedStep = false
+                        controlStatus = "Planned: \(step.reason)"
+                        if ControlPolicy.requiresConfirmation(step) {
+                            pendingControlStep = step
+                            controlStatus = "Review required: \(step.reason)"
+                            controlExecutionTask = nil
+                            return
+                        }
+                    }
+                    try Task.checkCancellation()
+                    actionWasDispatched = true
+                    let entry = try await controller.execute(step, approved: isApprovedStep, targetApplication: run.target)
+                    await controlAudit.append(entry)
+                    controlEntries = await controlAudit.entries()
+                    guard !Task.isCancelled, controlRun === run else { return }
+                    let updated = await desktopControlSession.record(.init(entry.effect))
+                    actionWasDispatched = false
+                    run.nextCommandIndex += 1
+                    guard updated.canRunAction else {
+                        controlStatus = "\(entry.result), \(updated.result?.rawValue ?? "stopped")"
+                        finishControlRun()
+                        return
+                    }
+                    controlStatus = entry.result
+                }
+                let completed = await desktopControlSession.complete()
+                guard !Task.isCancelled, controlRun === run else { return }
+                controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
+                finishControlRun()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, controlRun === run else { return }
+                if actionWasDispatched {
+                    _ = await desktopControlSession.record(.actionFailed)
+                } else {
+                    _ = await desktopControlSession.cancel()
+                }
+                controlStatus = error.localizedDescription
+                finishControlRun()
+            }
         }
     }
 
-    private func execute(_ step: ControlPlanStep, target: NSRunningApplication, approved: Bool) {
-        guard desktopControlEnabled() else { return }
-        Task {
-            do {
-                let state = await desktopControlSession.currentState()
-                if state.phase != .running { _ = await desktopControlSession.start() }
-                let entry = try await controller.execute(step, approved: approved, targetApplication: target)
-                await controlAudit.append(entry)
-                controlEntries = await controlAudit.entries()
-                let stepResult = ControlSessionStepResult(entry.effect)
-                let updated = await desktopControlSession.record(stepResult)
-                controlStatus = updated.result.map { "\(entry.result), \($0.rawValue)" } ?? entry.result
-            } catch {
-                controlStatus = error.localizedDescription
-            }
+    private func finishControlRun() {
+        controlRun = nil
+        controlExecutionTask = nil
+    }
+
+    private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
+        controlExecutionTask?.cancel()
+        controlStatus = status
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await desktopControlSession.cancel()
+            guard controlRun === run else { return }
+            controlRun = nil
+            controlExecutionTask = nil
         }
     }
 
@@ -620,9 +801,10 @@ private struct MenuContent: View {
                 .font(.headline)
             Text(model.transcriber.partialText.isEmpty ? "Ready" : model.transcriber.partialText)
                 .lineLimit(2)
-            Button(model.transcriber.phase == .listening ? "Stop dictation" : "Start dictation") {
+            Button(model.transcriber.canStop ? "Stop dictation" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation") {
                 model.startOrStopDictation()
             }
+            .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
             Button("Show Sayso Notch") { model.switchMode(model.settings.mode) }
             Button("Open Sayso") { model.showMainWindow() }
             Button("Open Settings") { model.openSettings() }
@@ -711,7 +893,7 @@ private struct DictationWorkspace: View {
                 ModePicker(model: model)
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text(model.transcriber.phase == .listening ? "LISTENING" : "DICTATION")
+                Text(model.transcriber.canStop ? "LISTENING" : model.transcriber.canStart ? "DICTATION" : "FINISHING")
                     .font(.caption.weight(.black)).foregroundStyle(SaysoPalette.amber)
                 Text(model.transcriber.partialText.isEmpty ? "Tap to start talking" : model.transcriber.partialText)
                     .font(.system(size: 28, weight: .medium, design: .rounded))
@@ -720,12 +902,13 @@ private struct DictationWorkspace: View {
                     model.startOrStopDictation()
                 } label: {
                     Label(
-                        model.transcriber.phase == .listening ? "Stop" : "Start dictation",
-                        systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
+                        model.transcriber.canStop ? "Stop" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation",
+                        systemImage: model.transcriber.canStop ? "stop.fill" : model.transcriber.canStart ? "mic.fill" : "ellipsis"
                     )
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .tint(model.transcriber.canStop ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
             }
             .padding(28)
             .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
@@ -1254,18 +1437,19 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
-            guard transcriber.phase != .listening else {
-                return .failure(id: request.id, command: request.command, error: .init(code: .alreadyRecording, message: "Sayso is already listening."))
+            guard !isStartingDictation, transcriber.canStart else {
+                let message = isStartingDictation || transcriber.isStarting ? "Sayso is already starting." : "Sayso is finishing the current dictation."
+                return .failure(id: request.id, command: request.command, error: .init(code: .alreadyRecording, message: message))
             }
             guard await startDictation() else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .appUnavailable, message: transcriber.error?.localizedDescription ?? "Speech engine did not start."))
             }
             return .success(id: request.id, command: request.command, result: .init(sessionActive: true))
         case .stopDictation:
-            guard transcriber.phase == .listening else {
+            guard transcriber.canStop || isStartingDictation else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .notRecording, message: "Sayso is not listening."))
             }
-            transcriber.stop()
+            startOrStopDictation()
             return .success(id: request.id, command: request.command, result: .init(sessionActive: false))
         case .history:
             let entries = await history.all().prefix(request.resolvedLimit).map {
@@ -1294,7 +1478,7 @@ extension SaysoAppModel {
                 let transcript = try await FileTranscriber.transcribe(
                     fileURL: URL(fileURLWithPath: path), language: settings.language, route: settings.route
                 )
-                let final = await translated(transcript)
+                let final = await translated(transcript, settings: settings)
                 lastTranscript = final
                 await history.append(final)
                 return .success(
