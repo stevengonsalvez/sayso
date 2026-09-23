@@ -63,8 +63,9 @@ public final class SessionAudioArchive: @unchecked Sendable {
         directory: URL? = nil,
         fileManager: FileManager = .default
     ) -> Bool {
-        let directory = (directory ?? defaultDirectory(fileManager: fileManager)).standardizedFileURL.path
-        let candidate = url.standardizedFileURL.path
+        let directory = (directory ?? defaultDirectory(fileManager: fileManager))
+            .standardizedFileURL.resolvingSymlinksInPath().path
+        let candidate = url.standardizedFileURL.resolvingSymlinksInPath().path
         return url.isFileURL
             && candidate.hasPrefix(directory + "/")
             && managedExtensions.contains(url.pathExtension.lowercased())
@@ -94,8 +95,9 @@ public final class SessionAudioArchive: @unchecked Sendable {
         olderThan: Date? = nil,
         fileManager: FileManager = .default
     ) {
-        let recordingDirectory = (directory ?? defaultDirectory(fileManager: fileManager)).standardizedFileURL
-        let retained = Set(retainedURLs.map(\.standardizedFileURL))
+        let recordingDirectory = (directory ?? defaultDirectory(fileManager: fileManager))
+            .standardizedFileURL.resolvingSymlinksInPath()
+        let retained = Set(retainedURLs.map { $0.standardizedFileURL.resolvingSymlinksInPath() })
         let urls = (try? fileManager.contentsOfDirectory(at: recordingDirectory, includingPropertiesForKeys: nil)) ?? []
         for url in urls where managedExtensions.contains(url.pathExtension.lowercased()) {
             let standardizedURL = url.standardizedFileURL
