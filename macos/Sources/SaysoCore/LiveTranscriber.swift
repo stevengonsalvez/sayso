@@ -43,7 +43,11 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
-        !shouldUseFluidAudio(language: language, route: route)
+        !FileTranscriber.prefersFluidAudio(
+            language: language,
+            route: route,
+            localModelReady: fluidAudioModels.state.isInstalled
+        )
     }
 
     public func start(
@@ -169,8 +173,11 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func shouldUseFluidAudio(language: DictationLanguage, route: ProviderRoute) -> Bool {
-        route == .local && language == .english && FluidAudioLocalModelManager.supportsCurrentHardware
-            && fluidAudioModels.state.isInstalled
+        FileTranscriber.prefersFluidAudio(
+            language: language,
+            route: route,
+            localModelReady: fluidAudioModels.state.isInstalled
+        )
     }
 
     private func startFluidAudio(language: DictationLanguage, route: ProviderRoute) async -> Bool {
@@ -353,6 +360,15 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 public enum FileTranscriber {
     private static let maximumAudioFileBytes = 512 * 1024 * 1024
 
+    static func prefersFluidAudio(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        localModelReady: Bool
+    ) -> Bool {
+        route == .local && language == .english && FluidAudioLocalModelManager.supportsCurrentHardware
+            && localModelReady
+    }
+
     public static func transcribe(
         fileURL: URL,
         language: DictationLanguage,
@@ -365,6 +381,10 @@ public enum FileTranscriber {
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         if let size = attributes[.size] as? NSNumber, size.intValue > maximumAudioFileBytes {
             throw SaysoError.invalidAction("Audio file exceeds \(maximumAudioFileBytes) bytes")
+        }
+        let localModel = FluidAudioLocalModelManager()
+        if prefersFluidAudio(language: language, route: route, localModelReady: localModel.state.isInstalled) {
+            return try await transcribeWithFluidAudio(fileURL: fileURL, language: language, route: route, model: localModel)
         }
         let authorization = SFSpeechRecognizer.authorizationStatus()
         guard authorization == .authorized else { throw SaysoError.permissionDenied("Speech Recognition") }
@@ -393,6 +413,38 @@ public enum FileTranscriber {
         }
         withExtendedLifetime(taskBox) {}
         return Transcript(text: text, language: language, route: route, isFinal: true)
+    }
+
+    private static func transcribeWithFluidAudio(
+        fileURL: URL,
+        language: DictationLanguage,
+        route: ProviderRoute,
+        model: FluidAudioLocalModelManager
+    ) async throws -> Transcript {
+        let manager = try await model.makeReadyManager()
+        do {
+            let file = try AVAudioFile(forReading: fileURL)
+            let chunkFrames = AVAudioFrameCount(max(1_024, Int(file.processingFormat.sampleRate / 5)))
+            while file.framePosition < file.length {
+                let remaining = file.length - file.framePosition
+                guard let buffer = AVAudioPCMBuffer(
+                    pcmFormat: file.processingFormat,
+                    frameCapacity: min(chunkFrames, AVAudioFrameCount(remaining))
+                ) else {
+                    throw SaysoError.unavailable("Audio buffer")
+                }
+                try file.read(into: buffer)
+                if buffer.frameLength > 0 {
+                    _ = try await manager.process(audioBuffer: buffer)
+                }
+            }
+            let text = try await manager.finish()
+            await manager.cleanup()
+            return Transcript(text: text, language: language, route: route, isFinal: true)
+        } catch {
+            await manager.cleanup()
+            throw error
+        }
     }
 }
 
