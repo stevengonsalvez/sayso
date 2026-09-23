@@ -53,6 +53,33 @@ public struct OpenAICompatibleRewriter: Sendable {
     }
 }
 
+public struct OpenAICompatibleTranscriptCleaner: Sendable {
+    private let client: OpenAICompatibleChatClient
+
+    public init(baseURL: URL, apiKey: String, model: String, session: URLSession = .shared) {
+        client = .init(baseURL: baseURL, apiKey: apiKey, model: model, session: session)
+    }
+
+    public func clean(
+        _ transcript: String,
+        language: DictationLanguage,
+        lexiconDirectives: [String] = [],
+        lexiconContextTags: [String] = []
+    ) async throws -> String {
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return transcript }
+        let systemPrompt = TranscriptCleanupPolicy.systemPrompt(
+            outputLanguage: language == .automatic ? nil : language.displayName,
+            lexiconDirectives: lexiconDirectives,
+            lexiconContextTags: lexiconContextTags
+        )
+        return try await client.complete(
+            systemPrompt: systemPrompt,
+            userPrompt: TranscriptCleanupPolicy.userMessage(transcript: transcript),
+            failureLabel: "Transcript cleanup"
+        )
+    }
+}
+
 private struct OpenAICompatibleChatClient: Sendable {
     private let baseURL: URL
     private let apiKey: String
