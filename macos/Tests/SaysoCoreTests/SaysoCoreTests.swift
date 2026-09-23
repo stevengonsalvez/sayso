@@ -558,6 +558,12 @@ private func openOutcome(
     #expect(nextTab.action == .key(.nextTab, expectedFingerprint: snapshot.fingerprint))
     #expect(nextTab.reason == "Next tab")
     #expect(ControlPolicy.requiresConfirmation(nextTab))
+    let previousTab = try ControlPlanner.plan(command: "previous tab", snapshot: snapshot)
+    #expect(previousTab.action == .key(.previousTab, expectedFingerprint: snapshot.fingerprint))
+    #expect(previousTab.reason == "Previous tab")
+    #expect(ControlPolicy.requiresConfirmation(previousTab))
+    #expect(DesktopKey.previousTab.virtualKey == DesktopKey.tab.virtualKey)
+    #expect(DesktopKey.previousTab.modifierFlags == [.maskControl, .maskShift])
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "press command q", snapshot: snapshot) }
     #expect(ControlOutcome.effect(for: enter.action, before: snapshot, after: snapshot) == .unknown)
 }
