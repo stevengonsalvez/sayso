@@ -128,16 +128,123 @@ public enum ControlPolicy {
 }
 
 public enum ControlOutcome {
-    public static func result(for action: DesktopAction, before: DesktopSnapshot, after: DesktopSnapshot?) -> String {
-        guard let after else { return "unknown effect" }
+    public static func effectObserved(
+        for action: DesktopAction,
+        before: DesktopSnapshot,
+        after: DesktopSnapshot?,
+        externalEffectObserved: Bool? = nil
+    ) -> Bool? {
         switch action {
         case .type:
-            return after.focusedValue != before.focusedValue ? "observed text change" : "no observed text change"
+            return after.map { $0.focusedValue != before.focusedValue }
         case .press, .scroll:
-            return after.fingerprint != before.fingerprint ? "observed interface change" : "no observed interface change"
+            return after.map { $0.fingerprint != before.fingerprint }
         case .open, .activate, .quit:
-            return "dispatched"
+            return externalEffectObserved
         }
+    }
+
+    public static func result(
+        for action: DesktopAction,
+        before: DesktopSnapshot,
+        after: DesktopSnapshot?,
+        externalEffectObserved: Bool? = nil
+    ) -> String {
+        guard let observed = effectObserved(
+            for: action,
+            before: before,
+            after: after,
+            externalEffectObserved: externalEffectObserved
+        ) else { return "unknown effect" }
+
+        switch action {
+        case .type:
+            return observed ? "observed text change" : "no observed text change"
+        case .press, .scroll:
+            return observed ? "observed interface change" : "no observed interface change"
+        case .open:
+            return observed ? "observed navigation" : "no observed navigation"
+        case .activate:
+            return observed ? "observed target active" : "no observed target active"
+        case .quit:
+            return observed ? "observed process termination" : "no observed process termination"
+        }
+    }
+}
+
+public enum ControlExternalEffect {
+    public static func isTargetActive(
+        observedProcessIdentifier: Int32,
+        targetProcessIdentifier: Int32
+    ) -> Bool {
+        observedProcessIdentifier == targetProcessIdentifier
+    }
+
+    public static func isProcessTerminated(
+        targetProcessIdentifier: Int32,
+        runningProcessIdentifiers: some Sequence<Int32>
+    ) -> Bool {
+        !runningProcessIdentifiers.contains(targetProcessIdentifier)
+    }
+
+    public static func openedTarget(
+        targetBundleIdentifier: String,
+        observedBundleIdentifier: String?,
+        targetURL: URL,
+        observedURL: URL?
+    ) -> Bool {
+        guard targetBundleIdentifier == observedBundleIdentifier,
+              let observedURL,
+              let target = URLComponents(url: targetURL, resolvingAgainstBaseURL: false),
+              let observed = URLComponents(url: observedURL, resolvingAgainstBaseURL: false) else { return false }
+        return target.scheme?.lowercased() == observed.scheme?.lowercased()
+            && target.host?.lowercased() == observed.host?.lowercased()
+            && normalizedPath(target) == normalizedPath(observed)
+            && target.port == observed.port
+            && target.percentEncodedQuery == observed.percentEncodedQuery
+            && target.fragment == observed.fragment
+    }
+
+    private static func normalizedPath(_ components: URLComponents) -> String {
+        components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+    }
+}
+
+public struct ControlObservationResult<Snapshot: Sendable>: Sendable {
+    public let snapshot: Snapshot?
+    public let effectObserved: Bool
+    public let attempts: Int
+
+    public init(snapshot: Snapshot?, effectObserved: Bool, attempts: Int) {
+        self.snapshot = snapshot
+        self.effectObserved = effectObserved
+        self.attempts = attempts
+    }
+}
+
+public enum ControlObservation {
+    public static func observe<Snapshot: Sendable>(
+        maximumAttempts: Int = 8,
+        interval: Duration = .milliseconds(125),
+        capture: () async -> Snapshot?,
+        hasObservedEffect: (Snapshot) -> Bool
+    ) async throws -> ControlObservationResult<Snapshot> {
+        let attempts = max(1, maximumAttempts)
+        var latest: Snapshot?
+
+        for attempt in 1 ... attempts {
+            try Task.checkCancellation()
+            if let snapshot = await capture() {
+                latest = snapshot
+                if hasObservedEffect(snapshot) {
+                    return .init(snapshot: snapshot, effectObserved: true, attempts: attempt)
+                }
+            }
+            if attempt < attempts, (interval > .zero) {
+                try await Task.sleep(for: interval)
+            }
+        }
+        return .init(snapshot: latest, effectObserved: false, attempts: attempts)
     }
 }
 
@@ -219,6 +326,8 @@ public actor ControlAuditStore {
 
 public final class AXDesktopController: @unchecked Sendable {
     private let candidateCapture = AXCandidateCapture()
+    private static let observationAttempts = 8
+    private static let observationInterval = Duration.milliseconds(125)
 
     public init() {}
 
@@ -258,22 +367,33 @@ public final class AXDesktopController: @unchecked Sendable {
         }
         let before = try capture(application: targetApplication)
         guard !before.isProtected else { throw SaysoError.protectedTarget }
+        var targetProcessIdentifier: Int32?
+        var openTargetBundleIdentifier: String?
 
         switch step.action {
         case let .type(text, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
             try setFocusedText(text, in: before.processIdentifier)
         case let .open(url):
-            NSWorkspace.shared.open(url)
+            guard let targetApplicationURL = NSWorkspace.shared.urlForApplication(toOpen: url),
+                  let targetBundleIdentifier = Bundle(url: targetApplicationURL)?.bundleIdentifier else {
+                throw SaysoError.unavailable("Application for \(url.host ?? url.absoluteString)")
+            }
+            guard NSWorkspace.shared.open(url) else {
+                throw SaysoError.unavailable("Open \(url.host ?? url.absoluteString)")
+            }
+            openTargetBundleIdentifier = targetBundleIdentifier
         case let .activate(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
             }
+            targetProcessIdentifier = app.processIdentifier
             app.activate()
         case let .quit(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
             }
+            targetProcessIdentifier = app.processIdentifier
             app.terminate()
         case let .scroll(lines, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -293,12 +413,23 @@ public final class AXDesktopController: @unchecked Sendable {
             try candidateCapture.press(candidateID: .init(rawValue: elementID), application: target)
         }
 
-        let after = try? capture(application: targetApplication)
+        let observation = try await observeEffect(
+            for: step.action,
+            before: before,
+            targetApplication: targetApplication,
+            targetProcessIdentifier: targetProcessIdentifier,
+            openTargetBundleIdentifier: openTargetBundleIdentifier
+        )
         let entry = ControlAuditEntry(
             action: step.action,
             beforeFingerprint: before.fingerprint,
-            afterFingerprint: after?.fingerprint,
-            result: ControlOutcome.result(for: step.action, before: before, after: after)
+            afterFingerprint: observation.snapshot?.fingerprint,
+            result: ControlOutcome.result(
+                for: step.action,
+                before: before,
+                after: observation.snapshot,
+                externalEffectObserved: observation.externalEffectObserved
+            )
         )
         return entry
     }
@@ -323,6 +454,135 @@ public final class AXDesktopController: @unchecked Sendable {
         guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
             throw SaysoError.invalidAction("Text field rejected insertion")
         }
+    }
+
+    private struct ActionObservation {
+        let snapshot: DesktopSnapshot?
+        let externalEffectObserved: Bool?
+    }
+
+    private struct OpenObservation: Sendable {
+        let snapshot: DesktopSnapshot
+        let bundleIdentifier: String?
+        let documentURL: URL?
+    }
+
+    private func observeEffect(
+        for action: DesktopAction,
+        before: DesktopSnapshot,
+        targetApplication: NSRunningApplication?,
+        targetProcessIdentifier: Int32?,
+        openTargetBundleIdentifier: String?
+    ) async throws -> ActionObservation {
+        switch action {
+        case .type, .press, .scroll:
+            let observation = try await ControlObservation.observe(
+                maximumAttempts: Self.observationAttempts,
+                interval: Self.observationInterval,
+                capture: { [weak self] () async -> DesktopSnapshot? in
+                    guard let self else { return nil }
+                    do { return try self.capture(application: targetApplication) }
+                    catch { return nil }
+                },
+                hasObservedEffect: { after in
+                    ControlOutcome.effectObserved(for: action, before: before, after: after) == true
+                }
+            )
+            return .init(snapshot: observation.snapshot, externalEffectObserved: nil)
+
+        case let .open(url):
+            let observation = try await ControlObservation.observe(
+                maximumAttempts: Self.observationAttempts,
+                interval: Self.observationInterval,
+                capture: { [weak self] () async -> OpenObservation? in
+                    guard let self,
+                          let application = NSWorkspace.shared.frontmostApplication,
+                          let snapshot = try? self.capture(application: application) else { return nil }
+                    return .init(
+                        snapshot: snapshot,
+                        bundleIdentifier: application.bundleIdentifier,
+                        documentURL: self.documentURL(in: application)
+                    )
+                },
+                hasObservedEffect: { after in
+                    guard let openTargetBundleIdentifier else { return false }
+                    return ControlExternalEffect.openedTarget(
+                        targetBundleIdentifier: openTargetBundleIdentifier,
+                        observedBundleIdentifier: after.bundleIdentifier,
+                        targetURL: url,
+                        observedURL: after.documentURL
+                    )
+                }
+            )
+            return .init(snapshot: observation.snapshot?.snapshot, externalEffectObserved: observation.effectObserved)
+
+        case .activate:
+            let observation = try await ControlObservation.observe(
+                maximumAttempts: Self.observationAttempts,
+                interval: Self.observationInterval,
+                capture: { [weak self] () async -> DesktopSnapshot? in
+                    guard let self else { return nil }
+                    do { return try self.capture() }
+                    catch { return nil }
+                },
+                hasObservedEffect: { after in
+                    guard let targetProcessIdentifier else { return false }
+                    return ControlExternalEffect.isTargetActive(
+                        observedProcessIdentifier: after.processIdentifier,
+                        targetProcessIdentifier: targetProcessIdentifier
+                    )
+                }
+            )
+            return .init(snapshot: observation.snapshot, externalEffectObserved: observation.effectObserved)
+
+        case .quit:
+            let observation = try await ControlObservation.observe(
+                maximumAttempts: Self.observationAttempts,
+                interval: Self.observationInterval,
+                capture: {
+                    NSWorkspace.shared.runningApplications.map(\.processIdentifier)
+                },
+                hasObservedEffect: { runningProcessIdentifiers in
+                    guard let targetProcessIdentifier else { return false }
+                    return ControlExternalEffect.isProcessTerminated(
+                        targetProcessIdentifier: targetProcessIdentifier,
+                        runningProcessIdentifiers: runningProcessIdentifiers
+                    )
+                }
+            )
+            return .init(snapshot: nil, externalEffectObserved: observation.effectObserved)
+        }
+    }
+
+    private func documentURL(in application: NSRunningApplication) -> URL? {
+        let root = AXUIElementCreateApplication(application.processIdentifier)
+        let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: root)
+        let window = copyElement(kAXFocusedWindowAttribute as CFString, from: root)
+        return focused.flatMap(documentURL)
+            ?? window.flatMap(documentURL)
+            ?? window.flatMap(firstDocumentURL)
+    }
+
+    private func firstDocumentURL(in root: AXUIElement) -> URL? {
+        var pending = [root]
+        var visited = 0
+        while let element = pending.popLast(), visited < 300 {
+            visited += 1
+            if let url = documentURL(from: element) { return url }
+            let children = copyAttribute(kAXChildrenAttribute as CFString, from: element) as? [AXUIElement] ?? []
+            pending.append(contentsOf: children.reversed())
+        }
+        return nil
+    }
+
+    private func documentURL(from element: AXUIElement) -> URL? {
+        guard (copyAttribute(kAXRoleAttribute as CFString, from: element) as? String) == "AXWebArea" else { return nil }
+        return urlAttribute(from: element)
+    }
+
+    private func urlAttribute(from element: AXUIElement) -> URL? {
+        guard let value = copyAttribute(kAXURLAttribute as CFString, from: element) else { return nil }
+        return value as? URL ?? (value as? String).flatMap(URL.init(string:))
     }
 
     private func copyAttribute(_ attribute: CFString, from element: AXUIElement) -> CFTypeRef? {
