@@ -44,6 +44,30 @@ import Testing
     #expect(PermissionKind.inputMonitoring.settingsURL.absoluteString.contains("Privacy_ListenEvent"))
 }
 
+@Test func onboardingReadinessRequiresSelectedEngineAndPermissions() {
+    #expect(!OnboardingReadiness.engineIsReady(
+        route: .local, language: .automatic, hasLocalModel: true, cloudConsentGranted: false
+    ))
+    #expect(OnboardingReadiness.engineIsReady(
+        route: .local, language: .english, hasLocalModel: true, cloudConsentGranted: false
+    ))
+    #expect(!OnboardingReadiness.engineIsReady(
+        route: .appleSpeech, language: .english, hasLocalModel: false, cloudConsentGranted: false
+    ))
+    #expect(OnboardingReadiness.engineIsReady(
+        route: .appleSpeech, language: .english, hasLocalModel: false, cloudConsentGranted: true
+    ))
+    #expect(OnboardingReadiness.hasRequiredPermissions(
+        route: .local, microphoneGranted: true, speechRecognitionGranted: false
+    ))
+    #expect(!OnboardingReadiness.hasRequiredPermissions(
+        route: .appleSpeech, microphoneGranted: true, speechRecognitionGranted: false
+    ))
+    #expect(OnboardingReadiness.hasRequiredPermissions(
+        route: .appleSpeech, microphoneGranted: true, speechRecognitionGranted: true
+    ))
+}
+
 @Test func lexiconCorrectionsApplyBeforeOutput() {
     #expect(LexiconCorrections.apply("Ship say so", replacements: ["say so": "Sayso"]) == "Ship Sayso")
 }
