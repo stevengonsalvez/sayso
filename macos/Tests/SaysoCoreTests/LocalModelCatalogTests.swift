@@ -48,7 +48,12 @@ import Testing
     try FileManager.default.createDirectory(at: install, withIntermediateDirectories: true)
     #expect(LocalModelCatalog.state(for: model, in: root) == .incomplete)
 
-    try Data("model".utf8).write(to: install.appending(path: "model.int8.onnx"))
+    for artifact in model.artifacts {
+        let artifactURL = install.appending(path: artifact.relativePath)
+        try FileManager.default.createDirectory(at: artifactURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("model".utf8).write(to: artifactURL)
+    }
+    try Data(model.id.utf8).write(to: install.appending(path: ".sayso-install-complete"))
     #expect(LocalModelCatalog.state(for: model, in: root) == .installed)
     #expect(LocalModelCatalog.availability(for: model, in: root, environment: .init(hostArchitecture: .appleSilicon, availableEngines: [])) == .unavailable(reason: "Required local runtime is not installed"))
     #expect(LocalModelCatalog.selectable(in: root, environment: readyRuntime).map(\.id) == [model.id])
