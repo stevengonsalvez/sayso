@@ -281,6 +281,24 @@ import Testing
     #expect(ControlPolicy.canAutoRun(step))
 }
 
+@Test func controlPolicyForegroundsOnlyInteractiveTargetActions() {
+    let interactive = [
+        DesktopAction.type(text: "hello", expectedFingerprint: "target"),
+        .scroll(lines: 1, expectedFingerprint: "target"),
+        .press(elementID: "button", expectedFingerprint: "target"),
+        .key(.return, expectedFingerprint: "target"),
+    ]
+    let external = [
+        DesktopAction.open(url: URL(string: "https://example.com")!),
+        .activate(bundleIdentifier: "com.apple.Safari"),
+        .activateApplication(bundleIdentifier: "com.apple.Safari", applicationURL: URL(fileURLWithPath: "/Applications/Safari.app")),
+        .quit(bundleIdentifier: "com.apple.Safari"),
+    ]
+
+    #expect(interactive.allSatisfy { ControlPolicy.requiresActiveTarget(for: $0) })
+    #expect(external.allSatisfy { !ControlPolicy.requiresActiveTarget(for: $0) })
+}
+
 @Test func controlOutcomeRequiresObservedEffect() {
     let before = DesktopSnapshot(
         processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
