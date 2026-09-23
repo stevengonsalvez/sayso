@@ -610,6 +610,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func finishAppleAudioCapture() {
         guard let runID = appleRecognitionRun.current else {
             stopAppleAudioCapture()
+            discardSessionAudio()
             phase = .idle
             terminate(.cancelled)
             return
