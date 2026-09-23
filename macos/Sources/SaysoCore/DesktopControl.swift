@@ -41,7 +41,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     public var fingerprint: String {
         let visibleControls = elements.map { [$0.id, $0.role, $0.title].joined(separator: "\u{1F}") }
             .joined(separator: "\u{1E}")
-        return [String(processIdentifier), applicationName, windowTitle, focusedRole, isProtected.description, visibleControls]
+        return [String(processIdentifier), applicationName, windowTitle, focusedRole, focusedValue, isProtected.description, visibleControls]
             .joined(separator: "|")
     }
 }
@@ -119,6 +119,20 @@ public enum ControlPolicy {
     public static func isDestructiveControlTitle(_ title: String) -> Bool {
         let normalized = title.lowercased()
         return destructiveWords.contains { normalized.contains($0) }
+    }
+}
+
+public enum ControlOutcome {
+    public static func result(for action: DesktopAction, before: DesktopSnapshot, after: DesktopSnapshot?) -> String {
+        guard let after else { return "unknown effect" }
+        switch action {
+        case .type:
+            return after.focusedValue != before.focusedValue ? "observed text change" : "no observed text change"
+        case .press, .scroll:
+            return after.fingerprint != before.fingerprint ? "observed interface change" : "no observed interface change"
+        case .open, .activate, .quit:
+            return "dispatched"
+        }
     }
 }
 
@@ -270,7 +284,7 @@ public final class AXDesktopController: @unchecked Sendable {
             action: step.action,
             beforeFingerprint: before.fingerprint,
             afterFingerprint: after?.fingerprint,
-            result: "verified"
+            result: ControlOutcome.result(for: step.action, before: before, after: after)
         )
         return entry
     }
