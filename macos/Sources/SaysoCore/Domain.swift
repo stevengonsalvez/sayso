@@ -190,6 +190,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var autoCorrectionsEnabled = false
     public var autoCorrectionsPromotionThreshold = 3
     public var dictationProfile: DictationProfile = .default
+    public var dictationProfileOverrides: [DictationProfileBundleOverride] = []
 
     public init() {}
 
@@ -203,7 +204,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
-        case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold, dictationProfile
+        case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
+        case dictationProfile, dictationProfileOverrides
     }
 
     public init(from decoder: any Decoder) throws {
@@ -246,6 +248,18 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
             10
         )
         dictationProfile = decoded(DictationProfile.self, .dictationProfile, fallback: dictationProfile)
+        dictationProfileOverrides = decoded(
+            [DictationProfileBundleOverride].self,
+            .dictationProfileOverrides,
+            fallback: dictationProfileOverrides
+        )
+    }
+
+    public func resolvedDictationProfile(forBundleIdentifier bundleIdentifier: String?) -> DictationProfile {
+        DictationProfileResolver(
+            fallback: dictationProfile,
+            overrides: dictationProfileOverrides
+        ).resolve(forBundleIdentifier: bundleIdentifier)
     }
 }
 
