@@ -37,13 +37,15 @@ public actor HistoryStore {
     private enum LoadResult {
         case missing
         case entries([Transcript])
-        case unreadable
+        case invalid
+        case unavailable
     }
 
     private let fileURL: URL
     private let recordingsDirectory: URL
     private let maximumEntries: Int
     private let fileManager: FileManager
+    private var recoveredInvalidHistory = false
 
     public init(
         fileManager: FileManager = .default,
@@ -88,12 +90,18 @@ public actor HistoryStore {
             existing = []
         case let .entries(entries):
             existing = entries
-        case .unreadable:
+        case .invalid:
             guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   preserveUnreadableHistory() else {
+                if !transcript.isFinal || transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
+                }
                 return false
             }
+            recoveredInvalidHistory = true
             existing = []
+        case .unavailable:
+            return false
         }
         guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
@@ -159,17 +167,16 @@ public actor HistoryStore {
     }
 
     public func reclaimUnreferencedAudio(olderThan: Date? = nil) {
-        guard corruptBackupURLs().isEmpty else { return }
         let entries: [Transcript]
         switch load() {
         case .missing:
             entries = []
         case let .entries(loadedEntries):
             entries = loadedEntries
-        case .unreadable:
+        case .invalid, .unavailable:
             return
         }
-        let retained = Set(entries.compactMap(\.audioFileURL).map(\.standardizedFileURL))
+        let retained = retainedAudioURLs(in: entries + backupEntries())
         SessionAudioArchive.sweepUnreferencedRecordings(
             retaining: retained,
             directory: recordingsDirectory,
@@ -181,6 +188,12 @@ public actor HistoryStore {
     public func plainTextExport() -> String {
         all().reversed().map { "\($0.createdAt.formatted(date: .numeric, time: .shortened))\n\($0.translatedText ?? $0.text)" }
             .joined(separator: "\n\n")
+    }
+
+    /// Returns whether a new append preserved undecodable history as a local backup.
+    public func takeRecoveryNotice() -> Bool {
+        defer { recoveredInvalidHistory = false }
+        return recoveredInvalidHistory
     }
 
     private func persist(_ entries: [Transcript]) -> Bool {
@@ -195,12 +208,9 @@ public actor HistoryStore {
 
     private func load() -> LoadResult {
         guard fileManager.fileExists(atPath: fileURL.path) else { return .missing }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            return .entries(try JSONDecoder().decode([Transcript].self, from: data))
-        } catch {
-            return .unreadable
-        }
+        guard let data = try? Data(contentsOf: fileURL) else { return .unavailable }
+        guard let entries = try? JSONDecoder().decode([Transcript].self, from: data) else { return .invalid }
+        return .entries(entries)
     }
 
     /// Moves undecodable history out of the active path before a fresh append can persist.
@@ -231,6 +241,22 @@ public actor HistoryStore {
         return urls.filter {
             SessionAudioArchive.isManagedRecording($0, directory: recordingsDirectory, fileManager: fileManager)
         }
+    }
+
+    private func backupEntries() -> [Transcript] {
+        corruptBackupURLs().reduce(into: [Transcript]()) { entries, url in
+            guard let data = try? Data(contentsOf: url),
+                  let backup = try? JSONDecoder().decode([Transcript].self, from: data) else {
+                return
+            }
+            entries.append(contentsOf: backup)
+        }
+    }
+
+    private func retainedAudioURLs(in entries: [Transcript]) -> Set<URL> {
+        Set(entries.compactMap(\.audioFileURL).map(\.standardizedFileURL).filter {
+            SessionAudioArchive.isManagedRecording($0, directory: recordingsDirectory, fileManager: fileManager)
+        })
     }
 
     private func clearMissingAudioReference(in transcript: inout Transcript) {
