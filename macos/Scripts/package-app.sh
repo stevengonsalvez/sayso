@@ -23,7 +23,14 @@ for size in 16 32 128 256 512; do
 done
 iconutil --convert icns "$iconset_dir" --output "$app_dir/Contents/Resources/AppIcon.icns"
 
-signing_identity=${SAYSO_CODESIGN_IDENTITY:--}
+if [[ -n "${SAYSO_CODESIGN_IDENTITY:-}" ]]; then
+  signing_identity="$SAYSO_CODESIGN_IDENTITY"
+elif [[ -n "${CI:-}" ]]; then
+  signing_identity="-"
+else
+  signing_identity=$(security find-identity -v -p codesigning 2>/dev/null | sed -n 's/.*"\(Apple Development:.*\)"/\1/p' | head -n 1)
+  signing_identity=${signing_identity:--}
+fi
 codesign --force --options runtime --timestamp --entitlements "$root_dir/Resources/SaysoNotch.entitlements" --sign "$signing_identity" "$app_dir"
 
 if [[ -n "${SAYSO_NOTARY_PROFILE:-}" ]]; then
