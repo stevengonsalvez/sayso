@@ -529,6 +529,7 @@ final class SaysoAppModel: ObservableObject {
         corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
         corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
         corrected.text = corrections.apply(to: corrected.text).transformedText
+        corrected.text = await cleaned(corrected.text, language: corrected.language, settings: currentSettings)
         guard currentSettings.translationEnabled else { return corrected }
         guard currentSettings.cloudConsentGranted else {
             notice = "Translation needs cloud consent and a selected provider."
@@ -551,6 +552,31 @@ final class SaysoAppModel: ObservableObject {
             notice = "Translation unavailable. Inserted original transcript."
         }
         return translated
+    }
+
+    private func cleaned(
+        _ text: String,
+        language: DictationLanguage,
+        settings currentSettings: SaysoSettings
+    ) async -> String {
+        guard currentSettings.cleanupEnabled else { return text }
+        let local = TranscriptCleanup.processLocally(text)
+        guard currentSettings.cloudCleanupEnabled,
+              currentSettings.cloudConsentGranted,
+              let key = secrets.secret(named: "byok-api-key"),
+              let baseURL = URL(string: currentSettings.byokBaseURL),
+              ProviderEndpointPolicy.allows(baseURL),
+              !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return local
+        }
+        do {
+            return try await OpenAICompatibleTranscriptCleaner(
+                baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
+            ).clean(text, language: language)
+        } catch {
+            notice = "Cloud cleanup unavailable. Applied local cleanup."
+            return local
+        }
     }
 
     private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
@@ -1832,6 +1858,22 @@ private struct SaysoSettingsView: View {
                 TextField("Profile name", text: $model.settings.dictationProfile.name)
                 Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
                 Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
+            }
+            Section("Transcript cleanup") {
+                Toggle("Clean final transcripts", isOn: $model.settings.cleanupEnabled)
+                Text("Local cleanup removes blank-audio markers and fixes safe spacing and punctuation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if model.settings.cleanupEnabled {
+                    Toggle("Use your cloud model for cleanup", isOn: $model.settings.cloudCleanupEnabled)
+                        .disabled(!model.settings.cloudConsentGranted)
+                    if model.settings.cloudCleanupEnabled {
+                        TextField("Cleanup model", text: $model.settings.byokCleanupModel)
+                        Text("Transcript text leaves this Mac only with cloud consent and your stored BYOK key.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             Section("Smart corrections") {
                 Toggle("Learn from edits after dictation", isOn: $model.settings.autoCorrectionsEnabled)
