@@ -204,6 +204,16 @@ public actor HistoryStore {
 
     @discardableResult
     public func clear() -> Bool {
+        if fileManager.fileExists(atPath: walURL.path) {
+            switch load() {
+            case .missing, .entries:
+                break
+            case .invalid, .unavailable:
+                return false
+            }
+            guard !fileManager.fileExists(atPath: walURL.path) else { return false }
+        }
+
         var succeeded = true
         let historyFiles = ([fileURL] + corruptBackupURLs())
             .filter { fileManager.fileExists(atPath: $0.path) }
