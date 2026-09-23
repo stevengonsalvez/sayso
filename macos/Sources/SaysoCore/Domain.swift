@@ -133,8 +133,41 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var lexicon: [String: String] = [:]
+    public var dictationProfile: DictationProfile = .default
 
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, overlayPresentation, language, route, translationEnabled, outputLanguage
+        case autoInsert, restoreClipboardAfterPaste, handsFree, soundCues, onboardingCompleted
+        case cloudConsentGranted, desktopControlEnabled, byokBaseURL, byokTranslationModel
+        case lexicon, dictationProfile
+    }
+
+    public init(from decoder: any Decoder) throws {
+        self.init()
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        func decoded<Value: Decodable>(_ type: Value.Type, _ key: CodingKeys, fallback: Value) -> Value {
+            (try? values.decodeIfPresent(type, forKey: key)) ?? fallback
+        }
+        mode = decoded(SaysoMode.self, .mode, fallback: mode)
+        overlayPresentation = decoded(OverlayPresentation.self, .overlayPresentation, fallback: overlayPresentation)
+        language = decoded(DictationLanguage.self, .language, fallback: language)
+        route = decoded(ProviderRoute.self, .route, fallback: route)
+        translationEnabled = decoded(Bool.self, .translationEnabled, fallback: translationEnabled)
+        outputLanguage = decoded(DictationLanguage.self, .outputLanguage, fallback: outputLanguage)
+        autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
+        restoreClipboardAfterPaste = decoded(Bool.self, .restoreClipboardAfterPaste, fallback: restoreClipboardAfterPaste)
+        handsFree = decoded(Bool.self, .handsFree, fallback: handsFree)
+        soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
+        onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
+        cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
+        desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
+        byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
+        byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
+        lexicon = decoded([String: String].self, .lexicon, fallback: lexicon)
+        dictationProfile = decoded(DictationProfile.self, .dictationProfile, fallback: dictationProfile)
+    }
 }
 
 public enum LexiconCorrections {
