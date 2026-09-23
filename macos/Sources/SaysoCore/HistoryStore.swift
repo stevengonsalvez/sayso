@@ -50,20 +50,22 @@ public actor HistoryStore {
     }
 
     private let fileURL: URL
+    private let walURL: URL
     private let recordingsDirectory: URL
-    private let maximumEntries: Int
+    private let maximumEntries: Int?
     private let fileManager: FileManager
     private let persistEntries: @Sendable (Data, URL) -> Bool
 
     public init(
         fileManager: FileManager = .default,
-        maximumEntries: Int = 500,
+        maximumEntries: Int? = nil,
         persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("SaysoNotch", isDirectory: true)
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         self.fileURL = root.appendingPathComponent("history.json")
+        self.walURL = root.appendingPathComponent("history.json.wal")
         self.recordingsDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
         self.fileManager = fileManager
@@ -72,12 +74,13 @@ public actor HistoryStore {
 
     public init(
         fileURL: URL,
-        maximumEntries: Int = 500,
+        maximumEntries: Int? = nil,
         recordingsDirectory: URL? = nil,
         fileManager: FileManager = .default,
         persistEntries: @escaping @Sendable (Data, URL) -> Bool = HistoryStore.write
     ) {
         self.fileURL = fileURL
+        self.walURL = fileURL.appendingPathExtension("wal")
         self.recordingsDirectory = recordingsDirectory
             ?? fileURL.deletingLastPathComponent().appendingPathComponent("Recordings", isDirectory: true)
         self.maximumEntries = maximumEntries
@@ -153,8 +156,13 @@ public actor HistoryStore {
         discarded += entries.filter { $0.id == transcript.id }
         entries.removeAll { $0.id == transcript.id }
         entries.insert(transcript, at: 0)
-        let expired = entries.count > maximumEntries ? entries.suffix(entries.count - maximumEntries) : []
-        if !expired.isEmpty { entries.removeLast(expired.count) }
+        let expired: [Transcript]
+        if let maximumEntries, entries.count > maximumEntries {
+            expired = Array(entries.suffix(entries.count - maximumEntries))
+            entries.removeLast(expired.count)
+        } else {
+            expired = []
+        }
         discarded += expired
         guard persist(entries) else {
             releaseManagedAudio(
@@ -183,7 +191,9 @@ public actor HistoryStore {
     @discardableResult
     public func clear() -> Bool {
         var succeeded = true
-        let historyFiles = ([fileURL] + corruptBackupURLs())
+        guard persist([]) else { return false }
+
+        let historyFiles = ([fileURL, walURL] + corruptBackupURLs() + corruptWALBackupURLs())
             .filter { fileManager.fileExists(atPath: $0.path) }
         for url in Set(historyFiles.map(\.standardizedFileURL)) {
             do {
@@ -230,7 +240,9 @@ public actor HistoryStore {
 
     private func persist(_ entries: [Transcript]) -> Bool {
         guard let data = try? JSONEncoder().encode(entries) else { return false }
-        return persistEntries(data, fileURL)
+        guard writeWAL(data), persistEntries(data, fileURL) else { return false }
+        try? fileManager.removeItem(at: walURL)
+        return true
     }
 
     public static func write(_ data: Data, _ fileURL: URL) -> Bool {
@@ -243,10 +255,40 @@ public actor HistoryStore {
     }
 
     private func load() -> LoadResult {
+        let snapshot = loadSnapshot()
+        guard fileManager.fileExists(atPath: walURL.path) else { return snapshot }
+        guard let data = try? Data(contentsOf: walURL) else { return .unavailable }
+        guard let entries = try? JSONDecoder().decode([Transcript].self, from: data) else {
+            guard preserveUnreadableWAL() else { return .unavailable }
+            return snapshot
+        }
+
+        if case .invalid = snapshot {
+            _ = preserveUnreadableHistory()
+        }
+        if persistEntries(data, fileURL) {
+            try? fileManager.removeItem(at: walURL)
+        }
+        return .entries(entries)
+    }
+
+    private func loadSnapshot() -> LoadResult {
         guard fileManager.fileExists(atPath: fileURL.path) else { return .missing }
         guard let data = try? Data(contentsOf: fileURL) else { return .unavailable }
         guard let entries = try? JSONDecoder().decode([Transcript].self, from: data) else { return .invalid }
         return .entries(entries)
+    }
+
+    private func writeWAL(_ data: Data) -> Bool {
+        do {
+            try data.write(to: walURL, options: .atomic)
+            let handle = try FileHandle(forWritingTo: walURL)
+            try handle.synchronize()
+            try handle.close()
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Moves undecodable history out of the active path before a fresh append can persist.
@@ -261,15 +303,41 @@ public actor HistoryStore {
     }
 
     private func corruptBackupURLs() -> [URL] {
+        corruptBackupURLs(for: fileURL)
+    }
+
+    private func corruptWALBackupURLs() -> [URL] {
+        corruptBackupURLs(for: walURL)
+    }
+
+    private func corruptBackupURLs(for sourceURL: URL) -> [URL] {
         let parent = fileURL.deletingLastPathComponent()
-        let prefix = "\(fileURL.lastPathComponent).corrupt-"
+        let prefix = "\(sourceURL.lastPathComponent).corrupt-"
         return ((try? fileManager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.lastPathComponent.hasPrefix(prefix) }
     }
 
     private func nextCorruptBackupURL() -> URL {
-        fileURL.deletingLastPathComponent()
-            .appendingPathComponent("\(fileURL.lastPathComponent).corrupt-\(UUID().uuidString)")
+        nextCorruptBackupURL(for: fileURL)
+    }
+
+    private func nextCorruptWALBackupURL() -> URL {
+        nextCorruptBackupURL(for: walURL)
+    }
+
+    private func nextCorruptBackupURL(for sourceURL: URL) -> URL {
+        sourceURL.deletingLastPathComponent()
+            .appendingPathComponent("\(sourceURL.lastPathComponent).corrupt-\(UUID().uuidString)")
+    }
+
+    private func preserveUnreadableWAL() -> Bool {
+        guard fileManager.fileExists(atPath: walURL.path) else { return false }
+        do {
+            try fileManager.moveItem(at: walURL, to: nextCorruptWALBackupURL())
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func managedRecordings() -> [URL] {
@@ -296,12 +364,12 @@ public actor HistoryStore {
     }
 
     private func audioURLsNamedInBackups() -> Set<URL> {
-        audioURLsNamed(in: corruptBackupURLs())
+        audioURLsNamed(in: corruptBackupURLs() + corruptWALBackupURLs())
     }
 
     private func recoverableAudioURLs() -> Set<URL> {
         retainedAudioURLs(in: backupEntries())
-            .union(audioURLsNamed(in: [fileURL] + corruptBackupURLs()))
+            .union(audioURLsNamed(in: [fileURL, walURL] + corruptBackupURLs() + corruptWALBackupURLs()))
     }
 
     private func audioURLsNamed(in sourceURLs: [URL]) -> Set<URL> {
