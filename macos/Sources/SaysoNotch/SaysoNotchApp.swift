@@ -135,8 +135,10 @@ final class SaysoAppModel: ObservableObject {
     @Published var selectedTab = 0
     @Published var notice: String? {
         didSet {
+            let isPersistent = nextNoticeIsPersistent
+            nextNoticeIsPersistent = false
             noticeDismissalTask?.cancel()
-            guard let notice, !Self.noticeRequiresDismissal(notice) else { return }
+            guard notice != nil, !isPersistent else { return }
             noticeDismissalTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(6))
                 guard !Task.isCancelled else { return }
@@ -187,6 +189,7 @@ final class SaysoAppModel: ObservableObject {
     private var controlPreparationID: UUID?
     private var historyAudioTask: Task<Void, Never>?
     private var noticeDismissalTask: Task<Void, Never>?
+    private var nextNoticeIsPersistent = false
     private var reopenObserver: NSObjectProtocol?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
@@ -272,10 +275,9 @@ final class SaysoAppModel: ObservableObject {
 
     private static let dictationHotKeyDefaultsKey = "sayso.dictation-hotkey"
 
-    private static func noticeRequiresDismissal(_ notice: String) -> Bool {
-        notice.contains("Grant it in Settings")
-            || notice.contains("Configure ")
-            || notice.contains("Confirm ")
+    private func showPersistentNotice(_ message: String) {
+        nextNoticeIsPersistent = true
+        notice = message
     }
 
     private static func loadDictationHotKey() -> HotKey {
@@ -370,17 +372,17 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         guard settings.voiceEditCloudConsent else {
-            notice = "Confirm selected-text cloud consent in Settings before voice edit."
+            showPersistentNotice("Confirm selected-text cloud consent in Settings before voice edit.")
             return
         }
         guard secrets.secret(named: "byok-api-key") != nil,
               let baseURL = URL(string: settings.byokBaseURL),
               ProviderEndpointPolicy.allows(baseURL) else {
-            notice = "Configure a compatible BYOK provider before voice edit."
+            showPersistentNotice("Configure a compatible BYOK provider before voice edit.")
             return
         }
         guard let capture = SelectedTextEdit.capture() else {
-            notice = "Select editable text in another app before voice edit."
+            showPersistentNotice("Select editable text in another app before voice edit.")
             return
         }
         lastVoiceEditRewrite = nil
@@ -461,7 +463,7 @@ final class SaysoAppModel: ObservableObject {
             return false
         }
         guard await permissions.authorize(.microphone) == .granted else {
-            notice = "Microphone access is required before Sayso can listen. Grant it in Settings."
+            showPersistentNotice("Microphone access is required before Sayso can listen. Grant it in Settings.")
             failActiveSession(notice ?? "Microphone access denied")
             return false
         }
@@ -472,7 +474,7 @@ final class SaysoAppModel: ObservableObject {
         }
         if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
             guard await permissions.authorize(.speechRecognition) == .granted else {
-                notice = "Speech Recognition access is required before Sayso can transcribe. Grant it in Settings."
+                showPersistentNotice("Speech Recognition access is required before Sayso can transcribe. Grant it in Settings.")
                 failActiveSession(notice ?? "Speech Recognition access denied")
                 return false
             }
@@ -949,7 +951,7 @@ final class SaysoAppModel: ObservableObject {
     func saveBYOKKey(_ key: String) {
         guard !key.isEmpty else { return }
         guard let baseURL = URL(string: settings.byokBaseURL), ProviderEndpointPolicy.allows(baseURL) else {
-            notice = "BYOK provider must use HTTPS, except localhost HTTP."
+            showPersistentNotice("BYOK provider must use HTTPS, except localhost HTTP.")
             return
         }
         do {
