@@ -992,6 +992,9 @@ final class SaysoAppModel: ObservableObject {
             )
             reprocessed.audioFileURL = audioFileURL
             let completed = await translated(reprocessed, settings: settingsSnapshot)
+            guard !completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SaysoError.invalidAction("No speech detected.")
+            }
             guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
                 throw SaysoError.unavailable("Saved audio was removed during reprocessing")
             }
@@ -1004,6 +1007,7 @@ final class SaysoAppModel: ObservableObject {
             setTranscriptCompletionNotice("Reprocessed transcript saved as a new history item.")
             transcriptProcessingNotice = nil
         } catch {
+            transcriptProcessingNotice = nil
             notice = "Could not reprocess saved audio: \(error.localizedDescription)"
         }
     }
@@ -1023,6 +1027,7 @@ final class SaysoAppModel: ObservableObject {
         var importedCount = 0
         var failedCount = 0
         var lastFailure: String?
+        var processingWarnings = Set<String>()
 
         for sourceURL in sourceURLs {
             let accessed = sourceURL.startAccessingSecurityScopedResource()
@@ -1040,10 +1045,16 @@ final class SaysoAppModel: ObservableObject {
                 )
                 transcript.audioFileURL = importedURL
                 let completed = await translated(transcript, settings: settingsSnapshot)
+                guard !completed.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw SaysoError.invalidAction("No speech detected.")
+                }
                 guard await history.append(completed) else {
                     throw SaysoError.unavailable("History storage")
                 }
                 lastTranscript = completed
+                if let transcriptProcessingNotice {
+                    processingWarnings.insert(transcriptProcessingNotice)
+                }
                 transcriptProcessingNotice = nil
                 importedCount += 1
             } catch {
@@ -1056,13 +1067,16 @@ final class SaysoAppModel: ObservableObject {
             }
         }
 
+        let processingWarningSuffix = processingWarnings.isEmpty
+            ? ""
+            : " \(processingWarnings.sorted().joined(separator: " "))"
         switch (importedCount, failedCount) {
         case (0, _):
             notice = "Could not import the selected audio."
         case (_, 0):
-            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files") into history."
+            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files") into history.\(processingWarningSuffix)"
         default:
-            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be imported: \(lastFailure ?? "Unknown error")"
+            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be imported: \(lastFailure ?? "Unknown error").\(processingWarningSuffix)"
         }
     }
 
