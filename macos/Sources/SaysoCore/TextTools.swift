@@ -40,10 +40,12 @@ public enum TextOutput {
     public final class Destination {
         fileprivate let field: AXUIElement
         fileprivate let processIdentifier: pid_t
+        public let recordingDestination: RecordingDestination
 
-        fileprivate init(field: AXUIElement, processIdentifier: pid_t) {
+        fileprivate init(field: AXUIElement, processIdentifier: pid_t, recordingDestination: RecordingDestination) {
             self.field = field
             self.processIdentifier = processIdentifier
+            self.recordingDestination = recordingDestination
         }
     }
 
@@ -62,7 +64,20 @@ public enum TextOutput {
         var fieldProcessIdentifier: pid_t = 0
         AXUIElementGetPid(field, &fieldProcessIdentifier)
         guard fieldProcessIdentifier == targetProcessIdentifier, !isProtected(field) else { return nil }
-        return Destination(field: field, processIdentifier: targetProcessIdentifier)
+        let role = copyAttribute(kAXRoleAttribute as CFString, from: field) as? String ?? "Unknown"
+        let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
+        let windowTitle = window.flatMap { copyAttribute(kAXTitleAttribute as CFString, from: $0) as? String } ?? ""
+        let name = NSRunningApplication(processIdentifier: targetProcessIdentifier)?.localizedName ?? "Unknown"
+        return Destination(
+            field: field,
+            processIdentifier: targetProcessIdentifier,
+            recordingDestination: .init(
+                processIdentifier: targetProcessIdentifier,
+                applicationName: name,
+                fieldRole: role,
+                windowTitle: windowTitle
+            )
+        )
     }
 
     @discardableResult
@@ -70,29 +85,29 @@ public enum TextOutput {
         _ text: String,
         destination: Destination?,
         restoreClipboardAfterPaste: Bool = true
-    ) -> Bool {
+    ) -> TextDeliveryMethod {
         guard AXIsProcessTrusted(), let destination else {
             copy(text)
-            return false
+            return .clipboard
         }
         var fieldProcessIdentifier: pid_t = 0
         AXUIElementGetPid(destination.field, &fieldProcessIdentifier)
         guard fieldProcessIdentifier == destination.processIdentifier else {
             copy(text)
-            return false
+            return .clipboard
         }
         guard !isProtected(destination.field) else {
             copy(text)
-            return false
+            return .clipboard
         }
         let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-        if setResult == .success { return true }
+        if setResult == .success { return .directInsertion }
 
         guard paste(text, into: destination.processIdentifier, restoreClipboardAfterPaste: restoreClipboardAfterPaste) else {
             copy(text)
-            return false
+            return .clipboard
         }
-        return true
+        return .pidPaste
     }
 
     private static func paste(
@@ -147,5 +162,16 @@ public enum TextOutput {
         var subrole: CFTypeRef?
         _ = AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole)
         return (subrole as? String) == (kAXSecureTextFieldSubrole as String)
+    }
+
+    private static func copyAttribute(_ attribute: CFString, from element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+        return value
+    }
+
+    private static func copyElement(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
+        guard let value = copyAttribute(attribute, from: element) else { return nil }
+        return unsafeDowncast(value, to: AXUIElement.self)
     }
 }
