@@ -8,7 +8,7 @@ private enum SaysoMCP {
     static var tools: [[String: Any]] { [
         [
             "name": AutomationCommand.status.rawValue,
-            "description": "Return Sayso Notch readiness. After start_dictation, require sessionActive true before speaking. text reports dictation=preparing, listening, failed, or idle.",
+            "description": "Return Sayso Notch readiness. After start_dictation, require sessionActive true before speaking. text reports dictation=preparing, listening, failed, or idle. After preparing, failed and idle are terminal states.",
             "inputSchema": ["type": "object", "properties": [:]]
         ],
         [
@@ -32,7 +32,7 @@ private enum SaysoMCP {
         ],
         [
             "name": AutomationCommand.startDictation.rawValue,
-            "description": "Begin Sayso Notch dictation. This accepts preparation only. Poll status: wait for sessionActive true, or stop when text reports dictation=failed.",
+            "description": "Begin Sayso Notch dictation. This accepts preparation only. Poll status: wait for sessionActive true. After preparing, text dictation=failed or idle is terminal.",
             "inputSchema": ["type": "object", "properties": [:]]
         ],
         [
