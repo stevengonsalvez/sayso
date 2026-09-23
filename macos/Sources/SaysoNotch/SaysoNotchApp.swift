@@ -226,6 +226,10 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func switchMode(_ mode: SaysoMode) {
+        guard mode == settings.mode || (transcriber.phase != .listening && transcriber.phase != .processing) else {
+            notice = "Stop dictation before changing modes."
+            return
+        }
         settings.mode = mode
         save()
         notch.show()
