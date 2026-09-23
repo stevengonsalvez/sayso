@@ -19,6 +19,7 @@ public enum ControlSessionPhase: String, Codable, Equatable, Sendable {
 public enum ControlSessionResult: String, Codable, Equatable, Sendable {
     case completed
     case cancelled
+    case failed
     case actionBudgetExhausted
     case noEffectBudgetExhausted
 }
@@ -103,6 +104,13 @@ public actor ControlSession {
     public func cancel() -> ControlSessionState {
         guard phase == .running else { return state() }
         finish(.cancelled)
+        return state()
+    }
+
+    @discardableResult
+    public func fail() -> ControlSessionState {
+        guard phase == .running else { return state() }
+        finish(.failed)
         return state()
     }
 
