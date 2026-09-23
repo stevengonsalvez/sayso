@@ -61,6 +61,14 @@ public enum TextOutput {
         }
         let field = unsafeDowncast(element, to: AXUIElement.self)
         guard !isProtected(field) else { return false }
+        if let targetProcessIdentifier {
+            var focusedProcessIdentifier: pid_t = 0
+            AXUIElementGetPid(field, &focusedProcessIdentifier)
+            guard focusedProcessIdentifier == targetProcessIdentifier else {
+                copy(text)
+                return false
+            }
+        }
         let setResult = AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
         if setResult == .success { return true }
 
