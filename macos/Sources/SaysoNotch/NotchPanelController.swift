@@ -196,14 +196,15 @@ private struct NotchHUD: View {
                     model.startOrStopDictation()
                 } label: {
                     Label(
-                        model.transcriber.phase == .listening ? "Stop listening" : "Start dictation",
-                        systemImage: model.transcriber.phase == .listening ? "stop.fill" : "mic.fill"
+                        model.transcriber.canStop ? "Stop listening" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation",
+                        systemImage: model.transcriber.canStop ? "stop.fill" : model.transcriber.canStart ? "mic.fill" : "ellipsis"
                     )
                     .font(.callout.weight(.bold))
                     .frame(maxWidth: .infinity, minHeight: 34)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(model.transcriber.phase == .listening ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .tint(model.transcriber.canStop ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
             }
             .padding(.horizontal, 16)
             .padding(.top, 38)
