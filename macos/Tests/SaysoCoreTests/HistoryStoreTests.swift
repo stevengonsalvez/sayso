@@ -45,12 +45,23 @@ import Testing
         route: .appleSpeech,
         isFinal: true
     )
-    let entries = [onDeviceRecording, translated]
+    let provider = Transcript(text: "Provider", language: .english, route: .byok, isFinal: true)
+    let emptyTranslation = Transcript(
+        text: "Fallback",
+        translatedText: "   ",
+        language: .english,
+        route: .local,
+        isFinal: true
+    )
+    let entries = [onDeviceRecording, translated, provider, emptyTranslation]
 
-    #expect(HistoryFilter.matching(entries, query: "", scope: .onDevice).map(\.id) == [onDeviceRecording.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .onDevice).map(\.id) == [onDeviceRecording.id, emptyTranslation.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .appleSpeech).map(\.id) == [translated.id])
+    #expect(HistoryFilter.matching(entries, query: "", scope: .yourProvider).map(\.id) == [provider.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .translated).map(\.id) == [translated.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .recordings).map(\.id) == [onDeviceRecording.id])
+    #expect(!emptyTranslation.hasTranslation)
+    #expect(emptyTranslation.displayText == "Fallback")
 }
 
 @Test func historyReplaysJournalAfterSnapshotWriteFailure() async throws {
