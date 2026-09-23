@@ -457,8 +457,35 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
         audioFileURL: existingAudioURL
     )
 
-    #expect(await store.appendResult(reprocessed) == .failed)
+    #expect(await store.appendResult(reprocessed) == .recovered)
     #expect(FileManager.default.fileExists(atPath: existingAudioURL.path))
+}
+
+@Test func journaledHistoryAppendRetainsAudioUntilReplay() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let audioURL = try finishedManagedRecording(in: recordingDirectory)
+    let transcript = Transcript(
+        text: "Durable recording",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: audioURL
+    )
+    let journaledStore = HistoryStore(
+        fileURL: historyURL,
+        recordingsDirectory: recordingDirectory,
+        persistEntries: { _, _ in false }
+    )
+
+    #expect(await journaledStore.appendResult(transcript) == .saved)
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
+
+    let recoveredStore = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+    #expect(await recoveredStore.all().first == transcript)
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
 }
 
 @Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
