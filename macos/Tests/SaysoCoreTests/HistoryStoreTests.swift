@@ -48,12 +48,12 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: fileURL.appendingPathExtension("wal").path))
 }
 
-@Test func historyKeepsMoreThanFiveHundredEntriesByDefault() async throws {
+@Test func historyKeepsMoreThanFiveHundredEntriesWhenUnbounded() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let fileURL = root.appendingPathComponent("history.json")
-    let store = HistoryStore(fileURL: fileURL)
+    let store = HistoryStore(fileURL: fileURL, maximumEntries: nil)
 
     for index in 0...500 {
         #expect(await store.append(.init(text: "Entry \(index)", language: .english, route: .local, isFinal: true)))
