@@ -51,7 +51,7 @@ public enum HistoryFilter {
         return scoped.filter { transcript in
             [
                 transcript.text,
-                transcript.translatedText,
+                transcript.displayText,
                 transcript.language.displayName,
                 transcript.route.displayName
             ]
@@ -308,7 +308,7 @@ public actor HistoryStore {
     }
 
     public func plainTextExport() -> String {
-        all().reversed().map { "\($0.createdAt.formatted(date: .numeric, time: .shortened))\n\($0.translatedText ?? $0.text)" }
+        all().reversed().map { "\($0.createdAt.formatted(date: .numeric, time: .shortened))\n\($0.displayText)" }
             .joined(separator: "\n\n")
     }
 
