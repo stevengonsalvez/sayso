@@ -172,7 +172,8 @@ public actor HistoryStore {
             expired = []
         }
         discarded += expired
-        guard persist(entries).didCommit else {
+        let persistResult = persist(entries)
+        guard persistResult.didCommit else {
             releaseManagedAudio(
                 [transcript.audioFileURL],
                 retaining: recovered ? recoverableAudioURLs() : [],
@@ -180,7 +181,9 @@ public actor HistoryStore {
             )
             return .failed
         }
-        releaseManagedAudio(discarded.map(\.audioFileURL), unlessReferencedBy: entries)
+        if persistResult == .snapshot {
+            releaseManagedAudio(discarded.map(\.audioFileURL), unlessReferencedBy: entries)
+        }
         return recovered ? .recovered : .saved
     }
 
@@ -191,16 +194,17 @@ public actor HistoryStore {
         let removed = entries.filter { $0.id == id }
         let originalCount = entries.count
         entries.removeAll { $0.id == id }
-        guard entries.count != originalCount, persist(entries).didCommit else { return false }
-        releaseManagedAudio(removed.map(\.audioFileURL), unlessReferencedBy: entries)
+        let persistResult = persist(entries)
+        guard entries.count != originalCount, persistResult.didCommit else { return false }
+        if persistResult == .snapshot {
+            releaseManagedAudio(removed.map(\.audioFileURL), unlessReferencedBy: entries)
+        }
         return true
     }
 
     @discardableResult
     public func clear() -> Bool {
         var succeeded = true
-        guard persist([]).didCommit else { return false }
-
         let historyFiles = ([fileURL] + corruptBackupURLs())
             .filter { fileManager.fileExists(atPath: $0.path) }
         for url in Set(historyFiles.map(\.standardizedFileURL)) {
@@ -289,6 +293,9 @@ public actor HistoryStore {
         }
         if persistEntries(data, fileURL) {
             try? fileManager.removeItem(at: walURL)
+            if case let .entries(previousEntries) = snapshot {
+                releaseManagedAudio(previousEntries.map(\.audioFileURL), unlessReferencedBy: entries)
+            }
         }
         return .entries(entries)
     }
