@@ -73,7 +73,7 @@ public final class SherpaPunjabiModelManager: ObservableObject {
                     availableEngines: [.sherpaONNX]
                 )
             )
-            refresh()
+            state = .installed
         } catch {
             state = .failed(error.localizedDescription)
         }
