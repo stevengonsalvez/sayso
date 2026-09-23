@@ -34,6 +34,16 @@ import Testing
     #expect(settings.speechLanguage == .english)
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
+    #expect(settings.dictationProfileOverrides.isEmpty)
+
+    let appProfile = DictationProfile(id: "mail", name: "Mail", capitalizesSentences: true)
+    var profileSettings = SaysoSettings()
+    profileSettings.dictationProfile = .init(id: "default", name: "Default")
+    profileSettings.dictationProfileOverrides = [
+        .init(bundleIdentifier: "com.apple.mail", profile: appProfile),
+    ]
+    #expect(profileSettings.resolvedDictationProfile(forBundleIdentifier: "COM.APPLE.MAIL") == appProfile)
+    #expect(profileSettings.resolvedDictationProfile(forBundleIdentifier: "com.apple.notes") == profileSettings.dictationProfile)
 
     let translatedLegacy = Data("{\"outputLanguage\":\"hi-IN\",\"speechRate\":0.9}".utf8)
     let migrated = try JSONDecoder().decode(SaysoSettings.self, from: translatedLegacy)
