@@ -33,6 +33,14 @@ public struct HistoryInsights: Equatable, Sendable {
     }
 }
 
+public enum HistoryAppendResult: Equatable, Sendable {
+    case saved
+    case recovered
+    case failed
+
+    public var didSave: Bool { self != .failed }
+}
+
 public actor HistoryStore {
     private enum LoadResult {
         case missing
@@ -45,7 +53,6 @@ public actor HistoryStore {
     private let recordingsDirectory: URL
     private let maximumEntries: Int
     private let fileManager: FileManager
-    private var recoveredInvalidHistory = false
 
     public init(
         fileManager: FileManager = .default,
@@ -84,28 +91,37 @@ public actor HistoryStore {
 
     @discardableResult
     public func append(_ transcript: Transcript) -> Bool {
+        appendResult(transcript).didSave
+    }
+
+    @discardableResult
+    public func appendResult(_ transcript: Transcript) -> HistoryAppendResult {
         let existing: [Transcript]
+        let recovered: Bool
         switch load() {
         case .missing:
             existing = []
+            recovered = false
         case let .entries(entries):
             existing = entries
+            recovered = false
         case .invalid:
-            guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  preserveUnreadableHistory() else {
-                if !transcript.isFinal || transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
-                }
-                return false
+            guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
+                return .failed
             }
-            recoveredInvalidHistory = true
+            guard preserveUnreadableHistory() else {
+                releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
+                return .failed
+            }
             existing = []
+            recovered = true
         case .unavailable:
-            return false
+            return .failed
         }
         guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
-            return false
+            return .failed
         }
 
         var transcript = transcript
@@ -128,10 +144,10 @@ public actor HistoryStore {
         discarded += expired
         guard persist(entries) else {
             releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
-            return false
+            return .failed
         }
         releaseManagedAudio(discarded.map(\.audioFileURL), unlessReferencedBy: entries)
-        return true
+        return recovered ? .recovered : .saved
     }
 
     @discardableResult
@@ -176,7 +192,9 @@ public actor HistoryStore {
         case .invalid, .unavailable:
             return
         }
-        let retained = retainedAudioURLs(in: entries + backupEntries())
+        let retained = retainedAudioURLs(in: entries)
+            .union(retainedAudioURLs(in: backupEntries()))
+            .union(audioURLsNamedInBackups())
         SessionAudioArchive.sweepUnreferencedRecordings(
             retaining: retained,
             directory: recordingsDirectory,
@@ -188,12 +206,6 @@ public actor HistoryStore {
     public func plainTextExport() -> String {
         all().reversed().map { "\($0.createdAt.formatted(date: .numeric, time: .shortened))\n\($0.translatedText ?? $0.text)" }
             .joined(separator: "\n\n")
-    }
-
-    /// Returns whether a new append preserved undecodable history as a local backup.
-    public func takeRecoveryNotice() -> Bool {
-        defer { recoveredInvalidHistory = false }
-        return recoveredInvalidHistory
     }
 
     private func persist(_ entries: [Transcript]) -> Bool {
@@ -258,6 +270,25 @@ public actor HistoryStore {
             SessionAudioArchive.isManagedRecording($0, directory: recordingsDirectory, fileManager: fileManager)
         })
     }
+
+    private func audioURLsNamedInBackups() -> Set<URL> {
+        var urls = Set<URL>()
+        for backupURL in corruptBackupURLs() {
+            let text = String(decoding: (try? Data(contentsOf: backupURL)) ?? Data(), as: UTF8.self)
+            let range = NSRange(text.startIndex..., in: text)
+            for match in Self.recordingNamePattern.matches(in: text, range: range) {
+                guard let matchRange = Range(match.range, in: text) else { continue }
+                let url = recordingsDirectory.appendingPathComponent(String(text[matchRange])).standardizedFileURL
+                guard SessionAudioArchive.isManagedRecording(url, directory: recordingsDirectory, fileManager: fileManager) else { continue }
+                urls.insert(url)
+            }
+        }
+        return urls
+    }
+
+    private static let recordingNamePattern = try! NSRegularExpression(
+        pattern: #"(?i)\bRecording-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:m4a|caf)\b"#
+    )
 
     private func clearMissingAudioReference(in transcript: inout Transcript) {
         guard let url = transcript.audioFileURL,
