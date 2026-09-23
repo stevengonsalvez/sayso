@@ -42,7 +42,7 @@ public enum SpeechCapabilities {
     }
 }
 
-private final class AudioLevelReporter: @unchecked Sendable {
+private final class AudioLevelReporter: Sendable {
     private let receive: @MainActor @Sendable (Float) -> Void
 
     init(receive: @escaping @MainActor @Sendable (Float) -> Void) {
@@ -51,6 +51,35 @@ private final class AudioLevelReporter: @unchecked Sendable {
 
     func report(_ level: Float) {
         Task { @MainActor [receive] in receive(level) }
+    }
+}
+
+private func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
+    guard let samples = buffer.floatChannelData?[0] else { return 0 }
+    var level: Float = 0
+    for index in 0..<Int(buffer.frameLength) {
+        level = Swift.max(level, abs(samples[index]))
+    }
+    return level
+}
+
+private func makeSpeechTap(
+    request: SFSpeechAudioBufferRecognitionRequest,
+    levelReporter: AudioLevelReporter
+) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { [weak request, levelReporter] buffer, _ in
+        request?.append(buffer)
+        levelReporter.report(audioLevel(in: buffer))
+    }
+}
+
+private func makePumpTap(
+    pump: FluidAudioBufferPump,
+    levelReporter: AudioLevelReporter
+) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { [pump, levelReporter] buffer, _ in
+        pump.submit(buffer)
+        levelReporter.report(audioLevel(in: buffer))
     }
 }
 
@@ -193,10 +222,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
         let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-        input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak request, levelReporter] buffer, _ in
-            request?.append(buffer)
-            levelReporter.report(Self.audioLevel(in: buffer))
-        }
+        input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makeSpeechTap(request: request, levelReporter: levelReporter))
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, recognitionError in
             Task { @MainActor [weak self] in
@@ -252,15 +278,6 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             guard !Task.isCancelled else { return }
             self?.stop()
         }
-    }
-
-    private nonisolated static func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
-        guard let samples = buffer.floatChannelData?[0] else { return 0 }
-        var level: Float = 0
-        for index in 0..<Int(buffer.frameLength) {
-            level = Swift.max(level, abs(samples[index]))
-        }
-        return level
     }
 
     private func receiveAppleRecognition(
@@ -337,10 +354,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [pump, levelReporter] buffer, _ in
-                pump.submit(buffer)
-                levelReporter.report(Self.audioLevel(in: buffer))
-            }
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makePumpTap(pump: pump, levelReporter: levelReporter))
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
@@ -387,10 +401,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [pump, levelReporter] buffer, _ in
-                pump.submit(buffer)
-                levelReporter.report(Self.audioLevel(in: buffer))
-            }
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format, block: makePumpTap(pump: pump, levelReporter: levelReporter))
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
