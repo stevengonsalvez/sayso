@@ -20,7 +20,12 @@ struct SaysoNotchApp: App {
             self.instanceLock = nil
         case .held:
             Self.activateExistingInstance()
-            DistributedNotificationCenter.default().post(name: saysoReopenNotification, object: nil)
+            DistributedNotificationCenter.default().postNotificationName(
+                saysoReopenNotification,
+                object: nil,
+                userInfo: nil,
+                deliverImmediately: true
+            )
             exit(0)
         }
         _model = StateObject(wrappedValue: SaysoAppModel())
@@ -131,7 +136,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var notice: String? {
         didSet {
             noticeDismissalTask?.cancel()
-            guard notice != nil else { return }
+            guard let notice, !Self.noticeRequiresDismissal(notice) else { return }
             noticeDismissalTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(6))
                 guard !Task.isCancelled else { return }
@@ -266,6 +271,12 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private static let dictationHotKeyDefaultsKey = "sayso.dictation-hotkey"
+
+    private static func noticeRequiresDismissal(_ notice: String) -> Bool {
+        notice.contains("Grant it in Settings")
+            || notice.contains("Configure ")
+            || notice.contains("Confirm ")
+    }
 
     private static func loadDictationHotKey() -> HotKey {
         guard let data = UserDefaults.standard.data(forKey: dictationHotKeyDefaultsKey),
@@ -1051,12 +1062,12 @@ final class SaysoAppModel: ObservableObject {
         return true
     }
 
-    func speak(_ text: String) {
-        let language = settings.speechLanguage
+    func speak(_ text: String, language: DictationLanguage? = nil) {
+        let resolvedLanguage = language ?? settings.speechLanguage
         speech.speak(
             text,
-            language: language,
-            voiceIdentifier: selectedVoice(for: language),
+            language: resolvedLanguage,
+            voiceIdentifier: selectedVoice(for: resolvedLanguage),
             rate: settings.speechRate
         )
     }
@@ -1068,7 +1079,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func selectedVoice(for language: DictationLanguage) -> String? {
-        settings.speechVoiceIdentifier.flatMap { selected in
+        guard language != .automatic else { return nil }
+        return settings.speechVoiceIdentifier.flatMap { selected in
             SpeechOutput.availableVoices(for: language).contains(where: { $0.id == selected }) ? selected : nil
         }
     }
@@ -1672,6 +1684,7 @@ private struct VoiceOutputWorkspace: View {
     @State private var text = ""
     @State private var historyEntries: [Transcript] = []
     @State private var historyID: Transcript.ID?
+    @State private var sourceLanguage: DictationLanguage?
     @State private var voices: [SpeechOutput.Voice] = []
 
     var body: some View {
@@ -1702,6 +1715,7 @@ private struct VoiceOutputWorkspace: View {
                         return
                     }
                     text = transcript.displayText
+                    sourceLanguage = transcript.spokenLanguage(outputLanguage: model.settings.outputLanguage)
                 }
                 .disabled(model.lastTranscript == nil)
                 Button("Use clipboard") {
@@ -1710,6 +1724,7 @@ private struct VoiceOutputWorkspace: View {
                         return
                     }
                     text = clipboard
+                    sourceLanguage = nil
                 }
                 Button {
                     Task { await refreshHistory() }
@@ -1725,7 +1740,10 @@ private struct VoiceOutputWorkspace: View {
                 }
                 .pickerStyle(.menu)
                 .onChange(of: historyID) { _, id in
-                    if let entry = historyEntries.first(where: { $0.id == id }) { text = entry.displayText }
+                    if let entry = historyEntries.first(where: { $0.id == id }) {
+                        text = entry.displayText
+                        sourceLanguage = entry.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+                    }
                 }
             }
             .buttonStyle(.bordered)
@@ -1774,7 +1792,7 @@ private struct VoiceOutputWorkspace: View {
             .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
             HStack {
                 Button {
-                    model.speak(text)
+                    model.speak(text, language: sourceLanguage)
                 } label: {
                     Label("Speak", systemImage: "play.fill")
                 }
