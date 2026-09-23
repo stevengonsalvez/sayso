@@ -1283,7 +1283,7 @@ private struct HistoryWorkspace: View {
                 Label("\(insights.words) words", systemImage: "textformat")
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
-                Button("Copy export") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
+                Button("Copy all history") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
                 Button("Clear all history", role: .destructive) { confirmClear = true }
             }
             .font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal)
