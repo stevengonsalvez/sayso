@@ -248,6 +248,7 @@ final class SaysoAppModel: ObservableObject {
         lastVoiceEditRewrite = nil
         switch reserveDictationStart() {
         case .reserved:
+            voiceEditCapture = capture
             Task { _ = await performDictationStart(voiceEditCapture: capture) }
         case let .rejected(_, message):
             notice = message
@@ -700,6 +701,10 @@ final class SaysoAppModel: ObservableObject {
 
     func saveBYOKKey(_ key: String) {
         guard !key.isEmpty else { return }
+        guard let baseURL = URL(string: settings.byokBaseURL), ProviderEndpointPolicy.allows(baseURL) else {
+            notice = "BYOK provider must use HTTPS, except localhost HTTP."
+            return
+        }
         do {
             try secrets.store(key, named: "byok-api-key")
             notice = "BYOK key stored in Keychain."
