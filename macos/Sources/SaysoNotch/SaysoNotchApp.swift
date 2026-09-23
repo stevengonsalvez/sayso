@@ -1035,9 +1035,8 @@ final class SaysoAppModel: ObservableObject {
                 guard !Task.isCancelled, controlRun === run else { return }
                 if actionWasDispatched {
                     _ = await desktopControlSession.record(.actionFailed)
-                } else {
-                    _ = await desktopControlSession.cancel()
                 }
+                _ = await desktopControlSession.fail()
                 controlStatus = error.localizedDescription
                 finishControlRun()
             }
