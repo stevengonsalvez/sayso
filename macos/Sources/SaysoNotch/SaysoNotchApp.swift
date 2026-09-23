@@ -1705,12 +1705,12 @@ private struct HistoryWorkspace: View {
             List(displayedEntries) { entry in
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(entry.translatedText ?? entry.text)
+                        Text(entry.displayText)
                             .lineLimit(2)
                         HStack(spacing: 6) {
                             Text(entry.language.displayName)
                             Text(entry.route.displayName)
-                            if entry.translatedText != nil { Text("Translated") }
+                            if entry.hasTranslation { Text("Translated") }
                             if entry.audioFileURL != nil { Text("Recording") }
                         }
                         .font(.caption2.weight(.medium))
@@ -1746,7 +1746,7 @@ private struct HistoryWorkspace: View {
                     }
                     Menu {
                         Button("Copy transcript") { _ = TextOutput.copy(entry.text) }
-                        if let translatedText = entry.translatedText {
+                        if entry.hasTranslation, let translatedText = entry.translatedText {
                             Button("Copy translation") { _ = TextOutput.copy(translatedText) }
                         }
                         if let audioFileURL = entry.audioFileURL,
