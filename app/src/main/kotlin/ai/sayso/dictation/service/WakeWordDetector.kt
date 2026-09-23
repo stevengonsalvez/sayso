@@ -18,7 +18,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
  */
 class WakeWordDetector(
     private val context: Context,
-    private val wakeWordPhrase: String = SettingsStore.WAKE_PHRASE_BOTH,
+    @Volatile var wakeWordPhrase: String = SettingsStore.WAKE_PHRASE_BOTH,
     private val onWakeWordDetected: (String) -> Unit,
 ) {
     private var spotter: KeywordSpotter? = null
