@@ -22,6 +22,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private let audioEngine = AVAudioEngine()
     private let fluidAudioModels: FluidAudioLocalModelManager
+    private let sherpaPunjabiModels: SherpaPunjabiModelManager
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var recognizer: SFSpeechRecognizer?
@@ -29,6 +30,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var fluidAudioPump: FluidAudioBufferPump?
     private var fluidAudioRunID: UUID?
     private var usesFluidAudio = false
+    private var sherpaPunjabiSession: SherpaPunjabiLocalSession?
+    private var sherpaPunjabiPump: FluidAudioBufferPump?
+    private var sherpaPunjabiRunID: UUID?
+    private var usesSherpaPunjabi = false
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
     private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
@@ -37,13 +42,23 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var handsFree = false
     private var silenceTask: Task<Void, Never>?
 
-    public init(fluidAudioModels: FluidAudioLocalModelManager = .init()) {
+    public init(
+        fluidAudioModels: FluidAudioLocalModelManager = .init(),
+        sherpaPunjabiModels: SherpaPunjabiModelManager = .init()
+    ) {
         self.fluidAudioModels = fluidAudioModels
+        self.sherpaPunjabiModels = sherpaPunjabiModels
         super.init()
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
-        !FileTranscriber.prefersFluidAudio(
+        if FileTranscriber.prefersSherpaPunjabi(language: language, route: route, localModelReady: sherpaPunjabiModels.state.isInstalled) {
+            return false
+        }
+        if route == .local, language == .punjabi {
+            return false
+        }
+        return !FileTranscriber.prefersFluidAudio(
             language: language,
             route: route,
             localModelReady: fluidAudioModels.isInstalled(for: language)
@@ -76,6 +91,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         error = nil
         partialText = ""
 
+        if route == .local, language == .punjabi {
+            guard sherpaPunjabiModels.state.isInstalled else {
+                fail(.unavailable("Download the local Punjabi model before dictating."))
+                return false
+            }
+            guard await microphoneAuthorized() else { return false }
+            return await startSherpaPunjabi(language: language, route: route)
+        }
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
             return false
@@ -152,6 +175,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     public func stop() {
         if usesFluidAudio {
             stopFluidAudio()
+            return
+        }
+        if usesSherpaPunjabi {
+            stopSherpaPunjabi()
             return
         }
         guard phase == .listening || audioEngine.isRunning else { return }
@@ -237,6 +264,50 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onPartial?(text)
     }
 
+    private func startSherpaPunjabi(language: DictationLanguage, route: ProviderRoute) async -> Bool {
+        do {
+            let session = try sherpaPunjabiModels.makeReadySession(for: language)
+            let runID = UUID()
+            sherpaPunjabiSession = session
+            sherpaPunjabiRunID = runID
+            usesSherpaPunjabi = true
+            await session.reset()
+            let pump = FluidAudioBufferPump { [weak self, session] buffer in
+                do {
+                    try await session.append(audioBuffer: buffer)
+                } catch {
+                    Task { @MainActor [weak self] in self?.stopSherpaPunjabi() }
+                    throw error
+                }
+            }
+            sherpaPunjabiPump = pump
+
+            let input = audioEngine.inputNode
+            let format = input.outputFormat(forBus: 0)
+            input.installTap(onBus: 0, bufferSize: 1_024, format: format) { [weak self, pump] buffer, _ in
+                pump.submit(buffer)
+                var level: Float = 0
+                if let channels = buffer.floatChannelData {
+                    let samples = channels[0]
+                    for index in 0..<Int(buffer.frameLength) {
+                        level = Swift.max(level, abs(samples[index]))
+                    }
+                }
+                Task { @MainActor [weak self] in self?.observeAudio(level: level) }
+            }
+            audioEngine.prepare()
+            try audioEngine.start()
+            phase = .listening
+            return true
+        } catch {
+            stopAudioEngine()
+            if let session = sherpaPunjabiSession { await session.reset() }
+            clearSherpaPunjabiRun()
+            fail(.unavailable("Local Punjabi model could not start: \(error.localizedDescription)"))
+            return false
+        }
+    }
+
     private func stopFluidAudio() {
         guard usesFluidAudio, (phase == .listening || audioEngine.isRunning) else { return }
         guard let runID = fluidAudioRunID, let session = fluidAudioSession else { return }
@@ -271,6 +342,40 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
     }
 
+    private func stopSherpaPunjabi() {
+        guard usesSherpaPunjabi, (phase == .listening || audioEngine.isRunning) else { return }
+        guard let runID = sherpaPunjabiRunID, let session = sherpaPunjabiSession else { return }
+        phase = .processing
+        stopAudioEngine()
+        silenceTask?.cancel()
+        silenceTask = nil
+        let pump = sherpaPunjabiPump
+        Task { [weak self] in
+            let terminal = await pump?.closeAndDrain()
+            guard let self else { return }
+            switch terminal {
+            case let .failed(_, _, message):
+                await session.reset()
+                self.finishSherpaPunjabiRun(runID: runID, result: .failure(SaysoError.unavailable(message)))
+            case let .drained(_, dropped) where dropped > 0:
+                await session.reset()
+                self.finishSherpaPunjabiRun(
+                    runID: runID,
+                    result: .failure(SaysoError.unavailable("Local audio processing dropped \(dropped) buffers"))
+                )
+            case .drained, .none:
+                do {
+                    let text = try await session.finish()
+                    await session.reset()
+                    self.finishSherpaPunjabiRun(runID: runID, result: .success(text))
+                } catch {
+                    await session.reset()
+                    self.finishSherpaPunjabiRun(runID: runID, result: .failure(error))
+                }
+            }
+        }
+    }
+
     private func finishFluidAudioRun(runID: UUID, result: Result<String, any Error>) {
         guard fluidAudioRunID == runID else { return }
         clearFluidAudioRun()
@@ -292,6 +397,29 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         fluidAudioSession = nil
         fluidAudioRunID = nil
         usesFluidAudio = false
+    }
+
+    private func finishSherpaPunjabiRun(runID: UUID, result: Result<String, any Error>) {
+        guard sherpaPunjabiRunID == runID else { return }
+        clearSherpaPunjabiRun()
+        switch result {
+        case let .success(text):
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                phase = .idle
+                terminate(.cancelled)
+            } else {
+                finish(text: text, language: activeLanguage, route: activeRoute)
+            }
+        case let .failure(error):
+            fail(.unavailable("Local Punjabi transcription ended: \(error.localizedDescription)"))
+        }
+    }
+
+    private func clearSherpaPunjabiRun() {
+        sherpaPunjabiPump = nil
+        sherpaPunjabiSession = nil
+        sherpaPunjabiRunID = nil
+        usesSherpaPunjabi = false
     }
 
     private func stopAudioEngine() {
@@ -373,6 +501,14 @@ public enum FileTranscriber {
             && FluidAudioLocalModelManager.supportsNativeModel(for: language) && localModelReady
     }
 
+    static func prefersSherpaPunjabi(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        localModelReady: Bool
+    ) -> Bool {
+        route == .local && language == .punjabi && localModelReady
+    }
+
     public static func transcribe(
         fileURL: URL,
         language: DictationLanguage,
@@ -385,6 +521,18 @@ public enum FileTranscriber {
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         if let size = attributes[.size] as? NSNumber, size.intValue > maximumAudioFileBytes {
             throw SaysoError.invalidAction("Audio file exceeds \(maximumAudioFileBytes) bytes")
+        }
+        let sherpaPunjabiModel = SherpaPunjabiModelManager()
+        if route == .local, language == .punjabi {
+            guard sherpaPunjabiModel.state.isInstalled else {
+                throw SaysoError.unavailable("Download the local Punjabi model before dictating.")
+            }
+            return try await transcribeWithSherpaPunjabi(
+                fileURL: fileURL,
+                language: language,
+                route: route,
+                model: sherpaPunjabiModel
+            )
         }
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             throw SaysoError.unavailable("On-device recognition is unavailable for \(language.displayName)")
@@ -450,6 +598,36 @@ public enum FileTranscriber {
             return Transcript(text: text, language: language, route: route, isFinal: true)
         } catch {
             await session.cleanup()
+            throw error
+        }
+    }
+
+    private static func transcribeWithSherpaPunjabi(
+        fileURL: URL,
+        language: DictationLanguage,
+        route: ProviderRoute,
+        model: SherpaPunjabiModelManager
+    ) async throws -> Transcript {
+        let session = try model.makeReadySession(for: language)
+        do {
+            let file = try AVAudioFile(forReading: fileURL)
+            let chunkFrames = AVAudioFrameCount(max(1_024, Int(file.processingFormat.sampleRate / 5)))
+            while file.framePosition < file.length {
+                let remaining = file.length - file.framePosition
+                guard let buffer = AVAudioPCMBuffer(
+                    pcmFormat: file.processingFormat,
+                    frameCapacity: min(chunkFrames, AVAudioFrameCount(remaining))
+                ) else {
+                    throw SaysoError.unavailable("Audio buffer")
+                }
+                try file.read(into: buffer)
+                try await session.append(audioBuffer: buffer)
+            }
+            let text = try await session.finish()
+            await session.reset()
+            return Transcript(text: text, language: language, route: route, isFinal: true)
+        } catch {
+            await session.reset()
             throw error
         }
     }
