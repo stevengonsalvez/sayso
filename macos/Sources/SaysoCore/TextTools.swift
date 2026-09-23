@@ -30,6 +30,12 @@ enum ClipboardRestorePolicy {
 
 @MainActor
 public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, ObservableObject {
+    public struct Voice: Identifiable, Hashable, Sendable {
+        public let id: String
+        public let name: String
+        public let language: String
+    }
+
     @Published public private(set) var isSpeaking = false
     private let synthesizer = AVSpeechSynthesizer()
 
@@ -38,12 +44,30 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
         synthesizer.delegate = self
     }
 
-    public func speak(_ text: String, language: DictationLanguage = .english) {
+    public static func availableVoices(for language: DictationLanguage) -> [Voice] {
+        let voices = AVSpeechSynthesisVoice.speechVoices().map {
+            Voice(id: $0.identifier, name: $0.name, language: $0.language)
+        }
+        guard let localeIdentifier = language.localeIdentifier else { return voices }
+        let matching = voices.filter { $0.language.hasPrefix(String(localeIdentifier.prefix(2))) }
+        return matching.isEmpty ? voices : matching
+    }
+
+    public func speak(
+        _ text: String,
+        language: DictationLanguage = .english,
+        voiceIdentifier: String? = nil,
+        rate: Double = Double(AVSpeechUtteranceDefaultSpeechRate)
+    ) {
         guard !text.isEmpty else { return }
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: language.localeIdentifier ?? Locale.current.identifier)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+            ?? AVSpeechSynthesisVoice(language: language.localeIdentifier ?? Locale.current.identifier)
+        utterance.rate = min(
+            max(Float(rate), AVSpeechUtteranceMinimumSpeechRate),
+            AVSpeechUtteranceMaximumSpeechRate
+        )
         synthesizer.speak(utterance)
     }
 
