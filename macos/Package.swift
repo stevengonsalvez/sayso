@@ -19,11 +19,18 @@ let package = Package(
             url: "https://github.com/FluidInference/FluidAudio.git",
             exact: "0.15.5"
         ),
+        .package(
+            url: "https://github.com/k2-fsa/sherpa-onnx.git",
+            exact: "1.13.8"
+        ),
     ],
     targets: [
         .target(
             name: "SaysoCore",
-            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]
+            dependencies: [
+                .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "sherpa-onnx", package: "sherpa-onnx"),
+            ]
         ),
         .target(
             name: "SpeakUpstreamBridge",
