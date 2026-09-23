@@ -383,6 +383,173 @@ public enum TextOutput {
     }
 }
 
+public struct TextUTF16Range: Codable, Equatable, Sendable {
+    public let location: Int
+    public let length: Int
+
+    public init(location: Int, length: Int) {
+        self.location = location
+        self.length = length
+    }
+
+    public var end: Int { location + length }
+}
+
+public struct SelectedTextEditAnchor: Equatable, Sendable {
+    public let selectedText: String
+    public let originalValue: String
+    public let range: TextUTF16Range
+
+    public init?(value: String, range: TextUTF16Range) {
+        guard range.location >= 0, range.length > 0, range.end <= value.utf16.count else { return nil }
+        let codeUnits = Array(value.utf16)
+        selectedText = String(decoding: codeUnits[range.location..<range.end], as: UTF16.self)
+        originalValue = value
+        self.range = range
+    }
+
+    public func stillMatches(value: String, range: TextUTF16Range) -> Bool {
+        self.range == range && Self.substring(in: value, at: range) == selectedText
+    }
+
+    public func replacing(with text: String) -> String? {
+        guard stillMatches(value: originalValue, range: range) else { return nil }
+        let codeUnits = Array(originalValue.utf16)
+        let prefix = String(decoding: codeUnits[0..<range.location], as: UTF16.self)
+        let suffix = String(decoding: codeUnits[range.end...], as: UTF16.self)
+        return prefix + text + suffix
+    }
+
+    private static func substring(in value: String, at range: TextUTF16Range) -> String? {
+        guard range.location >= 0, range.length > 0, range.end <= value.utf16.count else { return nil }
+        let codeUnits = Array(value.utf16)
+        return String(decoding: codeUnits[range.location..<range.end], as: UTF16.self)
+    }
+}
+
+@MainActor
+public enum SelectedTextEdit {
+    public enum ApplyResult: Equatable {
+        case replaced
+        case copiedToClipboard(String)
+
+        public var userMessage: String {
+            switch self {
+            case .replaced: "Selection rewritten."
+            case let .copiedToClipboard(reason): "\(reason) Rewrite copied to clipboard."
+            }
+        }
+    }
+
+    public final class Capture {
+        public let selectedText: String
+        fileprivate let field: AXUIElement
+        fileprivate let processIdentifier: pid_t
+        fileprivate let applicationIdentity: TextOutputTargetIdentity
+        fileprivate let anchor: SelectedTextEditAnchor
+
+        fileprivate init(
+            field: AXUIElement,
+            processIdentifier: pid_t,
+            applicationIdentity: TextOutputTargetIdentity,
+            anchor: SelectedTextEditAnchor
+        ) {
+            self.field = field
+            self.processIdentifier = processIdentifier
+            self.applicationIdentity = applicationIdentity
+            self.anchor = anchor
+            selectedText = anchor.selectedText
+        }
+    }
+
+    public static func capture() -> Capture? {
+        guard AXIsProcessTrusted(),
+              let application = NSWorkspace.shared.frontmostApplication,
+              !application.isTerminated else { return nil }
+        let root = AXUIElementCreateApplication(application.processIdentifier)
+        guard let field = copyElement(kAXFocusedUIElementAttribute as CFString, from: root),
+              let value = copyAttribute(kAXValueAttribute as CFString, from: field) as? String,
+              let range = selectedRange(in: field),
+              let anchor = SelectedTextEditAnchor(value: value, range: range) else { return nil }
+        let role = copyAttribute(kAXRoleAttribute as CFString, from: field) as? String ?? ""
+        let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: field) as? String ?? ""
+        guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { return nil }
+        var fieldProcessIdentifier: pid_t = 0
+        AXUIElementGetPid(field, &fieldProcessIdentifier)
+        guard fieldProcessIdentifier == application.processIdentifier else { return nil }
+        let identity = TextOutputTargetIdentity(
+            processIdentifier: application.processIdentifier,
+            bundleIdentifier: application.bundleIdentifier,
+            launchDate: application.launchDate
+        )
+        return .init(
+            field: field,
+            processIdentifier: application.processIdentifier,
+            applicationIdentity: identity,
+            anchor: anchor
+        )
+    }
+
+    public static func replace(_ rewrite: String, in capture: Capture) -> ApplyResult {
+        guard !rewrite.isEmpty else { return copy(rewrite, reason: "Rewrite was empty.") }
+        guard let application = NSRunningApplication(processIdentifier: capture.processIdentifier),
+              !application.isTerminated,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == capture.processIdentifier,
+              capture.applicationIdentity.matches(.init(
+                  processIdentifier: application.processIdentifier,
+                  bundleIdentifier: application.bundleIdentifier,
+                  launchDate: application.launchDate
+              )),
+              let focused = copyElement(
+                  kAXFocusedUIElementAttribute as CFString,
+                  from: AXUIElementCreateApplication(capture.processIdentifier)
+              ),
+              CFEqual(focused, capture.field),
+              let currentValue = copyAttribute(kAXValueAttribute as CFString, from: capture.field) as? String,
+              let currentRange = selectedRange(in: capture.field),
+              capture.anchor.stillMatches(value: currentValue, range: currentRange)
+        else {
+            return copy(rewrite, reason: "Selection changed.")
+        }
+        let role = copyAttribute(kAXRoleAttribute as CFString, from: capture.field) as? String ?? ""
+        let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: capture.field) as? String ?? ""
+        guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else {
+            return copy(rewrite, reason: "Protected field.")
+        }
+        guard let expected = capture.anchor.replacing(with: rewrite),
+              AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success,
+              let after = copyAttribute(kAXValueAttribute as CFString, from: capture.field) as? String,
+              after == expected else {
+            return copy(rewrite, reason: "Could not verify replacement.")
+        }
+        return .replaced
+    }
+
+    private static func copy(_ text: String, reason: String) -> ApplyResult {
+        _ = TextOutput.copy(text)
+        return .copiedToClipboard(reason)
+    }
+
+    private static func selectedRange(in element: AXUIElement) -> TextUTF16Range? {
+        guard let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: element) else { return nil }
+        let rangeValue = unsafeDowncast(value, to: AXValue.self)
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
+        return .init(location: range.location, length: range.length)
+    }
+
+    private static func copyAttribute(_ attribute: CFString, from element: AXUIElement) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+        return value
+    }
+
+    private static func copyElement(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
+        guard let value = copyAttribute(attribute, from: element) else { return nil }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+}
+
 @MainActor
 private extension TextOutput.Destination {
     var isSafeDeliveryTarget: Bool {
