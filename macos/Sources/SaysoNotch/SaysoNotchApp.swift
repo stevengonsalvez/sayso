@@ -574,6 +574,7 @@ final class SaysoAppModel: ObservableObject {
                 var updated = current
                 updated.text = edited
                 updated.translatedText = nil
+                updated.translatedLanguage = nil
                 lastTranscript = updated
                 Task {
                     let historyResult = await history.appendResult(updated)
@@ -659,6 +660,7 @@ final class SaysoAppModel: ObservableObject {
             translated.translatedText = try await translator.translate(
                 corrected.text, from: corrected.language, to: currentSettings.outputLanguage
             )
+            translated.translatedLanguage = currentSettings.outputLanguage
         } catch {
             transcriptProcessingNotice = "Translation unavailable. Inserted original transcript."
         }
@@ -1684,7 +1686,6 @@ private struct VoiceOutputWorkspace: View {
     @State private var text = ""
     @State private var historyEntries: [Transcript] = []
     @State private var historyID: Transcript.ID?
-    @State private var sourceLanguage: DictationLanguage?
     @State private var voices: [SpeechOutput.Voice] = []
 
     var body: some View {
@@ -1715,7 +1716,7 @@ private struct VoiceOutputWorkspace: View {
                         return
                     }
                     text = transcript.displayText
-                    sourceLanguage = transcript.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+                    model.settings.speechLanguage = transcript.spokenLanguage(outputLanguage: model.settings.outputLanguage)
                 }
                 .disabled(model.lastTranscript == nil)
                 Button("Use clipboard") {
@@ -1724,7 +1725,6 @@ private struct VoiceOutputWorkspace: View {
                         return
                     }
                     text = clipboard
-                    sourceLanguage = nil
                 }
                 Button {
                     Task { await refreshHistory() }
@@ -1742,7 +1742,7 @@ private struct VoiceOutputWorkspace: View {
                 .onChange(of: historyID) { _, id in
                     if let entry = historyEntries.first(where: { $0.id == id }) {
                         text = entry.displayText
-                        sourceLanguage = entry.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+                        model.settings.speechLanguage = entry.spokenLanguage(outputLanguage: model.settings.outputLanguage)
                     }
                 }
             }
@@ -1792,7 +1792,7 @@ private struct VoiceOutputWorkspace: View {
             .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
             HStack {
                 Button {
-                    model.speak(text, language: sourceLanguage)
+                    model.speak(text)
                 } label: {
                     Label("Speak", systemImage: "play.fill")
                 }
