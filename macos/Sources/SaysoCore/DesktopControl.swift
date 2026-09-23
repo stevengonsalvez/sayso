@@ -71,12 +71,17 @@ public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
     public let action: DesktopAction
     public let confidence: Double
     public let reason: String
+    public let requiresConfirmation: Bool
 
-    public init(id: UUID = UUID(), action: DesktopAction, confidence: Double, reason: String) {
+    public init(
+        id: UUID = UUID(), action: DesktopAction, confidence: Double, reason: String,
+        requiresConfirmation: Bool = false
+    ) {
         self.id = id
         self.action = action
         self.confidence = confidence
         self.reason = reason
+        self.requiresConfirmation = requiresConfirmation
     }
 }
 
@@ -113,7 +118,7 @@ public enum ControlPolicy {
     }
 
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
-        step.action.isDestructive
+        step.requiresConfirmation || step.action.isDestructive
     }
 
     public static func isDestructiveControlTitle(_ title: String) -> Bool {
@@ -164,7 +169,12 @@ public enum ControlPlanner {
             guard matches.count == 1, let element = matches.first else {
                 throw SaysoError.invalidAction("Click commands need one visible control with an exact title.")
             }
-            return .init(action: .press(elementID: element.id, expectedFingerprint: snapshot.fingerprint), confidence: 0.85, reason: "Exact visible control")
+            return .init(
+                action: .press(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Exact visible control",
+                requiresConfirmation: ControlPolicy.isDestructiveControlTitle(element.title)
+            )
         }
         if normalized.hasPrefix("activate "), let identifier = bundleIdentifier(from: trimmed, prefix: 9) {
             return .init(action: .activate(bundleIdentifier: identifier), confidence: 0.80, reason: "Exact bundle identifier")
@@ -208,6 +218,8 @@ public actor ControlAuditStore {
 }
 
 public final class AXDesktopController: @unchecked Sendable {
+    private let candidateCapture = AXCandidateCapture()
+
     public init() {}
 
     public func capture(application targetApplication: NSRunningApplication? = nil) throws -> DesktopSnapshot {
@@ -219,6 +231,7 @@ public final class AXDesktopController: @unchecked Sendable {
         let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: application)
         let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
         let subrole = focused.flatMap { copyAttribute(kAXSubroleAttribute as CFString, from: $0) as? String } ?? ""
+        let candidateSnapshot = try candidateCapture.capture(application: app)
         return DesktopSnapshot(
             processIdentifier: app.processIdentifier,
             applicationName: app.localizedName ?? "Unknown",
@@ -226,7 +239,9 @@ public final class AXDesktopController: @unchecked Sendable {
             focusedRole: focused.flatMap { copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String } ?? "",
             focusedValue: focused.flatMap { copyAttribute(kAXValueAttribute as CFString, from: $0) as? String } ?? "",
             isProtected: subrole == kAXSecureTextFieldSubrole as String,
-            elements: window.map { interactiveElements(in: $0) } ?? []
+            elements: candidateSnapshot.candidates.filter(\.state.isTargetable).map {
+                DesktopElement(id: $0.id.rawValue, role: $0.role, title: $0.title)
+            }
         )
     }
 
@@ -272,11 +287,10 @@ public final class AXDesktopController: @unchecked Sendable {
             event.post(tap: .cghidEventTap)
         case let .press(elementID, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
-            guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: AXUIElementCreateApplication(before.processIdentifier)),
-                  let element = interactiveElements(in: window).first(where: { $0.id == elementID }) else {
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            try press(element, in: before.processIdentifier)
+            try candidateCapture.press(candidateID: .init(rawValue: elementID), application: target)
         }
 
         let after = try? capture(application: targetApplication)
@@ -309,44 +323,6 @@ public final class AXDesktopController: @unchecked Sendable {
         guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
             throw SaysoError.invalidAction("Text field rejected insertion")
         }
-    }
-
-    private func interactiveElements(in root: AXUIElement) -> [DesktopElement] {
-        descendants(of: root, depth: 4).compactMap { element in
-            let role = copyAttribute(kAXRoleAttribute as CFString, from: element) as? String ?? ""
-            let title = (copyAttribute(kAXTitleAttribute as CFString, from: element) as? String ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !role.isEmpty, !title.isEmpty, supportsPress(element) else { return nil }
-            return DesktopElement(id: elementID(role: role, title: title), role: role, title: title)
-        }
-    }
-
-    private func press(_ descriptor: DesktopElement, in processIdentifier: Int32) throws {
-        let application = AXUIElementCreateApplication(processIdentifier)
-        guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application),
-              let target = descendants(of: window, depth: 4).first(where: {
-                  let role = copyAttribute(kAXRoleAttribute as CFString, from: $0) as? String ?? ""
-                  let title = copyAttribute(kAXTitleAttribute as CFString, from: $0) as? String ?? ""
-                  return elementID(role: role, title: title) == descriptor.id
-              }), AXUIElementPerformAction(target, kAXPressAction as CFString) == .success else {
-            throw SaysoError.invalidAction("Visible control rejected click")
-        }
-    }
-
-    private func descendants(of root: AXUIElement, depth: Int) -> [AXUIElement] {
-        guard depth > 0 else { return [] }
-        let children = copyAttribute(kAXChildrenAttribute as CFString, from: root) as? [AXUIElement] ?? []
-        return children + children.flatMap { descendants(of: $0, depth: depth - 1) }
-    }
-
-    private func supportsPress(_ element: AXUIElement) -> Bool {
-        var names: CFArray?
-        guard AXUIElementCopyActionNames(element, &names) == .success else { return false }
-        return (names as? [String] ?? []).contains(kAXPressAction as String)
-    }
-
-    private func elementID(role: String, title: String) -> String {
-        "\(role)|\(title)"
     }
 
     private func copyAttribute(_ attribute: CFString, from element: AXUIElement) -> CFTypeRef? {
