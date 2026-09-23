@@ -89,7 +89,11 @@ public actor HistoryStore {
         case let .entries(entries):
             existing = entries
         case .unreadable:
-            return false
+            guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  preserveUnreadableHistory() else {
+                return false
+            }
+            existing = []
         }
         guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: existing)
@@ -136,21 +140,26 @@ public actor HistoryStore {
 
     @discardableResult
     public func clear() -> Bool {
-        let entries: [Transcript]
-        switch load() {
-        case .missing:
-            entries = []
-        case let .entries(loadedEntries):
-            entries = loadedEntries
-        case .unreadable:
-            return false
+        var succeeded = true
+        let historyFiles = ([fileURL] + corruptBackupURLs())
+            .filter { fileManager.fileExists(atPath: $0.path) }
+        for url in Set(historyFiles.map(\.standardizedFileURL)) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                succeeded = false
+            }
         }
-        guard persist([]) else { return false }
-        releaseManagedAudio(entries.map(\.audioFileURL), unlessReferencedBy: [])
-        return true
+
+        SessionAudioArchive.deleteAllManagedRecordings(directory: recordingsDirectory, fileManager: fileManager)
+        return succeeded
+            && !fileManager.fileExists(atPath: fileURL.path)
+            && corruptBackupURLs().isEmpty
+            && managedRecordings().isEmpty
     }
 
     public func reclaimUnreferencedAudio(olderThan: Date? = nil) {
+        guard corruptBackupURLs().isEmpty else { return }
         let entries: [Transcript]
         switch load() {
         case .missing:
@@ -191,6 +200,36 @@ public actor HistoryStore {
             return .entries(try JSONDecoder().decode([Transcript].self, from: data))
         } catch {
             return .unreadable
+        }
+    }
+
+    /// Moves undecodable history out of the active path before a fresh append can persist.
+    private func preserveUnreadableHistory() -> Bool {
+        guard fileManager.fileExists(atPath: fileURL.path) else { return false }
+        do {
+            try fileManager.moveItem(at: fileURL, to: nextCorruptBackupURL())
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func corruptBackupURLs() -> [URL] {
+        let parent = fileURL.deletingLastPathComponent()
+        let prefix = "\(fileURL.lastPathComponent).corrupt-"
+        return ((try? fileManager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix(prefix) }
+    }
+
+    private func nextCorruptBackupURL() -> URL {
+        fileURL.deletingLastPathComponent()
+            .appendingPathComponent("\(fileURL.lastPathComponent).corrupt-\(UUID().uuidString)")
+    }
+
+    private func managedRecordings() -> [URL] {
+        let urls = (try? fileManager.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)) ?? []
+        return urls.filter {
+            SessionAudioArchive.isManagedRecording($0, directory: recordingsDirectory, fileManager: fileManager)
         }
     }
 
