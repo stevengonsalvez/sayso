@@ -40,6 +40,8 @@ import Testing
     let transcriber = LiveTranscriber(fluidAudioModels: manager)
     #expect(!transcriber.requiresSpeechRecognition(language: .english, route: .local))
     #expect(transcriber.requiresSpeechRecognition(language: .tamil, route: .local))
+    #expect(LiveTranscriber.prefersNativeFluidAudio(language: .english, route: .local, models: manager))
+    #expect(!LiveTranscriber.prefersNativeFluidAudio(language: .tamil, route: .local, models: manager))
     #expect(transcriber.requiresSpeechRecognition(language: .english, route: .appleSpeech))
     #expect(FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: true))
     #expect(!FileTranscriber.prefersFluidAudio(language: .english, route: .local, localModelReady: false))
@@ -76,9 +78,11 @@ import Testing
     ]
     for (language, languageCode) in supportedLanguages {
         #expect(!transcriber.requiresSpeechRecognition(language: language, route: .local))
+        #expect(LiveTranscriber.prefersNativeFluidAudio(language: language, route: .local, models: manager))
         #expect(FileTranscriber.prefersFluidAudio(language: language, route: .local, localModelReady: true))
         #expect(FluidAudioLocalModelManager.nemotronLanguageCode(for: language) == languageCode)
     }
+    #expect(!LiveTranscriber.prefersNativeFluidAudio(language: .english, route: .local, models: manager))
     #expect(!FileTranscriber.prefersFluidAudio(language: .punjabi, route: .local, localModelReady: true))
 }
 
