@@ -63,6 +63,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
+    @Published private(set) var reprocessingHistoryID: UUID?
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
@@ -960,6 +961,41 @@ final class SaysoAppModel: ObservableObject {
         speech.speak(text, language: settings.outputLanguage)
     }
 
+    func reprocessHistory(_ entry: Transcript) async {
+        guard reprocessingHistoryID == nil else {
+            notice = "Another saved recording is already being reprocessed."
+            return
+        }
+        guard let audioFileURL = entry.audioFileURL,
+              FileManager.default.fileExists(atPath: audioFileURL.path) else {
+            notice = "This history item has no saved audio to reprocess."
+            return
+        }
+        reprocessingHistoryID = entry.id
+        defer { reprocessingHistoryID = nil }
+        let settingsSnapshot = settings
+        notice = "Reprocessing saved audio."
+        do {
+            var reprocessed = try await FileTranscriber.transcribe(
+                fileURL: audioFileURL,
+                language: settingsSnapshot.language,
+                route: settingsSnapshot.route
+            )
+            reprocessed.audioFileURL = audioFileURL
+            let completed = await translated(reprocessed, settings: settingsSnapshot)
+            guard await history.append(completed) else {
+                notice = "Reprocessed transcript could not save to history."
+                transcriptProcessingNotice = nil
+                return
+            }
+            lastTranscript = completed
+            setTranscriptCompletionNotice("Reprocessed transcript saved as a new history item.")
+            transcriptProcessingNotice = nil
+        } catch {
+            notice = "Could not reprocess saved audio: \(error.localizedDescription)"
+        }
+    }
+
     func copyLastVoiceEditRewrite() {
         guard let rewrite = lastVoiceEditRewrite else { return }
         notice = TextOutput.copy(rewrite)
@@ -1506,6 +1542,17 @@ private struct HistoryWorkspace: View {
                     Spacer()
                     if let audioFileURL = entry.audioFileURL,
                        FileManager.default.fileExists(atPath: audioFileURL.path) {
+                        Button {
+                            Task {
+                                await model.reprocessHistory(entry)
+                                entries = await model.history.all()
+                            }
+                        } label: {
+                            Image(systemName: model.reprocessingHistoryID == entry.id ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(model.reprocessingHistoryID != nil)
+                        .accessibilityLabel("Reprocess recording")
                         Button {
                             playback.toggle(entryID: entry.id, url: audioFileURL)
                         } label: {
