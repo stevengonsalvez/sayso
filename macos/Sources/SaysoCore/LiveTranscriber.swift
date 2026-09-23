@@ -241,6 +241,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             case let .failed(_, _, message):
                 await manager.reset()
                 self.finishFluidAudioRun(runID: runID, result: .failure(SaysoError.unavailable(message)))
+            case let .drained(_, dropped) where dropped > 0:
+                await manager.reset()
+                self.finishFluidAudioRun(
+                    runID: runID,
+                    result: .failure(SaysoError.unavailable("Local audio processing dropped \(dropped) buffers"))
+                )
             case .drained, .none:
                 do {
                     let text = try await manager.finish()
