@@ -48,8 +48,9 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
         let voices = AVSpeechSynthesisVoice.speechVoices().map {
             Voice(id: $0.identifier, name: $0.name, language: $0.language)
         }
-        guard let localeIdentifier = language.localeIdentifier else { return voices }
-        return voices.filter { $0.language.hasPrefix(String(localeIdentifier.prefix(2))) }
+        guard let localeIdentifier = language.localeIdentifier,
+              let languageCode = Locale(identifier: localeIdentifier).language.languageCode?.identifier else { return voices }
+        return voices.filter { Locale(identifier: $0.language).language.languageCode?.identifier == languageCode }
     }
 
     public func speak(
