@@ -966,7 +966,12 @@ final class SaysoAppModel: ObservableObject {
 
     func speakLatest() {
         guard let text = lastTranscript?.displayText else { return }
-        speech.speak(text, language: settings.outputLanguage)
+        speech.speak(
+            text,
+            language: settings.outputLanguage,
+            voiceIdentifier: settings.speechVoiceIdentifier,
+            rate: settings.speechRate
+        )
     }
 
     func reprocessHistory(_ entry: Transcript) async {
