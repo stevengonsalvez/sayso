@@ -790,7 +790,7 @@ final class SaysoAppModel: ObservableObject {
             await failVoiceEdit(session, message: "Voice edit provider or consent changed before rewrite.")
             return
         }
-        notice = "Rewriting selected text."
+        showPersistentNotice("Rewriting selected text.")
         do {
             let rewrite = try await OpenAICompatibleRewriter(
                 baseURL: baseURL, apiKey: key, model: settings.byokRewriteModel
@@ -1049,7 +1049,7 @@ final class SaysoAppModel: ObservableObject {
         }
         guard let target, target != settings.mode, pendingVoiceMode == nil else { return }
         pendingVoiceMode = target
-        notice = "Switching to \(target == .control ? "Control" : "Dictation")…"
+        showPersistentNotice("Switching to \(target == .control ? "Control" : "Dictation")…")
         if transcriber.phase == .listening { transcriber.stop() }
     }
 
@@ -1078,7 +1078,8 @@ final class SaysoAppModel: ObservableObject {
 
     func speakLatest() {
         guard let transcript = lastTranscript else { return }
-        let language = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
+        let transcriptLanguage = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
+        let language = transcriptLanguage == .automatic ? settings.speechLanguage : transcriptLanguage
         speech.speak(transcript.displayText, language: language, voiceIdentifier: selectedVoice(for: language), rate: settings.speechRate)
     }
 
@@ -1106,7 +1107,7 @@ final class SaysoAppModel: ObservableObject {
         reprocessingHistoryID = entry.id
         defer { reprocessingHistoryID = nil }
         let settingsSnapshot = settings
-        notice = "Reprocessing saved audio."
+        showPersistentNotice("Reprocessing saved audio.")
         do {
             var reprocessed = try await FileTranscriber.transcribe(
                 fileURL: audioFileURL,
@@ -1256,7 +1257,7 @@ final class SaysoAppModel: ObservableObject {
     func cancelHistoryAudioTask() {
         guard isHistoryAudioTaskRunning, let historyAudioTask else { return }
         historyAudioTask.cancel()
-        notice = "Cancelling history audio task."
+        showPersistentNotice("Cancelling history audio task.")
     }
 
     func clearHistory() async -> Bool {
@@ -1784,7 +1785,10 @@ private struct VoiceOutputWorkspace: View {
                         Text("System default").tag(nil as String?)
                         if let selected = model.settings.speechVoiceIdentifier,
                            !voices.contains(where: { $0.id == selected }) {
-                            Text("Saved voice unavailable").tag(selected as String?)
+                            let label = SpeechOutput.availableVoices(for: .automatic).contains(where: { $0.id == selected })
+                                ? "Voice set for another language"
+                                : "Saved voice unavailable"
+                            Text(label).tag(selected as String?)
                         }
                         ForEach(voices) { voice in
                             Text("\(voice.name) (\(voice.language))").tag(voice.id as String?)
