@@ -4,6 +4,7 @@ import Combine
 import SaysoCore
 import SpeakUpstreamBridge
 import SwiftUI
+import UniformTypeIdentifiers
 
 @main
 struct SaysoNotchApp: App {
@@ -64,6 +65,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
     @Published private(set) var reprocessingHistoryID: UUID?
+    @Published private(set) var isImportingHistoryAudio = false
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
@@ -996,6 +998,58 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func importHistoryAudio(_ sourceURLs: [URL]) async {
+        guard !isImportingHistoryAudio, reprocessingHistoryID == nil else {
+            notice = "Finish the current history audio task before importing."
+            return
+        }
+        let settingsSnapshot = settings
+        isImportingHistoryAudio = true
+        defer { isImportingHistoryAudio = false }
+        var importedCount = 0
+        var failedCount = 0
+
+        for sourceURL in sourceURLs {
+            let accessed = sourceURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+            }
+            var copiedURL: URL?
+            do {
+                let importedURL = try SessionAudioArchive.importRecording(from: sourceURL)
+                copiedURL = importedURL
+                var transcript = try await FileTranscriber.transcribe(
+                    fileURL: importedURL,
+                    language: settingsSnapshot.language,
+                    route: settingsSnapshot.route
+                )
+                transcript.audioFileURL = importedURL
+                let completed = await translated(transcript, settings: settingsSnapshot)
+                guard await history.append(completed) else {
+                    throw SaysoError.unavailable("History storage")
+                }
+                lastTranscript = completed
+                transcriptProcessingNotice = nil
+                importedCount += 1
+            } catch {
+                if let copiedURL {
+                    SessionAudioArchive.deleteManagedRecording(copiedURL)
+                }
+                transcriptProcessingNotice = nil
+                failedCount += 1
+            }
+        }
+
+        switch (importedCount, failedCount) {
+        case (0, _):
+            notice = "Could not import the selected audio."
+        case (_, 0):
+            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files") into history."
+        default:
+            notice = "Imported \(importedCount) audio \(importedCount == 1 ? "file" : "files"); \(failedCount) could not be transcribed."
+        }
+    }
+
     func copyLastVoiceEditRewrite() {
         guard let rewrite = lastVoiceEditRewrite else { return }
         notice = TextOutput.copy(rewrite)
@@ -1515,6 +1569,7 @@ private struct HistoryWorkspace: View {
     @State private var query = ""
     @State private var confirmClear = false
     @State private var deletionCandidate: Transcript?
+    @State private var isImportingAudio = false
     @StateObject private var playback = HistoryAudioPlayback()
 
     var body: some View {
@@ -1526,6 +1581,8 @@ private struct HistoryWorkspace: View {
                 Label("\(insights.words) words", systemImage: "textformat")
                 Label("\(insights.activeDays) days", systemImage: "calendar")
                 Spacer()
+                Button("Import audio") { isImportingAudio = true }
+                    .disabled(model.isImportingHistoryAudio || model.reprocessingHistoryID != nil)
                 Button("Copy all history") { Task { TextOutput.copy(await model.history.plainTextExport()) } }
                 Button("Clear all history", role: .destructive) { confirmClear = true }
             }
@@ -1574,6 +1631,21 @@ private struct HistoryWorkspace: View {
         .navigationTitle("History")
         .task { entries = await model.history.all() }
         .onDisappear { playback.stop() }
+        .fileImporter(
+            isPresented: $isImportingAudio,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                Task {
+                    await model.importHistoryAudio(urls)
+                    entries = await model.history.all()
+                }
+            case .failure:
+                model.notice = "Could not access the selected audio."
+            }
+        }
         .alert("Clear Sayso history?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) {
                 playback.stop()
