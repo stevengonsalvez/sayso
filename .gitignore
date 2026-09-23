@@ -14,6 +14,7 @@ macos/.build/
 macos/.artifacts/
 macos/.tmux-dev-session.json
 macos/dev-server-*.log
+macos/dev-sayso-app.log
 logs/
 macos/.swiftpm/xcode/xcuserdata/
 *.xcuserstate
