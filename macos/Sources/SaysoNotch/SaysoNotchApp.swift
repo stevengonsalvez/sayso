@@ -196,7 +196,16 @@ final class SaysoAppModel: ObservableObject {
     private func finish(_ transcript: Transcript) async {
         lastTranscript = transcript
         await history.append(transcript)
-        if settings.autoInsert { _ = TextOutput.insertOrCopy(transcript.translatedText ?? transcript.text) }
+        let finalText = transcript.translatedText ?? transcript.text
+        if settings.autoInsert {
+            _ = TextOutput.insertOrCopy(
+                finalText,
+                targetProcessIdentifier: lastExternalApplication?.processIdentifier,
+                restoreClipboardAfterPaste: settings.restoreClipboardAfterPaste
+            )
+        } else {
+            TextOutput.copy(finalText)
+        }
         notch.hideAfterDelay()
     }
 
@@ -808,6 +817,8 @@ private struct SaysoSettingsView: View {
                 }
                 Toggle("Translate final text", isOn: $model.settings.translationEnabled)
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
+                Toggle("Restore clipboard after paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
+                    .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free, stop after 1.2 seconds of silence", isOn: $model.settings.handsFree)
             }
             Section("Overlay") {
