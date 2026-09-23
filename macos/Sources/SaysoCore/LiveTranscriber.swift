@@ -232,7 +232,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         do {
             try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
         } catch {
-            fail(.unavailable("Audio history storage could not start"))
+            fail(.unavailable("Audio history storage could not start: \(error.localizedDescription)"))
             return false
         }
         let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
@@ -378,7 +378,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
-            try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
+            do {
+                try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
+            } catch {
+                await session.reset()
+                clearFluidAudioRun()
+                fail(.unavailable("Audio history storage could not start: \(error.localizedDescription)"))
+                return false
+            }
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
             input.installTap(
                 onBus: 0,
@@ -437,7 +444,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
-            try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
+            do {
+                try prepareSessionAudio(enabled: saveAudio, inputFormat: format)
+            } catch {
+                await session.reset()
+                clearSherpaPunjabiRun()
+                fail(.unavailable("Audio history storage could not start: \(error.localizedDescription)"))
+                return false
+            }
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
             input.installTap(
                 onBus: 0,
@@ -640,6 +654,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func finish(text: String, language: DictationLanguage, route: ProviderRoute) {
         guard phase != .idle else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            if !usesFluidAudio { stopAppleAudioCapture() }
             discardSessionAudio()
             phase = .idle
             terminate(.cancelled)
