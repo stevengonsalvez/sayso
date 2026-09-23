@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -155,6 +156,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         currentLanguage = settings.language
         currentSttModelId = settings.sttModelId
         indicTransliteration = settings.transliterateIndicToLatin
+        wakeWordPhrase = settings.wakeWordPhrase
         resumeTick++
         onPauseOrDispose { }
     }
@@ -207,10 +209,17 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         )
 
         if (searchQuery.isNotBlank()) {
+            BackHandler { searchQuery = "" }
             SettingsSearchResults(
                 query = searchQuery,
-                onNavigate = onNavigate,
-                onOpenOnboarding = { showOnboarding = true },
+                onNavigate = {
+                    searchQuery = ""
+                    onNavigate(it)
+                },
+                onOpenOnboarding = {
+                    searchQuery = ""
+                    showOnboarding = true
+                },
             )
         } else {
             // 0. Model Required Setup Banner (Actionable CTA when model is missing)
