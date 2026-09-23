@@ -82,6 +82,10 @@ public enum ProviderRoute: String, Codable, CaseIterable, Identifiable, Sendable
     }
 
     public var transmitsData: Bool { self != .local }
+
+    public var supportsDictation: Bool { self != .byok }
+
+    public static var dictationRoutes: [ProviderRoute] { [.local, .appleSpeech] }
 }
 
 public struct Transcript: Codable, Equatable, Identifiable, Sendable {
