@@ -107,11 +107,19 @@ public actor HistoryStore {
             recovered = false
         case .invalid:
             guard transcript.isFinal, !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
+                releaseManagedAudio(
+                    [transcript.audioFileURL],
+                    retaining: recoverableAudioURLs(),
+                    unlessReferencedBy: []
+                )
                 return .failed
             }
             guard preserveUnreadableHistory() else {
-                releaseManagedAudio([transcript.audioFileURL], unlessReferencedBy: [])
+                releaseManagedAudio(
+                    [transcript.audioFileURL],
+                    retaining: recoverableAudioURLs(),
+                    unlessReferencedBy: []
+                )
                 return .failed
             }
             existing = []
@@ -275,9 +283,18 @@ public actor HistoryStore {
     }
 
     private func audioURLsNamedInBackups() -> Set<URL> {
+        audioURLsNamed(in: corruptBackupURLs())
+    }
+
+    private func recoverableAudioURLs() -> Set<URL> {
+        retainedAudioURLs(in: backupEntries())
+            .union(audioURLsNamed(in: [fileURL] + corruptBackupURLs()))
+    }
+
+    private func audioURLsNamed(in sourceURLs: [URL]) -> Set<URL> {
         var urls = Set<URL>()
-        for backupURL in corruptBackupURLs() {
-            let text = String(decoding: (try? Data(contentsOf: backupURL)) ?? Data(), as: UTF8.self)
+        for sourceURL in sourceURLs {
+            let text = String(decoding: (try? Data(contentsOf: sourceURL)) ?? Data(), as: UTF8.self)
             let range = NSRange(text.startIndex..., in: text)
             for match in Self.recordingNamePattern.matches(in: text, range: range) {
                 guard let matchRange = Range(match.range, in: text) else { continue }
@@ -302,8 +319,13 @@ public actor HistoryStore {
         transcript.audioFileURL = nil
     }
 
-    private func releaseManagedAudio(_ urls: [URL?], unlessReferencedBy entries: [Transcript]) {
+    private func releaseManagedAudio(
+        _ urls: [URL?],
+        retaining protectedURLs: Set<URL> = [],
+        unlessReferencedBy entries: [Transcript]
+    ) {
         let retained = Set(entries.compactMap(\.audioFileURL).map { $0.standardizedFileURL })
+            .union(protectedURLs.map(\.standardizedFileURL))
         Set(urls.compactMap { $0?.standardizedFileURL }).forEach { url in
             guard !retained.contains(url) else { return }
             SessionAudioArchive.deleteManagedRecording(
