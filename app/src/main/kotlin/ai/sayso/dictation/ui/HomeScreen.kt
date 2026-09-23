@@ -87,6 +87,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -109,6 +110,7 @@ import kotlin.math.roundToInt
 @Composable
 fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val downloads = AppGraph.downloads
     val settings = AppGraph.settings
     val modelsDir = AppGraph.localModelsDir
@@ -213,10 +215,12 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             SettingsSearchResults(
                 query = searchQuery,
                 onNavigate = {
+                    focusManager.clearFocus()
                     searchQuery = ""
                     onNavigate(it)
                 },
                 onOpenOnboarding = {
+                    focusManager.clearFocus()
                     searchQuery = ""
                     showOnboarding = true
                 },
@@ -456,7 +460,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             onWakeWordPhraseChange = { phrase ->
                 wakeWordPhrase = phrase
                 AppGraph.settings.wakeWordPhrase = phrase
-                WakeWordService.restart(context)
+                WakeWordService.updatePhrase(phrase)
             },
             onBubbleAlwaysVisibleChange = { enabled ->
                 bubbleAlwaysVisible = enabled
