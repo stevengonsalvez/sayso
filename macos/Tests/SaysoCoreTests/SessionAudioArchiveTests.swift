@@ -404,6 +404,27 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(!FileManager.default.fileExists(atPath: orphanedAudioURL.path))
 }
 
+@Test func corruptHistoryKeepsNamedAudioWhenEmptyAppendFails() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let existingAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    try Data("truncated \(existingAudioURL.lastPathComponent) history".utf8).write(to: historyURL)
+    let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+
+    let emptyReprocess = Transcript(
+        text: "",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: existingAudioURL
+    )
+
+    #expect(await store.appendResult(emptyReprocess) == .failed)
+    #expect(FileManager.default.fileExists(atPath: existingAudioURL.path))
+}
+
 @Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
