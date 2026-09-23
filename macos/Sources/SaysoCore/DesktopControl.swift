@@ -46,6 +46,41 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+public enum DesktopKey: String, Codable, CaseIterable, Sendable {
+    case tab
+    case up
+    case down
+    case left
+    case right
+    case `return`
+    case escape
+
+    static func parse(_ value: String) -> DesktopKey? {
+        switch value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "tab": .tab
+        case "up", "up arrow": .up
+        case "down", "down arrow": .down
+        case "left", "left arrow": .left
+        case "right", "right arrow": .right
+        case "return", "enter": .return
+        case "escape", "esc": .escape
+        default: nil
+        }
+    }
+
+    var virtualKey: CGKeyCode {
+        switch self {
+        case .tab: 48
+        case .up: 126
+        case .down: 125
+        case .left: 123
+        case .right: 124
+        case .return: 36
+        case .escape: 53
+        }
+    }
+}
+
 public enum DesktopAction: Codable, Equatable, Sendable {
     case type(text: String, expectedFingerprint: String)
     case open(url: URL)
@@ -53,12 +88,13 @@ public enum DesktopAction: Codable, Equatable, Sendable {
     case quit(bundleIdentifier: String)
     case scroll(lines: Int, expectedFingerprint: String)
     case press(elementID: String, expectedFingerprint: String)
+    case key(DesktopKey, expectedFingerprint: String)
 
     public var isDestructive: Bool {
         switch self {
         case .quit:
             return true
-        case .press:
+        case .press, .key:
             // Element IDs are opaque AX locators. Treat an unlabelled press as review-only.
             return true
         default:
@@ -189,7 +225,7 @@ public enum ControlOutcome {
         case .type:
             guard let after else { return .unknown }
             return after.focusedValue != before.focusedValue ? .observed : .notObserved
-        case .press, .scroll:
+        case .press, .scroll, .key:
             guard let after else { return .unknown }
             return after.fingerprint != before.fingerprint ? .observed : .notObserved
         case .open, .activate, .quit:
@@ -203,7 +239,7 @@ public enum ControlOutcome {
         switch action {
         case .type:
             return observed ? "observed text change" : "no observed text change"
-        case .press, .scroll:
+        case .press, .scroll, .key:
             return observed ? "observed interface change" : "no observed interface change"
         case .open:
             return observed ? "observed navigation" : "no observed navigation"
@@ -332,7 +368,10 @@ public enum ControlObservation {
 }
 
 public enum ControlPlanner {
-    public static func commands(from command: String) throws -> [String] {
+    public static func commands(
+        from command: String,
+        maximumSteps: Int = ControlSessionLimits().maxActions
+    ) throws -> [String] {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw SaysoError.invalidAction("Say a control command.") }
         if trimmed.lowercased().hasPrefix("type ") { return [trimmed] }
@@ -361,6 +400,9 @@ public enum ControlPlanner {
         guard commands.allSatisfy({ !$0.isEmpty }) else {
             throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
         }
+        guard commands.count <= max(1, maximumSteps) else {
+            throw SaysoError.invalidAction("Control supports at most \(max(1, maximumSteps)) steps per command.")
+        }
         return commands
     }
 
@@ -377,6 +419,18 @@ public enum ControlPlanner {
             let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { throw SaysoError.invalidAction("Say what to type after 'type'.") }
             return .init(action: .type(text: text, expectedFingerprint: snapshot.fingerprint), confidence: 0.90, reason: "Exact type command")
+        }
+        if normalized.hasPrefix("press ") {
+            let keyName = String(trimmed.dropFirst(6))
+            guard let key = DesktopKey.parse(keyName) else {
+                throw SaysoError.invalidAction("Press supports: tab, arrows, return, or escape.")
+            }
+            return .init(
+                action: .key(key, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Exact key command",
+                requiresConfirmation: true
+            )
         }
         if normalized.hasPrefix("open ") {
             let address = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
@@ -404,7 +458,7 @@ public enum ControlPlanner {
         if normalized.hasPrefix("quit "), let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
             return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
         }
-        throw SaysoError.invalidAction("Control supports: type, click exact title, scroll, open https URL, activate bundle ID, or quit bundle ID.")
+        throw SaysoError.invalidAction("Control supports: type, press key, click exact title, scroll, open https URL, activate bundle ID, or quit bundle ID.")
     }
 
     private static func bundleIdentifier(from command: String, prefix: Int) -> String? {
@@ -534,6 +588,16 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.staleTarget
             }
             try candidateCapture.press(candidateID: .init(rawValue: elementID), application: target)
+        case let .key(key, expectedFingerprint):
+            guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier), target.activate(),
+                  let source = CGEventSource(stateID: .combinedSessionState),
+                  let keyDown = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: false) else {
+                throw SaysoError.unavailable("Keyboard event")
+            }
+            keyDown.postToPid(target.processIdentifier)
+            keyUp.postToPid(target.processIdentifier)
         }
 
         let observation = try await observeEffect(
@@ -611,7 +675,7 @@ public final class AXDesktopController: @unchecked Sendable {
         openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
-        case .type, .press, .scroll:
+        case .type, .press, .scroll, .key:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
