@@ -378,7 +378,8 @@ public enum TextOutput {
     }
 
     private static func copyElement(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
-        guard let value = copyAttribute(attribute, from: element) else { return nil }
+        guard let value = copyAttribute(attribute, from: element),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value, to: AXUIElement.self)
     }
 }
@@ -401,9 +402,8 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
     public let range: TextUTF16Range
 
     public init?(value: String, range: TextUTF16Range) {
-        guard range.location >= 0, range.length > 0, range.end <= value.utf16.count else { return nil }
-        let codeUnits = Array(value.utf16)
-        selectedText = String(decoding: codeUnits[range.location..<range.end], as: UTF16.self)
+        guard let selectedText = Self.substring(in: value, at: range) else { return nil }
+        self.selectedText = selectedText
         originalValue = value
         self.range = range
     }
@@ -413,17 +413,27 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
     }
 
     public func replacing(with text: String) -> String? {
-        guard stillMatches(value: originalValue, range: range) else { return nil }
-        let codeUnits = Array(originalValue.utf16)
-        let prefix = String(decoding: codeUnits[0..<range.location], as: UTF16.self)
-        let suffix = String(decoding: codeUnits[range.end...], as: UTF16.self)
-        return prefix + text + suffix
+        guard let bounds = Self.stringRange(in: originalValue, at: range) else { return nil }
+        return String(originalValue[..<bounds.lowerBound]) + text + String(originalValue[bounds.upperBound...])
     }
 
     private static func substring(in value: String, at range: TextUTF16Range) -> String? {
-        guard range.location >= 0, range.length > 0, range.end <= value.utf16.count else { return nil }
-        let codeUnits = Array(value.utf16)
-        return String(decoding: codeUnits[range.location..<range.end], as: UTF16.self)
+        guard let bounds = stringRange(in: value, at: range) else { return nil }
+        return String(value[bounds])
+    }
+
+    private static func stringRange(in value: String, at range: TextUTF16Range) -> Range<String.Index>? {
+        let utf16Count = value.utf16.count
+        guard range.location >= 0,
+              range.length > 0,
+              range.location <= utf16Count,
+              range.length <= utf16Count - range.location
+        else { return nil }
+        let start = String.Index(utf16Offset: range.location, in: value)
+        let end = String.Index(utf16Offset: range.location + range.length, in: value)
+        guard start.samePosition(in: value.unicodeScalars) != nil,
+              end.samePosition(in: value.unicodeScalars) != nil else { return nil }
+        return start..<end
     }
 }
 
@@ -431,11 +441,13 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
 public enum SelectedTextEdit {
     public enum ApplyResult: Equatable {
         case replaced
+        case noRewrite
         case copiedToClipboard(String)
 
         public var userMessage: String {
             switch self {
             case .replaced: "Selection rewritten."
+            case .noRewrite: "No rewrite was returned."
             case let .copiedToClipboard(reason): "\(reason) Rewrite copied to clipboard."
             }
         }
@@ -467,16 +479,16 @@ public enum SelectedTextEdit {
               let application = NSWorkspace.shared.frontmostApplication,
               !application.isTerminated else { return nil }
         let root = AXUIElementCreateApplication(application.processIdentifier)
-        guard let field = copyElement(kAXFocusedUIElementAttribute as CFString, from: root),
-              let value = copyAttribute(kAXValueAttribute as CFString, from: field) as? String,
-              let range = selectedRange(in: field),
-              let anchor = SelectedTextEditAnchor(value: value, range: range) else { return nil }
+        guard let field = copyElement(kAXFocusedUIElementAttribute as CFString, from: root) else { return nil }
         let role = copyAttribute(kAXRoleAttribute as CFString, from: field) as? String ?? ""
         let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: field) as? String ?? ""
         guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { return nil }
         var fieldProcessIdentifier: pid_t = 0
         AXUIElementGetPid(field, &fieldProcessIdentifier)
         guard fieldProcessIdentifier == application.processIdentifier else { return nil }
+        guard let value = copyAttribute(kAXValueAttribute as CFString, from: field) as? String,
+              let range = selectedRange(in: field),
+              let anchor = SelectedTextEditAnchor(value: value, range: range) else { return nil }
         let identity = TextOutputTargetIdentity(
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
@@ -491,7 +503,7 @@ public enum SelectedTextEdit {
     }
 
     public static func replace(_ rewrite: String, in capture: Capture) -> ApplyResult {
-        guard !rewrite.isEmpty else { return copy(rewrite, reason: "Rewrite was empty.") }
+        guard !rewrite.isEmpty else { return .noRewrite }
         guard let application = NSRunningApplication(processIdentifier: capture.processIdentifier),
               !application.isTerminated,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == capture.processIdentifier,
@@ -531,10 +543,12 @@ public enum SelectedTextEdit {
     }
 
     private static func selectedRange(in element: AXUIElement) -> TextUTF16Range? {
-        guard let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: element) else { return nil }
+        guard let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: element),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         let rangeValue = unsafeDowncast(value, to: AXValue.self)
         var range = CFRange()
-        guard AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
+        guard AXValueGetType(rangeValue) == .cfRange,
+              AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
         return .init(location: range.location, length: range.length)
     }
 
@@ -545,7 +559,8 @@ public enum SelectedTextEdit {
     }
 
     private static func copyElement(_ attribute: CFString, from element: AXUIElement) -> AXUIElement? {
-        guard let value = copyAttribute(attribute, from: element) else { return nil }
+        guard let value = copyAttribute(attribute, from: element),
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value, to: AXUIElement.self)
     }
 }
