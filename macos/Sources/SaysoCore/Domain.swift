@@ -220,6 +220,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         outputLanguage = decoded(DictationLanguage.self, .outputLanguage, fallback: outputLanguage)
         let legacySpeechLanguage = outputLanguage == .automatic ? speechLanguage : outputLanguage
         speechLanguage = decoded(DictationLanguage.self, .speechLanguage, fallback: legacySpeechLanguage)
+        if speechLanguage == .automatic { speechLanguage = .english }
         speechVoiceIdentifier = (try? values.decodeIfPresent(String.self, forKey: .speechVoiceIdentifier)) ?? speechVoiceIdentifier
         speechRate = min(max(decoded(Double.self, .speechRate, fallback: speechRate), 0.2), 0.6)
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
