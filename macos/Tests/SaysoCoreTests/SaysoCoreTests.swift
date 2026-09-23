@@ -446,9 +446,13 @@ private func openOutcome(
     )
     let enter = try ControlPlanner.plan(command: "press enter", snapshot: snapshot)
     #expect(enter.action == .key(.return, expectedFingerprint: snapshot.fingerprint))
+    #expect(enter.reason == "Press return")
     #expect(ControlPolicy.requiresConfirmation(enter))
     #expect(try ControlPlanner.plan(command: "press left arrow", snapshot: snapshot).action == .key(.left, expectedFingerprint: snapshot.fingerprint))
+    #expect(try ControlPlanner.plan(command: "press esc", snapshot: snapshot).action == .key(.escape, expectedFingerprint: snapshot.fingerprint))
+    #expect(try ControlPlanner.plan(command: "press tab", snapshot: snapshot).action == .key(.tab, expectedFingerprint: snapshot.fingerprint))
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "press command q", snapshot: snapshot) }
+    #expect(ControlOutcome.effect(for: enter.action, before: snapshot, after: snapshot) == .unknown)
 }
 
 @Test func destructivePressPolicyUsesCapturedTitleNotOpaqueLocator() throws {
