@@ -132,6 +132,10 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         hasTranslation ? translatedText! : text
     }
 
+    public func spokenLanguage(outputLanguage: DictationLanguage) -> DictationLanguage {
+        hasTranslation ? outputLanguage : language
+    }
+
     public init(
         id: UUID = UUID(),
         createdAt: Date = .now,
