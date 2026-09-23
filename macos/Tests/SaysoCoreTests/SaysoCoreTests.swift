@@ -115,6 +115,34 @@ import Testing
     )
 }
 
+@Test func clipboardRestorePreservesUserChangesAndCoalescesOwnedPastes() {
+    #expect(ClipboardRestorePolicy.ownsPasteboard(expectedChangeCount: 8, currentChangeCount: 8))
+    #expect(!ClipboardRestorePolicy.ownsPasteboard(expectedChangeCount: 8, currentChangeCount: 9))
+}
+
+@MainActor
+@Test func pasteFailureMessagesMatchVerifiedClipboardOutcomes() {
+    let retained = TextOutput.PasteFailure.finalTextCopiedToClipboard
+    #expect(retained.fallbackDelivery == .clipboard)
+    #expect(retained.userMessage == "Could not paste final text. Final text copied to clipboard.")
+
+    let restored = TextOutput.PasteFailure.clipboardRestored
+    #expect(restored.fallbackDelivery == nil)
+    #expect(restored.userMessage == "Could not paste final text. Clipboard was restored.")
+
+    let changed = TextOutput.PasteFailure.clipboardChangedBeforeRestore
+    #expect(changed.fallbackDelivery == nil)
+    #expect(changed.userMessage == "Could not paste final text. Clipboard changed before Sayso could restore it.")
+
+    let restoreFailed = TextOutput.PasteFailure.clipboardRestoreFailed
+    #expect(restoreFailed.fallbackDelivery == nil)
+    #expect(restoreFailed.userMessage == "Could not paste final text. Clipboard could not be restored.")
+
+    let unavailable = TextOutput.PasteFailure.clipboardUnavailable
+    #expect(unavailable.fallbackDelivery == nil)
+    #expect(unavailable.userMessage == "Could not paste final text or copy it to the clipboard.")
+}
+
 @Test func historyInsightsCountWordsAndDays() {
     let entries = [Transcript(text: "two words", language: .english, route: .local, isFinal: true)]
     #expect(HistoryInsights.make(from: entries).words == 2)
@@ -373,7 +401,45 @@ private func openOutcome(
     )
 
     let step = try ControlPlanner.plan(command: "click Send", snapshot: snapshot)
+    #expect(step.candidateTitle == "Send")
     #expect(ControlPolicy.requiresConfirmation(step))
+}
+
+@Test func controlPlannerSeparatesBoundedCommandStepsWithoutSplittingTypedText() throws {
+    #expect(try ControlPlanner.commands(from: "scroll down then scroll up") == ["scroll down", "scroll up"])
+    #expect(try ControlPlanner.commands(from: "scroll down Then scroll up") == ["scroll down", "scroll up"])
+    #expect(try ControlPlanner.commands(from: "type now and then later") == ["type now and then later"])
+    #expect(try ControlPlanner.commands(from: "scroll down then type now and then later") == ["scroll down", "type now and then later"])
+    #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: "scroll down then ") }
+}
+
+@Test func destructivePressPolicyUsesCapturedTitleNotOpaqueLocator() throws {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "", isProtected: false,
+        elements: [.init(id: "opaque-base64-locator", role: "AXButton", title: "Save")]
+    )
+    let safeStep = try ControlPlanner.plan(command: "click Save", snapshot: snapshot)
+    let unlabelledStep = ControlPlanStep(
+        action: .press(elementID: "opaque-base64-locator", expectedFingerprint: snapshot.fingerprint),
+        confidence: 0.85,
+        reason: "Opaque press"
+    )
+
+    #expect(!ControlPolicy.requiresConfirmation(safeStep))
+    #expect(ControlPolicy.requiresConfirmation(unlabelledStep))
+    #expect(unlabelledStep.action.isDestructive)
+    #expect(ControlPolicy.isDestructiveControlTitle("DeleteAccount"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Resend"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Deleting account"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Payment"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Unsend"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Deletes"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Closing window"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Submitted"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Cancelled"))
+    #expect(ControlPolicy.isDestructiveControlTitle("Sent"))
+    #expect(!ControlPolicy.isDestructiveControlTitle("Sender"))
 }
 
 @Test func controlPlannerRequiresExactBundleIdentifier() throws {
