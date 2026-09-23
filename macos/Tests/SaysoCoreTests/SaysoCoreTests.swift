@@ -435,6 +435,20 @@ private func openOutcome(
     #expect(try ControlPlanner.commands(from: "type now and then later") == ["type now and then later"])
     #expect(try ControlPlanner.commands(from: "scroll down then type now and then later") == ["scroll down", "type now and then later"])
     #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: "scroll down then ") }
+    let overBudget = Array(repeating: "scroll down", count: ControlSessionLimits().maxActions + 1).joined(separator: " then ")
+    #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: overBudget) }
+}
+
+@Test func controlPlannerAllowsOnlyReviewedNavigationKeys() throws {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft",
+        focusedRole: "AXTextField", focusedValue: "", isProtected: false
+    )
+    let enter = try ControlPlanner.plan(command: "press enter", snapshot: snapshot)
+    #expect(enter.action == .key(.return, expectedFingerprint: snapshot.fingerprint))
+    #expect(ControlPolicy.requiresConfirmation(enter))
+    #expect(try ControlPlanner.plan(command: "press left arrow", snapshot: snapshot).action == .key(.left, expectedFingerprint: snapshot.fingerprint))
+    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "press command q", snapshot: snapshot) }
 }
 
 @Test func destructivePressPolicyUsesCapturedTitleNotOpaqueLocator() throws {
