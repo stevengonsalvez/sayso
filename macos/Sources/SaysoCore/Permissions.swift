@@ -117,6 +117,9 @@ public final class PermissionCenter: ObservableObject {
             _ = CGRequestListenEventAccess()
             openSettings(for: kind)
         }
+        // TCC can report its prior state for one main-run-loop turn after its sheet closes.
+        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(150))
         refresh()
     }
 
