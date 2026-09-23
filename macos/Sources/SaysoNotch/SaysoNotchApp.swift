@@ -100,6 +100,7 @@ final class SaysoAppModel: ObservableObject {
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
     private var onboardingTestSessionID: UUID?
+    private var transcriptProcessingNotice: String?
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
@@ -515,17 +516,19 @@ final class SaysoAppModel: ObservableObject {
         let finalText = completed.translatedText ?? completed.text
         let copied = TextOutput.copy(finalText)
         if historyResult == .recovered {
-            notice = copied
+            setTranscriptCompletionNotice(copied
                 ? "Final text copied. Recovered unreadable history to a local backup."
-                : "Dictation finished. Recovered unreadable history to a local backup."
+                : "Dictation finished. Recovered unreadable history to a local backup.")
         } else if historyResult == .failed {
-            notice = copied ? "Final text copied, but history could not save." : "Dictation finished, but text could not be copied and history could not be saved."
+            setTranscriptCompletionNotice(copied ? "Final text copied, but history could not save." : "Dictation finished, but text could not be copied and history could not be saved.")
         } else {
-            notice = copied ? "Final text copied to clipboard." : "Dictation finished, but final text could not be copied."
+            setTranscriptCompletionNotice(copied ? "Final text copied to clipboard." : "Dictation finished, but final text could not be copied.")
         }
+        transcriptProcessingNotice = nil
     }
 
     private func translated(_ transcript: Transcript, settings currentSettings: SaysoSettings) async -> Transcript {
+        transcriptProcessingNotice = nil
         var corrected = transcript
         corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
         corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
@@ -533,12 +536,12 @@ final class SaysoAppModel: ObservableObject {
         corrected.text = await cleaned(corrected.text, language: corrected.language, settings: currentSettings)
         guard currentSettings.translationEnabled else { return corrected }
         guard currentSettings.cloudConsentGranted else {
-            notice = "Translation needs cloud consent and a selected provider."
+            transcriptProcessingNotice = "Translation needs cloud consent and a selected provider."
             return corrected
         }
         guard let key = secrets.secret(named: "byok-api-key"),
               let baseURL = URL(string: currentSettings.byokBaseURL) else {
-            notice = "Configure BYOK translation in Settings."
+            transcriptProcessingNotice = "Configure BYOK translation in Settings."
             return corrected
         }
         var translated = corrected
@@ -550,7 +553,7 @@ final class SaysoAppModel: ObservableObject {
                 corrected.text, from: corrected.language, to: currentSettings.outputLanguage
             )
         } catch {
-            notice = "Translation unavailable. Inserted original transcript."
+            transcriptProcessingNotice = "Translation unavailable. Inserted original transcript."
         }
         return translated
     }
@@ -585,8 +588,16 @@ final class SaysoAppModel: ObservableObject {
             cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
             return corrections.apply(to: cleaned).transformedText
         } catch {
-            notice = "Cloud cleanup unavailable. Applied local cleanup."
+            transcriptProcessingNotice = "Cloud cleanup unavailable. Applied local cleanup."
             return local
+        }
+    }
+
+    private func setTranscriptCompletionNotice(_ completion: String) {
+        if let transcriptProcessingNotice {
+            notice = "\(completion) \(transcriptProcessingNotice)"
+        } else {
+            notice = completion
         }
     }
 
@@ -610,7 +621,7 @@ final class SaysoAppModel: ObservableObject {
         switch output {
         case let .delivered(method):
             if method == .clipboard, activeRecordingSession == nil {
-                notice = "Final text copied to clipboard."
+                setTranscriptCompletionNotice("Final text copied to clipboard.")
             }
             session.complete(text: finalText, delivery: method)
         case let .pasteFailed(failure):
@@ -620,7 +631,7 @@ final class SaysoAppModel: ObservableObject {
                 session.fail(failure.userMessage)
             }
             if activeRecordingSession == nil {
-                notice = failure.userMessage
+                setTranscriptCompletionNotice(failure.userMessage)
             }
         }
         if pendingDelivery.settings.autoCorrectionsEnabled,
@@ -631,20 +642,23 @@ final class SaysoAppModel: ObservableObject {
             if historyResult == .recovered {
                 switch output {
                 case .delivered:
-                    notice = "Final text delivered. Recovered unreadable history to a local backup."
+                    setTranscriptCompletionNotice("Final text delivered. Recovered unreadable history to a local backup.")
                 case let .pasteFailed(failure):
-                    notice = "\(failure.userMessage) Recovered unreadable history to a local backup."
+                    setTranscriptCompletionNotice("\(failure.userMessage) Recovered unreadable history to a local backup.")
                 }
             } else if historyResult == .failed {
                 switch output {
                 case .delivered:
-                    notice = "Final text delivered, but history could not save."
+                    setTranscriptCompletionNotice("Final text delivered, but history could not save.")
                 case let .pasteFailed(failure):
-                    notice = "\(failure.userMessage) History could not save."
+                    setTranscriptCompletionNotice("\(failure.userMessage) History could not save.")
                 }
+            } else if transcriptProcessingNotice != nil {
+                setTranscriptCompletionNotice("Final text delivered.")
             }
         }
         await sessions.upsert(session)
+        transcriptProcessingNotice = nil
         if activeRecordingSession == nil { notch.hideAfterDelay() }
     }
 
