@@ -82,12 +82,12 @@ import Testing
     #expect(!FileTranscriber.prefersFluidAudio(language: .punjabi, route: .local, localModelReady: true))
 }
 
-@Test @MainActor func localPunjabiFailsBeforeAudioOrSpeechSetup() async throws {
+@Test @MainActor func localPunjabiRequiresItsOfflineModelBeforeAudioOrSpeechSetup() async throws {
     let fileURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
     defer { try? FileManager.default.removeItem(at: fileURL) }
     try Data().write(to: fileURL)
 
-    await #expect(throws: SaysoError.unavailable("On-device recognition is unavailable for Punjabi")) {
+    await #expect(throws: SaysoError.unavailable("Download the local Punjabi model before dictating.")) {
         try await FileTranscriber.transcribe(fileURL: fileURL, language: .punjabi, route: .local)
     }
 }
