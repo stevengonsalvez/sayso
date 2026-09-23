@@ -86,12 +86,13 @@ import Testing
     #expect(!FileTranscriber.prefersFluidAudio(language: .punjabi, route: .local, localModelReady: true))
 }
 
-@Test @MainActor func localPunjabiRequiresItsOfflineModelBeforeAudioOrSpeechSetup() async throws {
-    let fileURL = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString).wav")
-    defer { try? FileManager.default.removeItem(at: fileURL) }
-    try Data().write(to: fileURL)
+@Test @MainActor func localPunjabiSkipsSpeechSetupUntilModelDownloads() throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = SherpaPunjabiModelManager(modelsDirectory: root)
+    let transcriber = LiveTranscriber(sherpaPunjabiModels: manager)
 
-    await #expect(throws: SaysoError.unavailable("Download the local Punjabi model before dictating.")) {
-        try await FileTranscriber.transcribe(fileURL: fileURL, language: .punjabi, route: .local)
-    }
+    #expect(!manager.state.isInstalled)
+    #expect(!transcriber.requiresSpeechRecognition(language: .punjabi, route: .local))
+    #expect(!FileTranscriber.prefersSherpaPunjabi(language: .punjabi, route: .local, localModelReady: false))
 }
