@@ -58,18 +58,46 @@ public final class AXCandidateCapture: @unchecked Sendable {
         let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
         let windowTitle = window.flatMap { stringAttribute(kAXTitleAttribute as CFString, from: $0) } ?? ""
         let captured = window.map {
-            candidates(in: $0, processIdentifier: app.processIdentifier, windowTitle: windowTitle)
+            capturedCandidates(in: $0, processIdentifier: app.processIdentifier, windowTitle: windowTitle)
         } ?? []
 
         return DesktopCandidateSnapshot(
             processIdentifier: app.processIdentifier,
             applicationName: app.localizedName ?? "Unknown",
             windowTitle: windowTitle,
-            candidates: captured
+            candidates: captured.map(\.candidate)
         )
     }
 
-    private func candidates(in root: AXUIElement, processIdentifier: Int32, windowTitle: String) -> [DesktopCandidate] {
+    public func press(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws {
+        guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
+        let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
+        guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
+            throw SaysoError.staleTarget
+        }
+        let windowTitle = stringAttribute(kAXTitleAttribute as CFString, from: window) ?? ""
+        guard let target = capturedCandidates(
+            in: window,
+            processIdentifier: targetApplication.processIdentifier,
+            windowTitle: windowTitle
+        ).first(where: { $0.candidate.id == candidateID }), target.candidate.state.isTargetable else {
+            throw SaysoError.staleTarget
+        }
+        guard AXUIElementPerformAction(target.element, kAXPressAction as CFString) == .success else {
+            throw SaysoError.invalidAction("Visible control rejected click")
+        }
+    }
+
+    private struct CapturedCandidate {
+        let candidate: DesktopCandidate
+        let element: AXUIElement
+    }
+
+    private func capturedCandidates(
+        in root: AXUIElement,
+        processIdentifier: Int32,
+        windowTitle: String
+    ) -> [CapturedCandidate] {
         struct PendingNode {
             let element: AXUIElement
             let ancestry: [Int]
@@ -79,7 +107,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         var pending = [PendingNode(element: root, ancestry: [], depth: 0)]
         var index = 0
         var visited = 0
-        var captured = [DesktopCandidate]()
+        var captured = [CapturedCandidate]()
 
         while index < pending.count,
               visited < limits.maximumNodes,
@@ -107,26 +135,25 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 supportsFocus: supportsFocus,
                 isProtected: protected
             ) {
-                captured.append(
-                    DesktopCandidate(
-                        id: .init(
-                            processIdentifier: processIdentifier,
-                            windowTitle: windowTitle,
-                            role: role,
-                            identifier: identifier,
-                            ancestry: node.ancestry
-                        ),
+                let candidate = DesktopCandidate(
+                    id: .init(
+                        processIdentifier: processIdentifier,
+                        windowTitle: windowTitle,
                         role: role,
-                        title: title,
                         identifier: identifier,
-                        state: .init(
-                            isEnabled: isEnabled,
-                            supportsPress: supportsPress,
-                            supportsFocus: supportsFocus,
-                            isProtected: false
-                        )
+                        ancestry: node.ancestry
+                    ),
+                    role: role,
+                    title: title,
+                    identifier: identifier,
+                    state: .init(
+                        isEnabled: isEnabled,
+                        supportsPress: supportsPress,
+                        supportsFocus: supportsFocus,
+                        isProtected: false
                     )
                 )
+                captured.append(.init(candidate: candidate, element: node.element))
             }
 
             guard node.depth < limits.maximumDepth else { continue }
