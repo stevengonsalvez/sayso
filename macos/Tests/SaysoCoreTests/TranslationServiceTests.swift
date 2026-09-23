@@ -38,6 +38,21 @@ import Testing
     #expect(messages[1]["content"]?.contains("{\"transcript\":\"rough draft\"}") == true)
 }
 
+@Test func compatibleCleanerRejectsImplausiblyLongReply() async throws {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [VerboseCleanupURLProtocol.self]
+    let cleaner = OpenAICompatibleTranscriptCleaner(
+        baseURL: try #require(URL(string: "https://api.example.com/v1")),
+        apiKey: "test-key",
+        model: "test-model",
+        session: URLSession(configuration: configuration)
+    )
+
+    await #expect(throws: SaysoError.self) {
+        try await cleaner.clean("short", language: .english)
+    }
+}
+
 private final class VoiceEditURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "api.example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -90,4 +105,22 @@ private final class CleanupURLProtocol: URLProtocol, @unchecked Sendable {
         }
         return data
     }
+}
+
+private final class VerboseCleanupURLProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "api.example.com" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let text = String(repeating: "x", count: 40)
+        client?.urlProtocol(self, didLoad: Data("{\"choices\":[{\"message\":{\"content\":\"\(text)\"}}]}".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
