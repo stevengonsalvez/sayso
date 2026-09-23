@@ -174,7 +174,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 onSelectPhrase = { phrase ->
                     wakeWordPhrase = phrase
                     settings.wakeWordPhrase = phrase
-                    WakeWordService.restart(context)
+                    WakeWordService.updatePhrase(phrase)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -493,17 +493,20 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
             },
         )
 
-        TransliterationSettingsCard(
-            transliterateToLatin = transliterateIndicToLatin,
-            languageCode = language,
-            onToggle = { enabled ->
-                transliterateIndicToLatin = enabled
-                settings.transliterateIndicToLatin = enabled
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-        )
+        val isIndic = language in listOf("ta", "hi", "ml", "te", "kn", "mr", "bn", "gu") || selectedModel.contains("indicconformer")
+        if (isIndic) {
+            TransliterationSettingsCard(
+                transliterateToLatin = transliterateIndicToLatin,
+                languageCode = language,
+                onToggle = { enabled ->
+                    transliterateIndicToLatin = enabled
+                    settings.transliterateIndicToLatin = enabled
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
 
         OutlinedTextField(
             value = hints,
