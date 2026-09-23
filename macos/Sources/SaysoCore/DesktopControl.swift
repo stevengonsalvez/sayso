@@ -135,6 +135,20 @@ public struct InstalledDesktopApplication: Equatable, Sendable {
                 < ($1.name, $1.bundleIdentifier, $1.applicationURL.path)
         }
     }
+
+    public static func validatesLaunchTarget(
+        bundleIdentifier: String,
+        applicationURL: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        let standardizedURL = applicationURL.standardizedFileURL
+        guard standardizedURL.pathExtension.lowercased() == "app",
+              (try? standardizedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+              fileManager.fileExists(atPath: standardizedURL.path),
+              let bundle = Bundle(url: standardizedURL),
+              bundle.bundleIdentifier == bundleIdentifier else { return false }
+        return true
+    }
 }
 
 public enum DesktopApplicationResolution: Equatable, Sendable {
@@ -151,17 +165,25 @@ public enum DesktopApplicationResolver {
         let requested = normalizedName(requestedName)
         guard !requested.isEmpty else { return .notFound }
         let matches = applications
-            .filter { normalizedName($0.name) == requested }
+            .filter { normalizedName($0.name) == requested || normalizedName($0.applicationURL.deletingPathExtension().lastPathComponent) == requested }
             .sorted {
                 ($0.bundleIdentifier, $0.applicationURL.path)
-                    < ($1.bundleIdentifier, $1.applicationURL.path)
+                < ($1.bundleIdentifier, $1.applicationURL.path)
             }
         guard !matches.isEmpty else { return .notFound }
-        return matches.count == 1 ? .resolved(matches[0]) : .ambiguous(matches)
+        return Set(matches.map(\.bundleIdentifier)).count == 1 ? .resolved(matches[0]) : .ambiguous(matches)
     }
 
     private static func normalizedName(_ value: String) -> String {
-        value
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let last = trimmed.unicodeScalars.last,
+              CharacterSet.punctuationCharacters.contains(last) {
+            trimmed.unicodeScalars.removeLast()
+        }
+        if trimmed.lowercased().hasSuffix(".app") {
+            trimmed.removeLast(4)
+        }
+        return trimmed
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
@@ -591,6 +613,19 @@ public enum ControlPlanner {
         throw SaysoError.invalidAction("Control supports: type, press key, go back, next tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit bundle ID.")
     }
 
+    public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased()
+        if normalized.hasPrefix("open ") {
+            let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            return !target.isEmpty && httpURL(target) == nil
+        }
+        if normalized.hasPrefix("switch to ") {
+            return !String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return false
+    }
+
     private static func namedApplicationPlan(
         requestedName: String,
         applications: [InstalledDesktopApplication]
@@ -608,8 +643,11 @@ public enum ControlPlanner {
             )
         case .notFound:
             throw SaysoError.invalidAction("No installed application exactly named '\(requestedName)'.")
-        case .ambiguous:
-            throw SaysoError.invalidAction("More than one installed application is named '\(requestedName)'. Use its bundle identifier with 'activate'.")
+        case let .ambiguous(applications):
+            let filenames = Set(applications.map { $0.applicationURL.lastPathComponent })
+                .sorted()
+                .joined(separator: " or ")
+            throw SaysoError.invalidAction("More than one installed application is named '\(requestedName)'. Say an exact unique .app filename: \(filenames), or remove a duplicate.")
         }
     }
 
@@ -728,9 +766,10 @@ public final class AXDesktopController: @unchecked Sendable {
             app.activate()
         case let .activateApplication(bundleIdentifier, applicationURL):
             let standardizedURL = applicationURL.standardizedFileURL
-            guard InstalledDesktopApplication.available().contains(where: {
-                $0.bundleIdentifier == bundleIdentifier && $0.applicationURL == standardizedURL
-            }) else {
+            guard InstalledDesktopApplication.validatesLaunchTarget(
+                bundleIdentifier: bundleIdentifier,
+                applicationURL: standardizedURL
+            ) else {
                 throw SaysoError.unavailable("Installed application changed")
             }
             let app: NSRunningApplication
@@ -741,9 +780,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 app = try await launchApplication(at: standardizedURL)
             }
             targetProcessIdentifier = app.processIdentifier
-            guard app.activate() else {
-                throw SaysoError.unavailable("Activate \(bundleIdentifier)")
-            }
+            _ = app.activate()
         case let .quit(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
