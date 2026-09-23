@@ -36,8 +36,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
     ) async -> Bool {
-        guard route != .byok else {
-            fail(.unavailable("Configure a BYOK speech provider in Settings"))
+        guard route.supportsDictation else {
+            fail(.unavailable("Your provider is available for translation, not transcription"))
             return false
         }
         guard SpeechCapabilities.supports(language) else {
@@ -49,6 +49,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         let locale = Locale(identifier: language.localeIdentifier ?? Locale.current.identifier)
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
             fail(.unavailable("Speech recognizer for \(language.displayName)"))
+            return false
+        }
+        guard route != .local || recognizer.supportsOnDeviceRecognition else {
+            fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
             return false
         }
 
@@ -66,7 +70,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.taskHint = .dictation
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = route == .local }
+        request.requiresOnDeviceRecognition = route == .local
         recognitionRequest = request
 
         let input = audioEngine.inputNode
@@ -183,7 +187,7 @@ public enum FileTranscriber {
         language: DictationLanguage,
         route: ProviderRoute
     ) async throws -> Transcript {
-        guard route != .byok else { throw SaysoError.unavailable("Configure a BYOK speech provider in Settings") }
+        guard route.supportsDictation else { throw SaysoError.unavailable("Your provider is available for translation, not transcription") }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SaysoError.invalidAction("Audio file was not found")
         }
@@ -197,8 +201,11 @@ public enum FileTranscriber {
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
             throw SaysoError.unavailable("Speech recognizer for \(language.displayName)")
         }
+        guard route != .local || recognizer.supportsOnDeviceRecognition else {
+            throw SaysoError.unavailable("On-device recognition is unavailable for \(language.displayName)")
+        }
         let request = SFSpeechURLRecognitionRequest(url: fileURL)
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = route == .local }
+        request.requiresOnDeviceRecognition = route == .local
         let taskBox = FileRecognitionTaskBox()
         let text = try await withCheckedThrowingContinuation { continuation in
             var completed = false
