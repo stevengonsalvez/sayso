@@ -88,6 +88,10 @@ import Testing
     #expect(SelectedTextEditAnchor(value: value, range: .init(location: 4, length: 1)) == nil)
 }
 
+@Test func selectedTextEditUnverifiedWriteDoesNotAskForPaste() {
+    #expect(SelectedTextEdit.ApplyResult.replacementUnverified.userMessage.contains("copied to clipboard") == false)
+}
+
 @Test func lexiconCorrectionsPreferLongestPhrase() {
     #expect(
         LexiconCorrections.apply(
