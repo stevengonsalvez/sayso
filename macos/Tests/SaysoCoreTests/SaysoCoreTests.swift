@@ -28,6 +28,9 @@ import Testing
     #expect(!settings.legacyLexiconMigrated)
     #expect(!settings.autoCorrectionsEnabled)
     #expect(settings.autoCorrectionsPromotionThreshold == 3)
+    #expect(!settings.cleanupEnabled)
+    #expect(!settings.cloudCleanupEnabled)
+    #expect(settings.byokCleanupModel == "gpt-4.1-mini")
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
