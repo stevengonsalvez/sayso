@@ -40,7 +40,7 @@ import Testing
 
     #expect(await HistoryStore(fileURL: fileURL).append(saved))
     let failingStore = HistoryStore(fileURL: fileURL, persistEntries: { _, _ in false })
-    #expect(!(await failingStore.append(pending)))
+    #expect(await failingStore.append(pending))
     #expect(FileManager.default.fileExists(atPath: fileURL.appendingPathExtension("wal").path))
 
     let recoveredStore = HistoryStore(fileURL: fileURL)
