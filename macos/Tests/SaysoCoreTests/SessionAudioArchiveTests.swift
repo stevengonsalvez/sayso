@@ -529,6 +529,23 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(FileManager.default.fileExists(atPath: replacementAudioURL.path))
 }
 
+@Test func clearRetainsJournaledHistoryWhenReplayCannotPersist() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let historyURL = root.appendingPathComponent("history.json")
+    let original = Transcript(text: "Original", language: .english, route: .local, isFinal: true)
+    let pending = Transcript(text: "Pending", language: .english, route: .local, isFinal: true)
+
+    #expect(await HistoryStore(fileURL: historyURL).append(original))
+    let journaledStore = HistoryStore(fileURL: historyURL, persistEntries: { _, _ in false })
+    #expect(await journaledStore.append(pending))
+
+    #expect(!(await journaledStore.clear()))
+    #expect(await journaledStore.all().map(\.id) == [pending.id, original.id])
+    #expect(FileManager.default.fileExists(atPath: historyURL.appendingPathExtension("wal").path))
+}
+
 @Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
