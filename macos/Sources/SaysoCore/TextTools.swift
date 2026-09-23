@@ -49,8 +49,7 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
             Voice(id: $0.identifier, name: $0.name, language: $0.language)
         }
         guard let localeIdentifier = language.localeIdentifier else { return voices }
-        let matching = voices.filter { $0.language.hasPrefix(String(localeIdentifier.prefix(2))) }
-        return matching.isEmpty ? voices : matching
+        return voices.filter { $0.language.hasPrefix(String(localeIdentifier.prefix(2))) }
     }
 
     public func speak(
