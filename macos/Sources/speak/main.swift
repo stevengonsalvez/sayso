@@ -8,7 +8,9 @@ enum SpeakCommand: String {
     case start
     case stop
     case transcribe
+    case transcribeLocal = "transcribe-local"
     case transcribePunjabi = "transcribe-punjabi"
+    case installIndic = "install-indic"
     case installPunjabi = "install-punjabi"
 }
 
@@ -24,6 +26,32 @@ case .installPunjabi:
         exit(1)
     }
     print("Punjabi model installed")
+case .installIndic:
+    let manager = await MainActor.run { FluidAudioLocalModelManager() }
+    await manager.install(language: .hindi)
+    let state = await MainActor.run { manager.multilingualState }
+    guard state.isInstalled else {
+        fputs("Indic model install failed: \(state)\n", stderr)
+        exit(1)
+    }
+    print("Indic model installed")
+case .transcribeLocal:
+    guard arguments.count == 3,
+          let language = DictationLanguage.allCases.first(where: {
+              $0.rawValue == arguments[1] || $0.displayName.lowercased() == arguments[1].lowercased()
+          }) else {
+        fputs("Usage: speak transcribe-local <language> /absolute/path/to/audio\n", stderr)
+        exit(2)
+    }
+    do {
+        let transcript = try await FileTranscriber.transcribe(
+            fileURL: URL(fileURLWithPath: arguments[2]), language: language, route: .local
+        )
+        print(transcript.text)
+    } catch {
+        fputs("Local transcription failed: \(error.localizedDescription)\n", stderr)
+        exit(1)
+    }
 case .transcribePunjabi:
     guard let path = arguments.dropFirst().first else {
         fputs("Usage: speak transcribe-punjabi /absolute/path/to/audio\n", stderr)
@@ -52,7 +80,7 @@ case .status, .history, .start, .stop, .transcribe:
             exit(2)
         }
         request = .init(command: .transcribeFile, path: URL(fileURLWithPath: path).path)
-    case .installPunjabi, .transcribePunjabi:
+    case .installPunjabi, .installIndic, .transcribePunjabi, .transcribeLocal:
         fatalError("Handled above")
     }
     do {
