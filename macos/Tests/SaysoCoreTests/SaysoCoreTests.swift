@@ -34,6 +34,11 @@ import Testing
     #expect(settings.speechLanguage == .english)
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
+
+    let translatedLegacy = Data("{\"outputLanguage\":\"hi-IN\",\"speechRate\":0.9}".utf8)
+    let migrated = try JSONDecoder().decode(SaysoSettings.self, from: translatedLegacy)
+    #expect(migrated.speechLanguage == .hindi)
+    #expect(migrated.speechRate == 0.6)
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
