@@ -25,6 +25,9 @@ import Testing
     #expect(settings.dictationProfile == .default)
     #expect(!settings.voiceEditCloudConsent)
     #expect(settings.byokRewriteModel == "gpt-4.1-mini")
+    #expect(!settings.legacyLexiconMigrated)
+    #expect(!settings.autoCorrectionsEnabled)
+    #expect(settings.autoCorrectionsPromotionThreshold == 3)
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
