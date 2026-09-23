@@ -11,9 +11,9 @@ public enum TranscriptCleanup {
             options: .regularExpression
         )
         cleaned = cleaned.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
-        cleaned = cleaned.replacingOccurrences(of: #"\s+([,.;:!?])"#, with: "$1", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"\s+(,)"#, with: "$1", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(
-            of: #"(?<!\d)([,;!?])(?!\d)([^\s\]\)"'])"#,
+            of: #"(?<!\d)([,;!?])(?![\d!?.,;:=])([^\s\]\)"'])"#,
             with: "$1 $2",
             options: .regularExpression
         )
