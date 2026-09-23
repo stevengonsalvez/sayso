@@ -31,6 +31,26 @@ private func finishedManagedRecording() throws -> URL {
     #expect(FileManager.default.fileExists(atPath: url.path))
 }
 
+@Test func sessionAudioArchiveConverts48kPCMToRealtime16kAAC() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sourceFormat = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+    let archive = try SessionAudioArchive(directory: directory, inputFormat: sourceFormat)
+    let buffer = try #require(AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: 48_000))
+    buffer.frameLength = 48_000
+
+    archive.append(buffer)
+    let url = try #require(archive.finish())
+    let file = try AVAudioFile(forReading: url)
+    let duration = Double(file.length) / file.processingFormat.sampleRate
+
+    #expect(url.pathExtension == "m4a")
+    #expect(file.processingFormat.sampleRate == 16_000)
+    #expect(file.processingFormat.channelCount == 1)
+    #expect(duration > 0.75)
+    #expect(duration < 1.25)
+}
+
 @Test func sessionAudioArchiveDiscardRemovesUnfinishedRecording() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -43,6 +63,37 @@ private func finishedManagedRecording() throws -> URL {
 
     #expect(!FileManager.default.fileExists(atPath: url.path))
     #expect(archive.finish() == nil)
+}
+
+@Test func sessionAudioArchiveSweepKeepsOnlyReferencedRecordings() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+    let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8))
+    buffer.frameLength = 8
+
+    let retainedArchive = try SessionAudioArchive(directory: directory, inputFormat: format)
+    retainedArchive.append(buffer)
+    let retainedURL = try #require(retainedArchive.finish())
+    let staleArchive = try SessionAudioArchive(directory: directory, inputFormat: format)
+    staleArchive.append(buffer)
+    let staleURL = try #require(staleArchive.finish())
+    let historicalCAF = directory.appendingPathComponent("Recording-legacy.caf")
+    _ = try AVAudioFile(
+        forWriting: historicalCAF,
+        settings: format.settings,
+        commonFormat: format.commonFormat,
+        interleaved: format.isInterleaved
+    )
+
+    SessionAudioArchive.sweepUnreferencedRecordings(
+        retaining: Set([retainedURL]),
+        directory: directory
+    )
+
+    #expect(FileManager.default.fileExists(atPath: retainedURL.path))
+    #expect(!FileManager.default.fileExists(atPath: staleURL.path))
+    #expect(!FileManager.default.fileExists(atPath: historicalCAF.path))
 }
 
 @Test func historyRemovalDeletesItsManagedAudioAfterMetadataPersists() async throws {
