@@ -155,9 +155,11 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var soundCues = true
     public var onboardingCompleted = false
     public var cloudConsentGranted = false
+    public var voiceEditCloudConsent = false
     public var desktopControlEnabled = false
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranslationModel = "gpt-4.1-mini"
+    public var byokRewriteModel = "gpt-4.1-mini"
     public var lexicon: [String: String] = [:]
     public var dictationProfile: DictationProfile = .default
 
@@ -171,7 +173,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage
         case autoInsert, restoreClipboardAfterPaste, handsFree, soundCues, onboardingCompleted
-        case cloudConsentGranted, desktopControlEnabled, byokBaseURL, byokTranslationModel
+        case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
+        case byokBaseURL, byokTranslationModel, byokRewriteModel
         case lexicon, dictationProfile
     }
 
@@ -193,9 +196,11 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
+        voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
+        byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
         lexicon = decoded([String: String].self, .lexicon, fallback: lexicon)
         dictationProfile = decoded(DictationProfile.self, .dictationProfile, fallback: dictationProfile)
     }
