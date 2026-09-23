@@ -51,6 +51,7 @@ final class SaysoAppModel: ObservableObject {
     private var lastExternalApplication: NSRunningApplication?
     private var dictationDestination: TextOutput.Destination?
     private var activeRecordingSession: RecordingSession?
+    private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
 
     init() {
@@ -62,9 +63,11 @@ final class SaysoAppModel: ObservableObject {
             fluidAudioModels: localEnglishModel,
             sherpaPunjabiModels: localPunjabiModel
         )
-        var saved = UserDefaultsSettingsStore().load()
+        var saved = settingsStore.load()
+        let persistedSettings = saved
         saved.applyFirstRunDefaults()
         if !saved.route.supportsDictation { saved.route = .local }
+        if saved != persistedSettings { settingsStore.save(saved) }
         if CommandLine.arguments.contains("--automation-server") {
             saved.desktopControlEnabled = true
             saved.onboardingCompleted = true
@@ -149,6 +152,16 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func nativeModelReady(for language: DictationLanguage) -> Bool {
+        if language == .punjabi { return localPunjabiModel.state.isInstalled }
+        guard FluidAudioLocalModelManager.supportsNativeModel(for: language) else { return false }
+        return localEnglishModel.isInstalled(for: language)
+    }
+
+    func nativeModelDownloadAvailable(for language: DictationLanguage) -> Bool {
+        language == .punjabi || FluidAudioLocalModelManager.supportsNativeModel(for: language)
+    }
+
     func startOrStopDictation() {
         if transcriber.phase == .listening {
             transcriber.stop()
@@ -219,6 +232,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func accept(_ transcript: Transcript) {
+        if applyPendingVoiceMode() { return }
         guard settings.mode == .dictation else {
             runControl(transcript.text)
             return
@@ -305,6 +319,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func handleTranscriptionTermination(_ termination: TranscriptionTermination) {
         guard activeRecordingSession != nil else { return }
+        pendingVoiceMode = nil
         switch termination {
         case .cancelled:
             updateActiveSession { $0.transition(to: .cancelled) }
@@ -320,6 +335,10 @@ final class SaysoAppModel: ObservableObject {
             notice = "Stop dictation before changing modes."
             return
         }
+        applyMode(mode)
+    }
+
+    private func applyMode(_ mode: SaysoMode) {
         settings.mode = mode
         save()
         notch.show()
@@ -389,7 +408,13 @@ final class SaysoAppModel: ObservableObject {
 
     func setAutomation(_ enabled: Bool) {
         settings.desktopControlEnabled = enabled
-        if enabled { startAutomation() } else { automation.stop() }
+        if enabled {
+            startAutomation()
+        } else {
+            automation.stop()
+            pendingControlStep = nil
+            Task { _ = await desktopControlSession.cancel() }
+        }
         save()
     }
 
@@ -413,8 +438,29 @@ final class SaysoAppModel: ObservableObject {
 
     private func handleVoiceModeSwitch(_ text: String) {
         let command = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        if command.contains("sayso switch to control") { switchMode(.control) }
-        if command.contains("sayso switch to dictation") { switchMode(.dictation) }
+        let target: SaysoMode?
+        if command.contains("sayso switch to control") {
+            target = .control
+        } else if command.contains("sayso switch to dictation") {
+            target = .dictation
+        } else {
+            target = nil
+        }
+        guard let target, target != settings.mode, pendingVoiceMode == nil else { return }
+        pendingVoiceMode = target
+        notice = "Switching to \(target == .control ? "Control" : "Dictation")…"
+        if transcriber.phase == .listening { transcriber.stop() }
+    }
+
+    private func applyPendingVoiceMode() -> Bool {
+        guard let target = pendingVoiceMode else { return false }
+        pendingVoiceMode = nil
+        updateActiveSession { $0.transition(to: .cancelled) }
+        activeRecordingSession = nil
+        dictationDestination = nil
+        applyMode(target)
+        notice = target == .control ? "Control ready." : "Dictation ready."
+        return true
     }
 
     func speakLatest() {
@@ -422,7 +468,16 @@ final class SaysoAppModel: ObservableObject {
         speech.speak(text, language: settings.outputLanguage)
     }
 
+    private func desktopControlEnabled() -> Bool {
+        guard settings.desktopControlEnabled else {
+            controlStatus = "Enable desktop control in Settings before acting."
+            return false
+        }
+        return true
+    }
+
     func captureDesktop() {
+        guard desktopControlEnabled() else { return }
         do {
             currentSnapshot = try controller.capture(application: controlTarget())
             controlStatus = "Grounded \(currentSnapshot?.applicationName ?? "desktop")"
@@ -432,6 +487,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func runSafeDemoControl() {
+        guard desktopControlEnabled() else { return }
         captureDesktop()
         guard let snapshot = currentSnapshot else { return }
         Task {
@@ -445,6 +501,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func runControl(_ command: String) {
+        guard desktopControlEnabled() else { return }
         do {
             let target = try controlTarget()
             let snapshot = try controller.capture(application: target)
@@ -463,6 +520,10 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func approvePendingControl() {
+        guard desktopControlEnabled() else {
+            pendingControlStep = nil
+            return
+        }
         guard let step = pendingControlStep else { return }
         pendingControlStep = nil
         do {
@@ -486,6 +547,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func execute(_ step: ControlPlanStep, target: NSRunningApplication, approved: Bool) {
+        guard desktopControlEnabled() else { return }
         Task {
             do {
                 let state = await desktopControlSession.currentState()
@@ -702,6 +764,7 @@ private struct ControlWorkspace: View {
                 .buttonStyle(.bordered)
                 .tint(SaysoPalette.amber)
             }
+            .disabled(!model.settings.desktopControlEnabled)
             HStack(spacing: 12) {
                 TextField("Type, scroll down, or open https://…", text: $command)
                     .onSubmit { model.runControl(command) }
@@ -715,6 +778,12 @@ private struct ControlWorkspace: View {
                 .tint(SaysoPalette.cobalt)
                 Button("Cancel", role: .cancel) { model.cancelControl() }
                     .buttonStyle(.bordered)
+            }
+            .disabled(!model.settings.desktopControlEnabled)
+            if !model.settings.desktopControlEnabled {
+                Label("Enable desktop control in Settings before acting.", systemImage: "lock.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(SaysoPalette.muted)
             }
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -861,16 +930,15 @@ private struct LanguageWorkspace: View {
                     HStack {
                         Text(language.displayName)
                         Spacer()
-                        let isPunjabi = language == .punjabi
-                        let available = isPunjabi
-                            ? model.localPunjabiModel.state.isInstalled
-                            : SpeechCapabilities.supports(language)
+                        let nativeReady = model.nativeModelReady(for: language)
+                        let downloadAvailable = model.nativeModelDownloadAvailable(for: language)
+                        let appleAvailable = SpeechCapabilities.supports(language)
                         Label(
-                            available ? (isPunjabi ? "On-device ready" : "Available") : (isPunjabi ? "Download model" : "Unavailable"),
-                            systemImage: available ? "checkmark.circle.fill" : "xmark.circle"
+                            nativeReady ? "On-device ready" : downloadAvailable ? "Download local model" : appleAvailable ? "Apple Speech available" : "Unavailable",
+                            systemImage: nativeReady || appleAvailable ? "checkmark.circle.fill" : "xmark.circle"
                         )
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(available ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        .foregroundStyle(nativeReady || appleAvailable ? SaysoPalette.cobalt : SaysoPalette.muted)
                     }
                 }
             }
@@ -1055,12 +1123,12 @@ private struct SaysoSettingsView: View {
                 Picker("Spoken language", selection: $model.settings.language) {
                     ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
-                if model.settings.route == .local, model.settings.language == .punjabi {
-                    Text(model.localPunjabiModel.state.isInstalled
-                        ? "Punjabi runs locally and delivers final text when you stop."
-                        : "Download the Punjabi model in Models before dictating.")
+                if model.settings.route == .local, model.nativeModelDownloadAvailable(for: model.settings.language) {
+                    Text(model.nativeModelReady(for: model.settings.language)
+                        ? "Selected language runs locally on this Mac."
+                        : "Download the selected local model in Models before dictating.")
                         .font(.caption)
-                        .foregroundStyle(model.localPunjabiModel.state.isInstalled ? .secondary : SaysoPalette.crimson)
+                        .foregroundStyle(model.nativeModelReady(for: model.settings.language) ? .secondary : SaysoPalette.crimson)
                 } else {
                     Text(SpeechCapabilities.supports(model.settings.language) ? "Available on this Mac" : "Unavailable on this Mac, choose another language or cloud route")
                         .font(.caption).foregroundStyle(SpeechCapabilities.supports(model.settings.language) ? .secondary : SaysoPalette.crimson)
@@ -1295,7 +1363,7 @@ private struct OnboardingWizard: View {
                 case 1:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Choose your engine.").font(.title2.bold())
-                        Text("On-device keeps recognition local when macOS supports the selected language. Apple Speech can use Apple’s recognition service.")
+                        Text("On-device keeps recognition local. Download the selected Sayso model before starting, or choose Apple Speech to use Apple’s recognizer.")
                             .foregroundStyle(.secondary)
                         Picker("Speech route", selection: $model.settings.route) {
                             ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
@@ -1303,6 +1371,21 @@ private struct OnboardingWizard: View {
                         .pickerStyle(.segmented)
                         if model.settings.route.transmitsData {
                             Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
+                        }
+                        if model.settings.route == .local,
+                           model.nativeModelDownloadAvailable(for: model.settings.language),
+                           !model.nativeModelReady(for: model.settings.language) {
+                            Button("Download selected local model") {
+                                Task {
+                                    if model.settings.language == .punjabi {
+                                        await model.localPunjabiModel.install()
+                                    } else {
+                                        await model.localEnglishModel.install(language: model.settings.language)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
                         }
                     }
                 case 2:
@@ -1322,7 +1405,7 @@ private struct OnboardingWizard: View {
                 default:
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Grant only what you use.").font(.title2.bold())
-                        Text("Microphone and Speech Recognition power dictation. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
+                        Text("Microphone powers dictation. Speech Recognition is only needed for Apple Speech. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
                             .foregroundStyle(.secondary)
                         ForEach(PermissionKind.allCases) { permission in
                             HStack(spacing: 12) {
