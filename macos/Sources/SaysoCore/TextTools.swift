@@ -37,42 +37,58 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
 
 @MainActor
 public enum TextOutput {
+    public final class Destination {
+        fileprivate let field: AXUIElement
+        fileprivate let processIdentifier: pid_t
+
+        fileprivate init(field: AXUIElement, processIdentifier: pid_t) {
+            self.field = field
+            self.processIdentifier = processIdentifier
+        }
+    }
+
     public static func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    public static func captureDestination(targetProcessIdentifier: pid_t?) -> Destination? {
+        guard let targetProcessIdentifier else { return nil }
+        let application = AXUIElementCreateApplication(targetProcessIdentifier)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &value) == .success,
+              let value else { return nil }
+        let field = unsafeDowncast(value, to: AXUIElement.self)
+        var fieldProcessIdentifier: pid_t = 0
+        AXUIElementGetPid(field, &fieldProcessIdentifier)
+        guard fieldProcessIdentifier == targetProcessIdentifier, !isProtected(field) else { return nil }
+        return Destination(field: field, processIdentifier: targetProcessIdentifier)
+    }
+
     @discardableResult
     public static func insertOrCopy(
         _ text: String,
-        targetProcessIdentifier: pid_t? = nil,
+        destination: Destination?,
         restoreClipboardAfterPaste: Bool = true
     ) -> Bool {
-        guard AXIsProcessTrusted() else {
+        guard AXIsProcessTrusted(), let destination else {
             copy(text)
             return false
         }
-        let systemWide = AXUIElementCreateSystemWide()
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &value)
-        guard result == .success, let element = value else {
+        var fieldProcessIdentifier: pid_t = 0
+        AXUIElementGetPid(destination.field, &fieldProcessIdentifier)
+        guard fieldProcessIdentifier == destination.processIdentifier else {
             copy(text)
             return false
         }
-        let field = unsafeDowncast(element, to: AXUIElement.self)
-        guard !isProtected(field) else { return false }
-        if let targetProcessIdentifier {
-            var focusedProcessIdentifier: pid_t = 0
-            AXUIElementGetPid(field, &focusedProcessIdentifier)
-            guard focusedProcessIdentifier == targetProcessIdentifier else {
-                copy(text)
-                return false
-            }
+        guard !isProtected(destination.field) else {
+            copy(text)
+            return false
         }
-        let setResult = AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
+        let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
         if setResult == .success { return true }
 
-        guard paste(text, into: targetProcessIdentifier, restoreClipboardAfterPaste: restoreClipboardAfterPaste) else {
+        guard paste(text, into: destination.processIdentifier, restoreClipboardAfterPaste: restoreClipboardAfterPaste) else {
             copy(text)
             return false
         }
@@ -81,7 +97,7 @@ public enum TextOutput {
 
     private static func paste(
         _ text: String,
-        into targetProcessIdentifier: pid_t?,
+        into targetProcessIdentifier: pid_t,
         restoreClipboardAfterPaste: Bool
     ) -> Bool {
         let pasteboard = NSPasteboard.general
@@ -95,13 +111,8 @@ public enum TextOutput {
         }
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
-        if let targetProcessIdentifier {
-            keyDown.postToPid(targetProcessIdentifier)
-            keyUp.postToPid(targetProcessIdentifier)
-        } else {
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-        }
+        keyDown.postToPid(targetProcessIdentifier)
+        keyUp.postToPid(targetProcessIdentifier)
         if let snapshot {
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(300)) {
                 snapshot.restore(to: pasteboard)
