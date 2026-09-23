@@ -4,6 +4,7 @@ import Foundation
 
 /// Owns one captured dictation file. Failed or cancelled captures never become history audio.
 public final class SessionAudioArchive: @unchecked Sendable {
+    private static let maximumImportedAudioBytes = 512 * 1024 * 1024
     public let recordingURL: URL
 
     private let fileManager: FileManager
@@ -89,6 +90,25 @@ public final class SessionAudioArchive: @unchecked Sendable {
         urls.forEach { deleteManagedRecording($0, directory: recordingDirectory, fileManager: fileManager) }
     }
 
+    public static func importRecording(
+        from sourceURL: URL,
+        directory: URL = defaultDirectory(),
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let extensionName = sourceURL.pathExtension.lowercased()
+        guard sourceURL.isFileURL, managedExtensions.contains(extensionName) else {
+            throw SaysoError.invalidAction("Choose a supported audio file.")
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+        if let size = attributes[.size] as? NSNumber, size.intValue > maximumImportedAudioBytes {
+            throw SaysoError.invalidAction("Audio file exceeds \(maximumImportedAudioBytes) bytes")
+        }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let destination = directory.appendingPathComponent("Imported-\(UUID().uuidString).\(extensionName)")
+        try fileManager.copyItem(at: sourceURL, to: destination)
+        return destination
+    }
+
     public static func sweepUnreferencedRecordings(
         retaining retainedURLs: Set<URL>,
         directory: URL? = nil,
@@ -162,7 +182,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
         try? fileManager.removeItem(at: recordingURL)
     }
 
-    private static let managedExtensions: Set<String> = ["m4a", "caf"]
+    private static let managedExtensions: Set<String> = ["m4a", "caf", "wav", "mp3", "aif", "aiff", "mp4"]
 
     private enum ArchiveError: Error {
         case unsupportedArchiveFormat
