@@ -15,9 +15,16 @@ let package = Package(
             url: "https://github.com/crmitchelmore/justspeaktoit.git",
             revision: "0f0e92028a249e17b58349da3ee8033c73ffd219"
         ),
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            exact: "0.15.5"
+        ),
     ],
     targets: [
-        .target(name: "SaysoCore"),
+        .target(
+            name: "SaysoCore",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]
+        ),
         .target(
             name: "SpeakUpstreamBridge",
             dependencies: [
