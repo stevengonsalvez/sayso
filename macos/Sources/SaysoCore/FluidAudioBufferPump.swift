@@ -41,6 +41,34 @@ public actor FluidAudioBufferPump {
     public static let capacity = 32
     public typealias Processor = @Sendable (AVAudioPCMBuffer) async throws -> Void
 
+    private final class TapSubmissionGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var isSealed = false
+        private var outstanding = 0
+
+        func reserve() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !isSealed else { return false }
+            outstanding += 1
+            return true
+        }
+
+        func seal() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            isSealed = true
+            return outstanding
+        }
+
+        func complete() -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            outstanding -= 1
+            return isSealed
+        }
+    }
+
     private final class BufferedPCM: @unchecked Sendable {
         let buffer: AVAudioPCMBuffer
 
@@ -50,9 +78,11 @@ public actor FluidAudioBufferPump {
     }
 
     private let process: Processor
+    private let tapSubmissions = TapSubmissionGate()
     private var queue: [BufferedPCM] = []
     private var isProcessing = false
     private var isClosed = false
+    private var pendingTapSubmissions = 0
     private var processed = 0
     private var dropped = 0
     private var terminal: FluidAudioBufferPumpTerminal?
@@ -64,12 +94,23 @@ public actor FluidAudioBufferPump {
 
     /// Audio-tap entry point. Copy happens synchronously before actor scheduling.
     public nonisolated func submit(_ source: AVAudioPCMBuffer) {
+        guard tapSubmissions.reserve() else { return }
         guard let copy = Self.copy(source) else {
-            Task { await self.recordCopyFailure() }
+            Task {
+                await self.recordCopyFailure()
+                if self.tapSubmissions.complete() {
+                    await self.completeTapSubmission()
+                }
+            }
             return
         }
         let buffered = BufferedPCM(copy)
-        Task { await self.enqueue(buffered) }
+        Task {
+            await self.enqueueReserved(buffered)
+            if self.tapSubmissions.complete() {
+                await self.completeTapSubmission()
+            }
+        }
     }
 
     /// Awaitable entry point for non-realtime callers and deterministic tests.
@@ -94,8 +135,13 @@ public actor FluidAudioBufferPump {
 
     /// Rejects future audio, drains already accepted audio, then returns outcome.
     public func closeAndDrain() async -> FluidAudioBufferPumpTerminal {
+        let outstanding = tapSubmissions.seal()
         if let terminal { return terminal }
+        if isClosed {
+            return await withCheckedContinuation { drainWaiters.append($0) }
+        }
         isClosed = true
+        pendingTapSubmissions = outstanding
         finishIfDrained()
         if let terminal { return terminal }
         return await withCheckedContinuation { drainWaiters.append($0) }
@@ -112,9 +158,25 @@ public actor FluidAudioBufferPump {
         return .accepted
     }
 
+    private func enqueueReserved(_ buffered: BufferedPCM) {
+        guard terminal == nil else { return }
+        guard queue.count + (isProcessing ? 1 : 0) < Self.capacity else {
+            dropped += 1
+            return
+        }
+        queue.append(buffered)
+        startProcessorIfNeeded()
+    }
+
     private func recordCopyFailure() {
-        guard !isClosed, terminal == nil else { return }
+        guard terminal == nil else { return }
         dropped += 1
+    }
+
+    private func completeTapSubmission() {
+        guard pendingTapSubmissions > 0 else { return }
+        pendingTapSubmissions -= 1
+        finishIfDrained()
     }
 
     private func startProcessorIfNeeded() {
@@ -139,12 +201,13 @@ public actor FluidAudioBufferPump {
     }
 
     private func finishIfDrained() {
-        guard terminal == nil, isClosed, !isProcessing, queue.isEmpty else { return }
+        guard terminal == nil, isClosed, pendingTapSubmissions == 0, !isProcessing, queue.isEmpty else { return }
         complete(.drained(processed: processed, dropped: dropped))
     }
 
     private func complete(_ outcome: FluidAudioBufferPumpTerminal) {
         guard terminal == nil else { return }
+        _ = tapSubmissions.seal()
         terminal = outcome
         isClosed = true
         let waiters = drainWaiters
