@@ -1686,9 +1686,16 @@ private struct VoiceOutputWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var speech: SpeechOutput
     @State private var text = ""
+    @State private var selectedLanguage: DictationLanguage
     @State private var historyEntries: [Transcript] = []
     @State private var historyID: Transcript.ID?
     @State private var voices: [SpeechOutput.Voice] = []
+
+    init(model: SaysoAppModel, speech: SpeechOutput) {
+        self.model = model
+        self.speech = speech
+        _selectedLanguage = State(initialValue: model.settings.speechLanguage)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -1718,7 +1725,7 @@ private struct VoiceOutputWorkspace: View {
                         return
                     }
                     text = transcript.displayText
-                    model.settings.speechLanguage = transcript.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+                    selectedLanguage = playbackLanguage(for: transcript)
                 }
                 .disabled(model.lastTranscript == nil)
                 Button("Use clipboard") {
@@ -1744,7 +1751,7 @@ private struct VoiceOutputWorkspace: View {
                 .onChange(of: historyID) { _, id in
                     if let entry = historyEntries.first(where: { $0.id == id }) {
                         text = entry.displayText
-                        model.settings.speechLanguage = entry.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+                        selectedLanguage = playbackLanguage(for: entry)
                     }
                 }
             }
@@ -1760,7 +1767,14 @@ private struct VoiceOutputWorkspace: View {
                 }
             VStack(spacing: 14) {
                 HStack {
-                    Picker("Spoken language", selection: $model.settings.speechLanguage) {
+                    Picker("Spoken language", selection: Binding(
+                        get: { selectedLanguage },
+                        set: { language in
+                            selectedLanguage = language
+                            model.settings.speechLanguage = language
+                            model.save()
+                        }
+                    )) {
                         ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) {
                             Text($0.displayName).tag($0)
                         }
@@ -1794,7 +1808,7 @@ private struct VoiceOutputWorkspace: View {
             .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
             HStack {
                 Button {
-                    model.speak(text)
+                    model.speak(text, language: selectedLanguage)
                 } label: {
                     Label("Speak", systemImage: "play.fill")
                 }
@@ -1812,16 +1826,20 @@ private struct VoiceOutputWorkspace: View {
             await refreshHistory()
             refreshVoices()
         }
-        .onChange(of: model.settings.speechLanguage) { _, _ in
+        .onChange(of: selectedLanguage) { _, _ in
             refreshVoices()
-            model.save()
         }
         .onChange(of: model.settings.speechVoiceIdentifier) { _, _ in model.save() }
         .onChange(of: model.settings.speechRate) { _, _ in model.save() }
     }
 
     private func refreshVoices() {
-        voices = SpeechOutput.availableVoices(for: model.settings.speechLanguage)
+        voices = SpeechOutput.availableVoices(for: selectedLanguage)
+    }
+
+    private func playbackLanguage(for transcript: Transcript) -> DictationLanguage {
+        let language = transcript.spokenLanguage(outputLanguage: model.settings.outputLanguage)
+        return language == .automatic ? model.settings.speechLanguage : language
     }
 
     private func refreshHistory() async {
