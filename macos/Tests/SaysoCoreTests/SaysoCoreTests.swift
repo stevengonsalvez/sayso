@@ -27,6 +27,15 @@ import Testing
     #expect(LexiconCorrections.apply("Ship say so", replacements: ["say so": "Sayso"]) == "Ship Sayso")
 }
 
+@Test func lexiconCorrectionsPreferLongestPhrase() {
+    #expect(
+        LexiconCorrections.apply(
+            "say so say",
+            replacements: ["say": "SAY", "say so": "Sayso"]
+        ) == "Sayso SAY"
+    )
+}
+
 @Test func voiceEditsRequireExactCommandShape() {
     #expect(VoiceEdits.apply("Sayso replace world with Stevie", to: "Hello world") == "Hello Stevie")
     #expect(VoiceEdits.apply("Sayso delete world", to: "Hello world") == "Hello ")
