@@ -57,6 +57,8 @@ final class SaysoAppModel: ObservableObject {
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
     @Published private(set) var isStartingDictation = false
     @Published var onboardingDeferredThisLaunch = false
+    @Published private(set) var isOnboardingTestActive = false
+    @Published private(set) var onboardingTestTranscriptID: UUID?
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -84,7 +86,7 @@ final class SaysoAppModel: ObservableObject {
     private var controlExecutionTask: Task<Void, Never>?
     private var dictationStartCancellationRequested = false
     private var lastDictationStartError: String?
-    private var isOnboardingTest = false
+    private var onboardingTestSessionID: UUID?
 
     init() {
         let localEnglishModel = FluidAudioLocalModelManager()
@@ -207,22 +209,24 @@ final class SaysoAppModel: ObservableObject {
             notice = "Cancelling dictation start."
             return
         }
+        requestDictationStart(onboardingTest: false)
+    }
+
+    func startOnboardingTest() {
+        guard !transcriber.canStop else { return }
+        requestDictationStart(onboardingTest: true)
+    }
+
+    private func requestDictationStart(onboardingTest: Bool) {
         switch reserveDictationStart() {
         case .reserved:
             Task {
-                _ = await performDictationStart()
+                _ = await performDictationStart(onboardingTest: onboardingTest)
             }
         case let .rejected(_, message):
             notice = message
             return
         }
-    }
-
-    func startOnboardingTest() {
-        guard !transcriber.canStop else { return }
-        isOnboardingTest = true
-        startOrStopDictation()
-        if !isStartingDictation { isOnboardingTest = false }
     }
 
     private func reserveDictationStart() -> DictationStartReservation {
@@ -242,14 +246,12 @@ final class SaysoAppModel: ObservableObject {
         return .reserved
     }
 
-    private func performDictationStart() async -> Bool {
+    private func performDictationStart(onboardingTest: Bool = false) async -> Bool {
         defer {
             isStartingDictation = false
             dictationStartCancellationRequested = false
         }
         notch.show()
-        let onboardingTest = isOnboardingTest
-        isOnboardingTest = false
         dictationDestination = !onboardingTest && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
@@ -259,6 +261,11 @@ final class SaysoAppModel: ObservableObject {
             destination: dictationDestination?.recordingDestination
         )
         activeRecordingSession = session
+        if onboardingTest {
+            onboardingTestSessionID = session.id
+            onboardingTestTranscriptID = nil
+            isOnboardingTestActive = true
+        }
         await sessions.upsert(session)
         guard !dictationStartCancellationRequested else {
             lastDictationStartError = nil
@@ -337,6 +344,11 @@ final class SaysoAppModel: ObservableObject {
 
     func accept(_ transcript: Transcript) {
         if applyPendingVoiceMode() { return }
+        if activeRecordingSession?.id == onboardingTestSessionID {
+            guard let delivery = takeActiveDictationDelivery() else { return }
+            Task { await finishOnboardingTest(transcript, session: delivery.session) }
+            return
+        }
         guard settings.mode == .dictation else {
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
@@ -452,6 +464,18 @@ final class SaysoAppModel: ObservableObject {
         if activeRecordingSession == nil { notch.hideAfterDelay() }
     }
 
+    private func finishOnboardingTest(_ transcript: Transcript, session: RecordingSession) async {
+        lastTranscript = transcript
+        onboardingTestTranscriptID = transcript.id
+        onboardingTestSessionID = nil
+        isOnboardingTestActive = false
+        var completed = session
+        completed.completeTest(transcript.text)
+        await sessions.upsert(completed)
+        notice = "Test transcript received."
+        notch.hideAfterDelay()
+    }
+
     private func takeActiveDictationDelivery() -> PendingDictationDelivery? {
         guard var session = activeRecordingSession else { return nil }
         session.transition(to: .processing)
@@ -474,12 +498,14 @@ final class SaysoAppModel: ObservableObject {
 
     private func failActiveSession(_ message: String) {
         lastDictationStartError = message
+        clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.fail(message) }
         activeRecordingSession = nil
         dictationDestination = nil
     }
 
     private func cancelActiveRecordingSession() {
+        clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
         dictationDestination = nil
@@ -490,12 +516,19 @@ final class SaysoAppModel: ObservableObject {
         pendingVoiceMode = nil
         switch termination {
         case .cancelled:
+            clearOnboardingTest(for: activeRecordingSession)
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
             dictationDestination = nil
         case let .failed(message):
             failActiveSession(message)
         }
+    }
+
+    private func clearOnboardingTest(for session: RecordingSession?) {
+        guard session?.id == onboardingTestSessionID else { return }
+        onboardingTestSessionID = nil
+        isOnboardingTestActive = false
     }
 
     func switchMode(_ mode: SaysoMode) {
@@ -623,6 +656,7 @@ final class SaysoAppModel: ObservableObject {
     private func applyPendingVoiceMode() -> Bool {
         guard let target = pendingVoiceMode else { return false }
         pendingVoiceMode = nil
+        clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
         dictationDestination = nil
@@ -1557,9 +1591,6 @@ private struct CloudProviderSettings: View {
 private struct OnboardingWizard: View {
     @ObservedObject var model: SaysoAppModel
     @State private var page = 0
-    @State private var testSessionStarted = false
-    @State private var testTranscriptID: UUID?
-    @State private var testRequested = false
     @Environment(\.dismiss) private var dismiss
 
     private let steps = ["Language", "Engine", "Delivery", "Permissions"]
@@ -1685,9 +1716,9 @@ private struct OnboardingWizard: View {
                             Label("Grant the required permissions before testing dictation.", systemImage: "exclamationmark.circle")
                                 .font(.caption)
                                 .foregroundStyle(SaysoPalette.crimson)
-                        } else if testTranscriptID == nil {
+                        } else if model.onboardingTestTranscriptID == nil {
                             Label(
-                                testSessionStarted
+                                model.isOnboardingTestActive
                                     ? "Say a short sentence, then stop the test to verify your first transcript."
                                     : "Start a short test dictation to verify your setup.",
                                 systemImage: "checkmark.seal"
@@ -1719,13 +1750,6 @@ private struct OnboardingWizard: View {
         }
         .padding(32)
         .frame(width: 560, height: 500)
-        .onChange(of: model.transcriber.phase) { _, phase in
-            if testRequested, phase == .listening { testSessionStarted = true }
-        }
-        .onChange(of: model.lastTranscript?.id) { _, id in
-            guard testSessionStarted, let id else { return }
-            testTranscriptID = id
-        }
     }
 
     private func complete() {
@@ -1772,9 +1796,13 @@ private struct OnboardingWizard: View {
 
     private var primaryActionTitle: String {
         guard page == steps.count - 1 else { return "Continue" }
-        if model.isStartingDictation { return "Cancel test start" }
-        if model.transcriber.canStop { return "Stop test" }
-        if testTranscriptID != nil { return "Finish setup" }
+        if model.isStartingDictation {
+            return model.isOnboardingTestActive ? "Cancel test start" : "Dictation is starting"
+        }
+        if model.transcriber.canStop {
+            return model.isOnboardingTestActive ? "Stop test" : "Stop active dictation"
+        }
+        if model.onboardingTestTranscriptID != nil { return "Finish setup" }
         return "Start test dictation"
     }
 
@@ -1790,12 +1818,13 @@ private struct OnboardingWizard: View {
     }
 
     private func performFinalStep() {
-        if model.transcriber.canStop {
+        if model.isOnboardingTestActive && (model.isStartingDictation || model.transcriber.canStop) {
             model.startOrStopDictation()
-        } else if testTranscriptID != nil {
+        } else if model.isStartingDictation || model.transcriber.canStop {
+            model.notice = "Stop active dictation before testing setup."
+        } else if model.onboardingTestTranscriptID != nil {
             complete()
         } else {
-            testRequested = true
             model.startOnboardingTest()
         }
     }
