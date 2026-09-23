@@ -141,15 +141,26 @@ public struct InstalledDesktopApplication: Equatable, Sendable {
         applicationURL: URL,
         fileManager: FileManager = .default
     ) -> Bool {
-        let standardizedURL = applicationURL.standardizedFileURL
+        let standardizedURL = applicationURL.standardizedFileURL.resolvingSymlinksInPath()
         guard standardizedURL.pathExtension.lowercased() == "app",
               (try? standardizedURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
-              fileManager.fileExists(atPath: standardizedURL.path),
-              let data = try? Data(contentsOf: standardizedURL.appendingPathComponent("Contents/Info.plist")),
-              let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let currentBundleIdentifier = info["CFBundleIdentifier"] as? String,
-              currentBundleIdentifier == bundleIdentifier else { return false }
-        return true
+              fileManager.fileExists(atPath: standardizedURL.path) else { return false }
+
+        let contentsInfo = standardizedURL.appendingPathComponent("Contents/Info.plist")
+        let wrapperDirectory = standardizedURL.appendingPathComponent("Wrapper", isDirectory: true)
+        let wrappedInfos = (try? fileManager.contentsOfDirectory(
+            at: wrapperDirectory,
+            includingPropertiesForKeys: nil
+        ))?
+            .filter { $0.pathExtension.lowercased() == "app" }
+            .map { $0.appendingPathComponent("Info.plist") } ?? []
+
+        return ([contentsInfo] + wrappedInfos).contains { infoURL in
+            guard let data = try? Data(contentsOf: infoURL),
+                  let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+                  let currentBundleIdentifier = info["CFBundleIdentifier"] as? String else { return false }
+            return currentBundleIdentifier == bundleIdentifier
+        }
     }
 }
 
