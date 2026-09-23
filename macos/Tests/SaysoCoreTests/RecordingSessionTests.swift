@@ -26,6 +26,15 @@ import Testing
     #expect(session.phase == .copiedToClipboard)
 }
 
+@Test func recordingSessionTracksVerifiedOnboardingTestWithoutDelivery() {
+    var session = RecordingSession(language: .english, route: .local, destination: nil)
+    session.completeTest("first words")
+
+    #expect(session.phase == .tested)
+    #expect(session.finalText == "first words")
+    #expect(session.delivery == nil)
+}
+
 @Test func recordingSessionTracksAppliedVoiceEdit() {
     var session = RecordingSession(language: .english, route: .local, destination: nil)
     session.completeVoiceEdit("rewritten text")
