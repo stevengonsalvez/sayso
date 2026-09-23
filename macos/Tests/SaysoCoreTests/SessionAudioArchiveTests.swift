@@ -231,7 +231,7 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     #expect(FileManager.default.fileExists(atPath: appendedAudioURL.path))
 }
 
-@Test func corruptHistoryRecoveryBlocksUnreferencedAudioSweep() async throws {
+@Test func corruptHistoryRecoverySweepsOrphanedAudioWhenBackupCannotDecode() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let historyURL = root.appendingPathComponent("history.json")
@@ -243,7 +243,42 @@ private func finishedManagedRecording(in directory: URL) throws -> URL {
     #expect(await store.append(.init(text: "Recovered", language: .english, route: .local, isFinal: true)))
     await store.reclaimUnreferencedAudio(olderThan: Date().addingTimeInterval(1))
 
-    #expect(FileManager.default.fileExists(atPath: orphanedAudioURL.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedAudioURL.path))
+}
+
+@Test func corruptHistoryRecoveryRetainsAudioReferencedByDecodableBackup() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("InjectedRecordings", isDirectory: true)
+    let retainedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let orphanedAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let backup = [Transcript(text: "Retained", language: .english, route: .local, isFinal: true, audioFileURL: retainedAudioURL)]
+    try JSONEncoder().encode(backup).write(to: root.appendingPathComponent("history.json.corrupt-restorable"))
+    try Data("not valid history".utf8).write(to: historyURL)
+    let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+
+    #expect(await store.append(.init(text: "Recovered", language: .english, route: .local, isFinal: true)))
+    await store.reclaimUnreferencedAudio(olderThan: Date().addingTimeInterval(1))
+
+    #expect(FileManager.default.fileExists(atPath: retainedAudioURL.path))
+    #expect(!FileManager.default.fileExists(atPath: orphanedAudioURL.path))
+}
+
+@Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json", isDirectory: true)
+    let recordingDirectory = root.appendingPathComponent("InjectedRecordings", isDirectory: true)
+    let audioURL = try finishedManagedRecording(in: recordingDirectory)
+    try FileManager.default.createDirectory(at: historyURL, withIntermediateDirectories: true)
+    let store = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+
+    #expect(!(await store.append(.init(text: "Do not overwrite", language: .english, route: .local, isFinal: true, audioFileURL: audioURL))))
+    #expect(FileManager.default.fileExists(atPath: historyURL.path))
+    #expect(FileManager.default.fileExists(atPath: audioURL.path))
+    #expect(try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        .filter { $0.lastPathComponent.hasPrefix("history.json.corrupt-") }.isEmpty)
 }
 
 @Test func clearingCorruptHistoryPurgesBackupsAndConfiguredManagedRecordings() async throws {
