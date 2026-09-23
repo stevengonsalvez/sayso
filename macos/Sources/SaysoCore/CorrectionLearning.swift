@@ -90,7 +90,7 @@ public final class SaysoCorrectionLearning: ObservableObject {
     private var monitoringID: UUID?
 
     @Published public private(set) var isMonitoring = false
-    public var candidates: [AutoCorrectionCandidate] { engine.candidates }
+    public var candidates: [AutoCorrectionCandidate] { engine.candidates.filter { !$0.dismissed } }
     public var rules: [PersonalLexiconRule] { lexicon.rules }
 
     public init(baseDirectory: URL? = nil, promotionThreshold: Int = 3) {
@@ -170,13 +170,23 @@ public final class SaysoCorrectionLearning: ObservableObject {
     }
 
     public func recordEdit(original: String, edited: String, sourceApplication: String?) async throws {
-        try await engine.recordEdit(original: original, edited: edited, app: sourceApplication)
+        let dismissed = Set(engine.candidates.filter(\.dismissed).map(\.matchKey))
+        for change in WordDiffer.findChanges(original: original, edited: edited) {
+            let key = "\(change.original.lowercased())→\(change.corrected.lowercased())"
+            guard !dismissed.contains(key) else { continue }
+            try await engine.recordEdit(
+                original: change.original,
+                edited: change.corrected,
+                app: sourceApplication
+            )
+        }
     }
 
     public func startMonitoring(insertedText: String, destination: TextOutput.Destination?) {
         guard !insertedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let destination else { return }
         stopMonitoring()
+        guard let originalValue = TextOutput.currentValue(in: destination) else { return }
         let id = UUID()
         monitoringID = id
         isMonitoring = true
@@ -198,11 +208,7 @@ public final class SaysoCorrectionLearning: ObservableObject {
                 }
             }
             guard let edited = TextOutput.currentValue(in: destination) else { return }
-            try? await self.engine.recordEdit(
-                original: insertedText,
-                edited: edited,
-                app: sourceApplication
-            )
+            try? await self.recordEdit(original: originalValue, edited: edited, sourceApplication: sourceApplication)
         }
     }
 
