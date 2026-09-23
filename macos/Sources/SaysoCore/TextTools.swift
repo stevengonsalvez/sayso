@@ -441,12 +441,14 @@ public struct SelectedTextEditAnchor: Equatable, Sendable {
 public enum SelectedTextEdit {
     public enum ApplyResult: Equatable {
         case replaced
+        case replacementUnverified
         case noRewrite
         case copiedToClipboard(String)
 
         public var userMessage: String {
             switch self {
             case .replaced: "Selection rewritten."
+            case .replacementUnverified: "Replacement may have been applied. Check the selected field before continuing."
             case .noRewrite: "No rewrite was returned."
             case let .copiedToClipboard(reason): "\(reason) Rewrite copied to clipboard."
             }
@@ -529,12 +531,12 @@ public enum SelectedTextEdit {
             return copy(rewrite, reason: "Protected field.")
         }
         guard let expected = capture.anchor.replacing(with: rewrite),
-              AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success,
-              let after = copyAttribute(kAXValueAttribute as CFString, from: capture.field) as? String,
-              after == expected else {
+              AXUIElementSetAttributeValue(capture.field, kAXSelectedTextAttribute as CFString, rewrite as CFTypeRef) == .success else {
             return copy(rewrite, reason: "Could not verify replacement.")
         }
-        return .replaced
+        return (copyAttribute(kAXValueAttribute as CFString, from: capture.field) as? String) == expected
+            ? .replaced
+            : .replacementUnverified
     }
 
     private static func copy(_ text: String, reason: String) -> ApplyResult {
