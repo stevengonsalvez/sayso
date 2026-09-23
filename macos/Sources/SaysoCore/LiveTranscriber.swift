@@ -940,7 +940,7 @@ private final class FileRecognitionCompletion: @unchecked Sendable {
 
     private func complete(
         _ result: Result<String, Error>,
-        cancellingTask: Bool,
+        cancellingTask: Bool
     ) {
         lock.lock()
         guard self.result == nil else {
