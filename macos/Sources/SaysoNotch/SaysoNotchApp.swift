@@ -179,6 +179,7 @@ final class SaysoAppModel: ObservableObject {
     private var dictationDestination: TextOutput.Destination?
     private var voiceEditCapture: SelectedTextEdit.Capture?
     private var activeRecordingSession: RecordingSession?
+    private var activeDictationSettings: SaysoSettings?
     private var pendingVoiceMode: SaysoMode?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
@@ -442,6 +443,11 @@ final class SaysoAppModel: ObservableObject {
         }
         notch.show()
         voiceEditCapture = capture
+        var sessionSettings = settings
+        sessionSettings.dictationProfile = settings.resolvedDictationProfile(
+            forBundleIdentifier: lastExternalApplication?.bundleIdentifier
+        )
+        activeDictationSettings = sessionSettings
         dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
             : nil
@@ -566,6 +572,7 @@ final class SaysoAppModel: ObservableObject {
             discardTranscriptAudio(transcript)
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
+            activeDictationSettings = nil
             dictationDestination = nil
             runControl(transcript.text)
             return
@@ -842,9 +849,10 @@ final class SaysoAppModel: ObservableObject {
         let delivery = PendingDictationDelivery(
             session: session,
             destination: dictationDestination,
-            settings: settings
+            settings: activeDictationSettings ?? settings
         )
         activeRecordingSession = nil
+        activeDictationSettings = nil
         dictationDestination = nil
         return delivery
     }
@@ -861,6 +869,7 @@ final class SaysoAppModel: ObservableObject {
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.fail(message) }
         activeRecordingSession = nil
+        activeDictationSettings = nil
         dictationDestination = nil
         voiceEditCapture = nil
     }
@@ -869,6 +878,7 @@ final class SaysoAppModel: ObservableObject {
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
+        activeDictationSettings = nil
         dictationDestination = nil
         voiceEditCapture = nil
     }
@@ -881,6 +891,7 @@ final class SaysoAppModel: ObservableObject {
             clearOnboardingTest(for: activeRecordingSession)
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
+            activeDictationSettings = nil
             dictationDestination = nil
             voiceEditCapture = nil
         case let .failed(message):
@@ -984,6 +995,30 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func addDictationProfileOverrideForLastExternalApp() {
+        guard let application = lastExternalApplication,
+              let bundleIdentifier = application.bundleIdentifier else {
+            notice = "Choose the app to customize, then return to Sayso."
+            return
+        }
+        guard !settings.dictationProfileOverrides.contains(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        }) else {
+            notice = "An app profile already exists for \(application.localizedName ?? bundleIdentifier)."
+            return
+        }
+        let defaultProfile = settings.dictationProfile
+        let profile = DictationProfile(
+            name: application.localizedName ?? bundleIdentifier,
+            corrections: defaultProfile.corrections,
+            normalizesWhitespace: defaultProfile.normalizesWhitespace,
+            capitalizesSentences: defaultProfile.capitalizesSentences
+        )
+        settings.dictationProfileOverrides.append(.init(bundleIdentifier: bundleIdentifier, profile: profile))
+        save()
+        notice = "Added app profile for \(application.localizedName ?? bundleIdentifier)."
+    }
+
     func promoteCorrection(_ candidate: AutoCorrectionCandidate) {
         Task {
             do {
@@ -1059,6 +1094,7 @@ final class SaysoAppModel: ObservableObject {
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
+        activeDictationSettings = nil
         dictationDestination = nil
         voiceEditCapture = nil
         applyMode(target)
@@ -2511,6 +2547,26 @@ private struct SaysoSettingsView: View {
                 TextField("Profile name", text: $model.settings.dictationProfile.name)
                 Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
                 Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
+                Divider()
+                Text("App profiles use these defaults only for the matching app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(model.settings.dictationProfileOverrides.indices, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            TextField("App bundle identifier", text: $model.settings.dictationProfileOverrides[index].bundleIdentifier)
+                            Button("Remove", role: .destructive) {
+                                model.settings.dictationProfileOverrides.remove(at: index)
+                                model.save()
+                            }
+                        }
+                        TextField("App profile name", text: $model.settings.dictationProfileOverrides[index].profile.name)
+                        Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
+                        Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
+                    }
+                    .padding(.vertical, 4)
+                }
+                Button("Add active app profile") { model.addDictationProfileOverrideForLastExternalApp() }
             }
             Section("Transcript cleanup") {
                 Toggle("Clean final transcripts", isOn: $model.settings.cleanupEnabled)
