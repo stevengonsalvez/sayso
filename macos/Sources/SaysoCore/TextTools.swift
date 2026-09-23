@@ -202,6 +202,11 @@ public enum TextOutput {
         }
     }
 
+    public static func currentValue(in destination: Destination) -> String? {
+        guard destination.isSafeDeliveryTarget, !isProtected(destination.field) else { return nil }
+        return copyAttribute(kAXValueAttribute as CFString, from: destination.field) as? String
+    }
+
     private static func clipboardFallback(for text: String) -> DeliveryResult {
         copy(text) ? .delivered(.clipboard) : .pasteFailed(.clipboardUnavailable)
     }
