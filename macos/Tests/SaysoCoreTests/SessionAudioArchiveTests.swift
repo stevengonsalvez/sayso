@@ -320,6 +320,7 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(!(await store.clear()))
     #expect(FileManager.default.fileExists(atPath: historyURL.path))
     #expect(FileManager.default.fileExists(atPath: audioURL.path))
+    #expect(await store.all().map(\.id) == [transcript.id])
 }
 
 @Test func corruptHistoryAppendMovesBytesAsideAndPreservesManagedAudio() async throws {
@@ -486,6 +487,46 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     let recoveredStore = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
     #expect(await recoveredStore.all().first == transcript)
     #expect(FileManager.default.fileExists(atPath: audioURL.path))
+}
+
+@Test func journaledHistoryReplacementReleasesPriorAudioAfterReplay() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let firstAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let replacementAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    let id = UUID()
+    let original = Transcript(
+        id: id,
+        text: "Original",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: firstAudioURL
+    )
+    let replacement = Transcript(
+        id: id,
+        text: "Replacement",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: replacementAudioURL
+    )
+
+    #expect(await HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory).append(original))
+    let journaledStore = HistoryStore(
+        fileURL: historyURL,
+        recordingsDirectory: recordingDirectory,
+        persistEntries: { _, _ in false }
+    )
+    #expect(await journaledStore.append(replacement))
+    #expect(FileManager.default.fileExists(atPath: firstAudioURL.path))
+
+    let recoveredStore = HistoryStore(fileURL: historyURL, recordingsDirectory: recordingDirectory)
+    #expect(await recoveredStore.all().first == replacement)
+    #expect(!FileManager.default.fileExists(atPath: firstAudioURL.path))
+    #expect(FileManager.default.fileExists(atPath: replacementAudioURL.path))
 }
 
 @Test func unavailableHistoryDoesNotMoveItAsideOrDropNewAudio() async throws {
