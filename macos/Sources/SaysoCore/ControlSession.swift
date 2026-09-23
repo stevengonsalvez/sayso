@@ -26,7 +26,17 @@ public enum ControlSessionResult: String, Codable, Equatable, Sendable {
 public enum ControlSessionStepResult: String, Codable, Equatable, Sendable {
     case effectObserved
     case noEffectObserved
+    /// Action ran but its effect could not be attributed either way.
+    case effectUnknown
     case actionFailed
+
+    public init(_ effect: ControlEffect) {
+        self = switch effect {
+        case .observed: .effectObserved
+        case .notObserved: .noEffectObserved
+        case .unknown: .effectUnknown
+        }
+    }
 }
 
 public struct ControlSessionState: Codable, Equatable, Sendable {
@@ -69,7 +79,7 @@ public actor ControlSession {
             consecutiveNoEffectCount = 0
         case .noEffectObserved:
             consecutiveNoEffectCount += 1
-        case .actionFailed:
+        case .effectUnknown, .actionFailed:
             break
         }
 
