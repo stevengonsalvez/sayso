@@ -57,6 +57,11 @@ public actor HistoryStore {
         var didCommit: Bool { self != .failed }
     }
 
+    private struct HistoryJournal: Codable {
+        let entries: [Transcript]
+        let deferredAudioFileURLs: [URL]
+    }
+
     private let fileURL: URL
     private let walURL: URL
     private let recordingsDirectory: URL
@@ -172,7 +177,7 @@ public actor HistoryStore {
             expired = []
         }
         discarded += expired
-        let persistResult = persist(entries)
+        let persistResult = persist(entries, deferringAudioRelease: discarded.map(\.audioFileURL))
         guard persistResult.didCommit else {
             releaseManagedAudio(
                 [transcript.audioFileURL],
@@ -180,9 +185,6 @@ public actor HistoryStore {
                 unlessReferencedBy: existing
             )
             return .failed
-        }
-        if persistResult == .snapshot {
-            releaseManagedAudio(discarded.map(\.audioFileURL), unlessReferencedBy: entries)
         }
         return recovered ? .recovered : .saved
     }
@@ -194,26 +196,14 @@ public actor HistoryStore {
         let removed = entries.filter { $0.id == id }
         let originalCount = entries.count
         entries.removeAll { $0.id == id }
-        let persistResult = persist(entries)
-        guard entries.count != originalCount, persistResult.didCommit else { return false }
-        if persistResult == .snapshot {
-            releaseManagedAudio(removed.map(\.audioFileURL), unlessReferencedBy: entries)
-        }
+        guard entries.count != originalCount else { return false }
+        let persistResult = persist(entries, deferringAudioRelease: removed.map(\.audioFileURL))
+        guard persistResult.didCommit else { return false }
         return true
     }
 
     @discardableResult
     public func clear() -> Bool {
-        if fileManager.fileExists(atPath: walURL.path) {
-            switch load() {
-            case .missing, .entries:
-                break
-            case .invalid, .unavailable:
-                return false
-            }
-            guard !fileManager.fileExists(atPath: walURL.path) else { return false }
-        }
-
         var succeeded = true
         let historyFiles = ([fileURL] + corruptBackupURLs())
             .filter { fileManager.fileExists(atPath: $0.path) }
@@ -273,10 +263,22 @@ public actor HistoryStore {
             .joined(separator: "\n\n")
     }
 
-    private func persist(_ entries: [Transcript]) -> PersistResult {
-        guard let data = try? JSONEncoder().encode(entries), writeWAL(data) else { return .failed }
-        guard persistEntries(data, fileURL) else { return .journaled }
+    private func persist(
+        _ entries: [Transcript],
+        deferringAudioRelease audioURLs: [URL?] = []
+    ) -> PersistResult {
+        var deferredAudioFileURLs = Set(journal()?.deferredAudioFileURLs ?? [])
+        deferredAudioFileURLs.formUnion(audioURLs.compactMap { $0?.standardizedFileURL })
+        let journal = HistoryJournal(
+            entries: entries,
+            deferredAudioFileURLs: Array(deferredAudioFileURLs)
+        )
+        guard let data = try? JSONEncoder().encode(journal), writeWAL(data) else { return .failed }
+        guard let snapshot = try? JSONEncoder().encode(entries), persistEntries(snapshot, fileURL) else {
+            return .journaled
+        }
         try? fileManager.removeItem(at: walURL)
+        releaseManagedAudio(Array(deferredAudioFileURLs).map(Optional.some), unlessReferencedBy: entries)
         return .snapshot
     }
 
@@ -293,16 +295,19 @@ public actor HistoryStore {
         let snapshot = loadSnapshot()
         guard fileManager.fileExists(atPath: walURL.path) else { return snapshot }
         guard let data = try? Data(contentsOf: walURL) else { return .unavailable }
-        guard let entries = try? JSONDecoder().decode([Transcript].self, from: data) else {
+        guard let journal = decodeJournal(data) else {
             guard preserveUnreadableWAL() else { return .unavailable }
             return snapshot
         }
+        let entries = journal.entries
 
         if case .invalid = snapshot, !preserveUnreadableHistory() {
             return .entries(entries)
         }
-        if persistEntries(data, fileURL) {
+        guard let snapshotData = try? JSONEncoder().encode(entries) else { return .entries(entries) }
+        if persistEntries(snapshotData, fileURL) {
             try? fileManager.removeItem(at: walURL)
+            releaseManagedAudio(journal.deferredAudioFileURLs.map(Optional.some), unlessReferencedBy: entries)
             if case let .entries(previousEntries) = snapshot {
                 releaseManagedAudio(previousEntries.map(\.audioFileURL), unlessReferencedBy: entries)
             }
@@ -327,6 +332,21 @@ public actor HistoryStore {
         } catch {
             return false
         }
+    }
+
+    private func journal() -> HistoryJournal? {
+        guard let data = try? Data(contentsOf: walURL) else { return nil }
+        return decodeJournal(data)
+    }
+
+    private func decodeJournal(_ data: Data) -> HistoryJournal? {
+        if let journal = try? JSONDecoder().decode(HistoryJournal.self, from: data) {
+            return journal
+        }
+        if let entries = try? JSONDecoder().decode([Transcript].self, from: data) {
+            return HistoryJournal(entries: entries, deferredAudioFileURLs: [])
+        }
+        return nil
     }
 
     /// Moves undecodable history out of the active path before a fresh append can persist.
