@@ -768,6 +768,7 @@ public enum FileTranscriber {
         language: DictationLanguage,
         route: ProviderRoute
     ) async throws -> Transcript {
+        try Task.checkCancellation()
         guard route.supportsDictation else { throw SaysoError.unavailable("Your provider is available for translation, not transcription") }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SaysoError.invalidAction("Audio file was not found")
@@ -807,11 +808,12 @@ public enum FileTranscriber {
         let request = SFSpeechURLRecognitionRequest(url: fileURL)
         request.requiresOnDeviceRecognition = route == .local
         let completion = FileRecognitionCompletion()
+        let timeoutSeconds = fileTranscriptionTimeout(for: fileURL)
         let timeout = Task {
-            try? await Task.sleep(for: .seconds(120))
+            try? await Task.sleep(for: .seconds(timeoutSeconds))
             guard !Task.isCancelled else { return }
             completion.resume(
-                throwing: SaysoError.unavailable("File transcription timed out after 2 minutes."),
+                throwing: SaysoError.unavailable("File transcription timed out. Try a shorter recording."),
                 cancellingTask: true
             )
         }
@@ -834,6 +836,13 @@ public enum FileTranscriber {
         return Transcript(text: text, language: language, route: route, isFinal: true)
     }
 
+    private static func fileTranscriptionTimeout(for fileURL: URL) -> Double {
+        guard let file = try? AVAudioFile(forReading: fileURL),
+              file.processingFormat.sampleRate > 0 else { return 120 }
+        let duration = Double(file.length) / file.processingFormat.sampleRate
+        return max(120, duration * 4 + 60)
+    }
+
     private static func transcribeWithFluidAudio(
         fileURL: URL,
         language: DictationLanguage,
@@ -845,6 +854,7 @@ public enum FileTranscriber {
             let file = try AVAudioFile(forReading: fileURL)
             let chunkFrames = AVAudioFrameCount(max(1_024, Int(file.processingFormat.sampleRate / 5)))
             while file.framePosition < file.length {
+                try Task.checkCancellation()
                 let remaining = file.length - file.framePosition
                 guard let buffer = AVAudioPCMBuffer(
                     pcmFormat: file.processingFormat,
@@ -877,6 +887,7 @@ public enum FileTranscriber {
             let file = try AVAudioFile(forReading: fileURL)
             let chunkFrames = AVAudioFrameCount(max(1_024, Int(file.processingFormat.sampleRate / 5)))
             while file.framePosition < file.length {
+                try Task.checkCancellation()
                 let remaining = file.length - file.framePosition
                 guard let buffer = AVAudioPCMBuffer(
                     pcmFormat: file.processingFormat,
@@ -901,45 +912,48 @@ private final class FileRecognitionCompletion: @unchecked Sendable {
     private let lock = NSLock()
     var task: SFSpeechRecognitionTask?
     private var continuation: CheckedContinuation<String, Error>?
-    private var completed = false
+    private var result: Result<String, Error>?
 
     func setContinuation(_ continuation: CheckedContinuation<String, Error>) {
         lock.lock()
-        self.continuation = continuation
+        let result = result
+        if result == nil { self.continuation = continuation }
         lock.unlock()
+        if let result { continuation.resume(with: result) }
     }
 
     func setTask(_ task: SFSpeechRecognitionTask) {
         lock.lock()
-        let shouldCancel = completed
+        let shouldCancel = result != nil
         if !shouldCancel { self.task = task }
         lock.unlock()
         if shouldCancel { task.cancel() }
     }
 
     func resume(returning text: String) {
-        complete(cancellingTask: false) { $0.resume(returning: text) }
+        complete(.success(text), cancellingTask: false)
     }
 
     func resume(throwing error: Error, cancellingTask: Bool = false) {
-        complete(cancellingTask: cancellingTask) { $0.resume(throwing: error) }
+        complete(.failure(error), cancellingTask: cancellingTask)
     }
 
     private func complete(
+        _ result: Result<String, Error>,
         cancellingTask: Bool,
-        resume: (CheckedContinuation<String, Error>) -> Void
     ) {
         lock.lock()
-        guard !completed, let continuation else {
+        guard self.result == nil else {
             lock.unlock()
             return
         }
-        completed = true
+        self.result = result
+        let continuation = self.continuation
         self.continuation = nil
         let task = self.task
         self.task = nil
         lock.unlock()
         if cancellingTask { task?.cancel() }
-        resume(continuation)
+        continuation?.resume(with: result)
     }
 }
