@@ -30,13 +30,18 @@ import Testing
     #expect(!(await store.remove(id: first.id)))
 }
 
-@Test func historyScopesFilterRouteTranslationAndRecordings() {
+@Test func historyScopesFilterRouteTranslationAndRecordings() throws {
+    let recordingURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("m4a")
+    defer { try? FileManager.default.removeItem(at: recordingURL) }
+    try Data().write(to: recordingURL)
     let onDeviceRecording = Transcript(
         text: "Local",
         language: .english,
         route: .local,
         isFinal: true,
-        audioFileURL: URL(fileURLWithPath: "/tmp/Recording-a.m4a")
+        audioFileURL: recordingURL
     )
     let translated = Transcript(
         text: "Original",
@@ -60,6 +65,7 @@ import Testing
     #expect(HistoryFilter.matching(entries, query: "", scope: .yourProvider).map(\.id) == [provider.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .translated).map(\.id) == [translated.id])
     #expect(HistoryFilter.matching(entries, query: "", scope: .recordings).map(\.id) == [onDeviceRecording.id])
+    #expect(HistoryFilter.matching(entries, query: "Local", scope: .appleSpeech).isEmpty)
     #expect(!emptyTranslation.hasTranslation)
     #expect(emptyTranslation.displayText == "Fallback")
 }
