@@ -25,3 +25,13 @@ import Testing
     session.complete(text: "hello", delivery: .clipboard)
     #expect(session.phase == .copiedToClipboard)
 }
+
+@Test func recordingSessionTracksCancelledCapture() {
+    var session = RecordingSession(language: .english, route: .local, destination: nil)
+    session.transition(to: .listening)
+    session.transition(to: .cancelled)
+
+    #expect(session.phase == .cancelled)
+    #expect(session.finalText == nil)
+    #expect(session.delivery == nil)
+}
