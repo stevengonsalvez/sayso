@@ -1740,6 +1740,11 @@ private struct HistoryWorkspace: View {
                     if let audioFileURL = entry.audioFileURL, availableRecordingIDs.contains(entry.id) {
                         Button {
                             Task {
+                                guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
+                                    availableRecordingIDs.remove(entry.id)
+                                    model.notice = "Recording is no longer available."
+                                    return
+                                }
                                 model.startReprocessingHistory(entry)
                                 while model.isHistoryAudioTaskRunning {
                                     try? await Task.sleep(for: .milliseconds(100))
@@ -1753,6 +1758,11 @@ private struct HistoryWorkspace: View {
                         .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
                         .accessibilityLabel("Reprocess recording")
                         Button {
+                            guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
+                                availableRecordingIDs.remove(entry.id)
+                                model.notice = "Recording is no longer available."
+                                return
+                            }
                             playback.toggle(entryID: entry.id, url: audioFileURL)
                         } label: {
                             Image(systemName: playback.activeID == entry.id ? "stop.fill" : "play.fill")
@@ -1767,6 +1777,11 @@ private struct HistoryWorkspace: View {
                         }
                         if let audioFileURL = entry.audioFileURL, availableRecordingIDs.contains(entry.id) {
                             Button("Reveal recording in Finder") {
+                                guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
+                                    availableRecordingIDs.remove(entry.id)
+                                    model.notice = "Recording is no longer available."
+                                    return
+                                }
                                 NSWorkspace.shared.activateFileViewerSelecting([audioFileURL])
                             }
                         }
