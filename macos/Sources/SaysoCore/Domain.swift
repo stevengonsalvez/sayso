@@ -139,9 +139,14 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
 public enum LexiconCorrections {
     public static func apply(_ text: String, replacements: [String: String]) -> String {
-        replacements.reduce(text) { result, replacement in
-            result.replacingOccurrences(of: replacement.key, with: replacement.value, options: [.caseInsensitive])
-        }
+        let corrections = replacements
+            .sorted {
+                $0.key.count == $1.key.count
+                    ? $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending
+                    : $0.key.count > $1.key.count
+            }
+            .map { DictationCorrection(source: $0.key, replacement: $0.value) }
+        return DictationProfile(name: "Lexicon", corrections: corrections).postProcess(text)
     }
 }
 
