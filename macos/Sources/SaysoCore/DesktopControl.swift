@@ -591,6 +591,9 @@ public enum ControlPlanner {
             if let url = httpURL(target) {
                 return .init(action: .open(url: url), confidence: 0.80, reason: "Explicit web address")
             }
+            guard !looksLikeUnsupportedWebAddress(target) else {
+                throw SaysoError.invalidAction("Open web addresses must include http:// or https://.")
+            }
             return try namedApplicationPlan(
                 requestedName: target,
                 applications: installedApplications ?? InstalledDesktopApplication.available()
@@ -672,6 +675,14 @@ public enum ControlPlanner {
               ["http", "https"].contains(scheme),
               url.host != nil else { return nil }
         return url
+    }
+
+    private static func looksLikeUnsupportedWebAddress(_ value: String) -> Bool {
+        if URL(string: value)?.scheme != nil { return true }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.contains(where: \.isWhitespace)
+            && trimmed.contains(".")
+            && !trimmed.lowercased().hasSuffix(".app")
     }
 
     private static func bundleIdentifier(from command: String, prefix: Int) -> String? {
