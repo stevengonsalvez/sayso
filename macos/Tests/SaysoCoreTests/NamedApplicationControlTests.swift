@@ -108,6 +108,8 @@ private func installedApplication(
 @Test func namedApplicationCatalogIsOnlyNeededForNamedTargets() {
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open https://example.com/docs"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open http://localhost:8080"))
+    #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open example.com"))
+    #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open file:///tmp/example"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "switch to Safari"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "activate com.apple.Safari"))
@@ -130,6 +132,13 @@ private func installedApplication(
     ))
     #expect(!InstalledDesktopApplication.validatesLaunchTarget(
         bundleIdentifier: "ai.sayso.other-app",
+        applicationURL: applicationURL
+    ))
+    let replacement = ["CFBundleIdentifier": "ai.sayso.replaced-app"]
+    let replacementData = try PropertyListSerialization.data(fromPropertyList: replacement, format: .xml, options: 0)
+    try replacementData.write(to: contentsURL.appending(path: "Info.plist"))
+    #expect(!InstalledDesktopApplication.validatesLaunchTarget(
+        bundleIdentifier: "ai.sayso.test-app",
         applicationURL: applicationURL
     ))
     #expect(!InstalledDesktopApplication.validatesLaunchTarget(
