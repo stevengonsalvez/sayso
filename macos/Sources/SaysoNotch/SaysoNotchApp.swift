@@ -968,7 +968,7 @@ final class SaysoAppModel: ObservableObject {
         guard let text = lastTranscript?.displayText else { return }
         speech.speak(
             text,
-            language: settings.outputLanguage,
+            language: settings.speechLanguage,
             voiceIdentifier: settings.speechVoiceIdentifier,
             rate: settings.speechRate
         )
