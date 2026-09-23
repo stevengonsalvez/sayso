@@ -806,21 +806,31 @@ public enum FileTranscriber {
         }
         let request = SFSpeechURLRecognitionRequest(url: fileURL)
         request.requiresOnDeviceRecognition = route == .local
-        let taskBox = FileRecognitionTaskBox()
-        let text = try await withCheckedThrowingContinuation { continuation in
-            var completed = false
-            taskBox.task = recognizer.recognitionTask(with: request) { result, error in
-                guard !completed else { return }
-                if let result, result.isFinal {
-                    completed = true
-                    continuation.resume(returning: result.bestTranscription.formattedString)
-                } else if let error {
-                    completed = true
-                    continuation.resume(throwing: error)
-                }
-            }
+        let completion = FileRecognitionCompletion()
+        let timeout = Task {
+            try? await Task.sleep(for: .seconds(120))
+            guard !Task.isCancelled else { return }
+            completion.resume(
+                throwing: SaysoError.unavailable("File transcription timed out after 2 minutes."),
+                cancellingTask: true
+            )
         }
-        withExtendedLifetime(taskBox) {}
+        defer { timeout.cancel() }
+        let text: String = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                completion.setContinuation(continuation)
+                let task = recognizer.recognitionTask(with: request) { result, error in
+                    if let result, result.isFinal {
+                        completion.resume(returning: result.bestTranscription.formattedString)
+                    } else if let error {
+                        completion.resume(throwing: error)
+                    }
+                }
+                completion.setTask(task)
+            }
+        } onCancel: {
+            completion.resume(throwing: CancellationError(), cancellingTask: true)
+        }
         return Transcript(text: text, language: language, route: route, isFinal: true)
     }
 
@@ -887,7 +897,49 @@ public enum FileTranscriber {
     }
 }
 
-@MainActor
-private final class FileRecognitionTaskBox {
+private final class FileRecognitionCompletion: @unchecked Sendable {
+    private let lock = NSLock()
     var task: SFSpeechRecognitionTask?
+    private var continuation: CheckedContinuation<String, Error>?
+    private var completed = false
+
+    func setContinuation(_ continuation: CheckedContinuation<String, Error>) {
+        lock.lock()
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func setTask(_ task: SFSpeechRecognitionTask) {
+        lock.lock()
+        let shouldCancel = completed
+        if !shouldCancel { self.task = task }
+        lock.unlock()
+        if shouldCancel { task.cancel() }
+    }
+
+    func resume(returning text: String) {
+        complete(cancellingTask: false) { $0.resume(returning: text) }
+    }
+
+    func resume(throwing error: Error, cancellingTask: Bool = false) {
+        complete(cancellingTask: cancellingTask) { $0.resume(throwing: error) }
+    }
+
+    private func complete(
+        cancellingTask: Bool,
+        resume: (CheckedContinuation<String, Error>) -> Void
+    ) {
+        lock.lock()
+        guard !completed, let continuation else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        self.continuation = nil
+        let task = self.task
+        self.task = nil
+        lock.unlock()
+        if cancellingTask { task?.cancel() }
+        resume(continuation)
+    }
 }
