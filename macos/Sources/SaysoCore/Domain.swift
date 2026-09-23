@@ -88,6 +88,32 @@ public enum ProviderRoute: String, Codable, CaseIterable, Identifiable, Sendable
     public static var dictationRoutes: [ProviderRoute] { [.local, .appleSpeech] }
 }
 
+public enum OnboardingReadiness {
+    public static func engineIsReady(
+        route: ProviderRoute,
+        language: DictationLanguage,
+        hasLocalModel: Bool,
+        cloudConsentGranted: Bool
+    ) -> Bool {
+        switch route {
+        case .local:
+            language != .automatic && hasLocalModel
+        case .appleSpeech:
+            cloudConsentGranted
+        case .byok:
+            false
+        }
+    }
+
+    public static func hasRequiredPermissions(
+        route: ProviderRoute,
+        microphoneGranted: Bool,
+        speechRecognitionGranted: Bool
+    ) -> Bool {
+        microphoneGranted && (route != .appleSpeech || speechRecognitionGranted)
+    }
+}
+
 public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let createdAt: Date
