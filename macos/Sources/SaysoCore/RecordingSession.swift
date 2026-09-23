@@ -6,6 +6,8 @@ public enum RecordingSessionPhase: String, Codable, Equatable, Sendable {
     case processing
     case delivered
     case copiedToClipboard
+    case edited
+    case handedToControl
     case failed
     case cancelled
 }
@@ -66,6 +68,18 @@ public struct RecordingSession: Codable, Equatable, Identifiable, Sendable {
         finalText = text
         self.delivery = delivery
         phase = delivery == .clipboard ? .copiedToClipboard : .delivered
+        updatedAt = now
+    }
+
+    public mutating func completeVoiceEdit(_ text: String, now: Date = .now) {
+        finalText = text
+        phase = .edited
+        updatedAt = now
+    }
+
+    public mutating func completeControlCommand(_ text: String, now: Date = .now) {
+        finalText = text
+        phase = .handedToControl
         updatedAt = now
     }
 
