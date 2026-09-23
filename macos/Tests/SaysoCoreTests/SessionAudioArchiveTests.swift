@@ -437,7 +437,7 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(FileManager.default.fileExists(atPath: existingAudioURL.path))
 }
 
-@Test func failedRecoveryWriteKeepsAudioNamedByBackup() async throws {
+@Test func journaledRecoveryWriteKeepsAudioNamedByBackup() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let historyURL = root.appendingPathComponent("history.json")
@@ -459,6 +459,30 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     )
 
     #expect(await store.appendResult(reprocessed) == .recovered)
+    #expect(FileManager.default.fileExists(atPath: existingAudioURL.path))
+}
+
+@Test func failedJournalWriteKeepsAudioNamedByBackup() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let historyURL = root.appendingPathComponent("history.json")
+    let recordingDirectory = root.appendingPathComponent("Recordings", isDirectory: true)
+    let existingAudioURL = try finishedManagedRecording(in: recordingDirectory)
+    try Data("truncated \(existingAudioURL.lastPathComponent) history".utf8).write(to: historyURL)
+    let store = HistoryStore(
+        fileURL: historyURL,
+        recordingsDirectory: recordingDirectory,
+        persistJournal: { _, _ in false }
+    )
+    let reprocessed = Transcript(
+        text: "Recovered",
+        language: .english,
+        route: .local,
+        isFinal: true,
+        audioFileURL: existingAudioURL
+    )
+
+    #expect(await store.appendResult(reprocessed) == .failed)
     #expect(FileManager.default.fileExists(atPath: existingAudioURL.path))
 }
 
