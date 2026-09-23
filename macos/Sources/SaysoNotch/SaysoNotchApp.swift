@@ -498,7 +498,7 @@ final class SaysoAppModel: ObservableObject {
                 ? "Final text copied. Recovered unreadable history to a local backup."
                 : "Dictation finished. Recovered unreadable history to a local backup."
         } else if historyResult == .failed {
-            notice = copied ? "Final text copied, but history could not save." : "Dictation finished, but text and history could not save."
+            notice = copied ? "Final text copied, but history could not save." : "Dictation finished, but text could not be copied and history could not save."
         } else {
             notice = copied ? "Final text copied to clipboard." : "Dictation finished, but final text could not be copied."
         }
