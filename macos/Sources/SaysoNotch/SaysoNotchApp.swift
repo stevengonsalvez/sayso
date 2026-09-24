@@ -2770,13 +2770,22 @@ private struct CleanupDirectivesEditor: View {
             .onAppear {
                 text = directives.joined(separator: ", ")
             }
-            .onChange(of: text) { newValue in
+            .onChange(of: text) { _, newValue in
                 let parsed = newValue
                     .split(separator: ",")
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
                 if parsed != directives {
                     directives = parsed
+                }
+            }
+            .onChange(of: directives) { _, newDirectives in
+                let parsed = text
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if parsed != newDirectives {
+                    text = newDirectives.joined(separator: ", ")
                 }
             }
     }
@@ -2940,58 +2949,58 @@ private struct SaysoSettingsView: View {
                 Text("App profiles use these defaults only for the matching app.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                ForEach(model.settings.dictationProfileOverrides.indices, id: \.self) { index in
+                ForEach($model.settings.dictationProfileOverrides) { $override in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            TextField("App bundle identifier", text: $model.settings.dictationProfileOverrides[index].bundleIdentifier)
+                            TextField("App bundle identifier", text: $override.bundleIdentifier)
                             Button("Remove", role: .destructive) {
-                                model.settings.dictationProfileOverrides.remove(at: index)
+                                model.settings.dictationProfileOverrides.removeAll { $0.id == override.id }
                                 model.save()
                             }
                         }
-                        TextField("App profile name", text: $model.settings.dictationProfileOverrides[index].profile.name)
-                        Picker("Spoken language", selection: $model.settings.dictationProfileOverrides[index].profile.languageOverride) {
+                        TextField("App profile name", text: $override.profile.name)
+                        Picker("Spoken language", selection: $override.profile.languageOverride) {
                             Text("Use global setting").tag(DictationLanguage?.none)
                             ForEach(DictationLanguage.allCases) { language in
                                 Text(language.displayName).tag(Optional(language))
                             }
                         }
-                        Picker("Speech route", selection: $model.settings.dictationProfileOverrides[index].profile.routeOverride) {
+                        Picker("Speech route", selection: $override.profile.routeOverride) {
                             Text("Use global setting").tag(ProviderRoute?.none)
                             ForEach(ProviderRoute.dictationRoutes) { route in
                                 Text(route.displayName).tag(Optional(route))
                             }
                         }
                         TextField("Transcription model override", text: Binding(
-                            get: { model.settings.dictationProfileOverrides[index].profile.transcriptionModelOverride ?? "" },
-                            set: { model.settings.dictationProfileOverrides[index].profile.transcriptionModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                            get: { override.profile.transcriptionModelOverride ?? "" },
+                            set: { override.profile.transcriptionModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                         ))
-                        Picker("Translation", selection: $model.settings.dictationProfileOverrides[index].profile.translationEnabledOverride) {
+                        Picker("Translation", selection: $override.profile.translationEnabledOverride) {
                             Text("Use global setting").tag(Bool?.none)
                             Text("On").tag(Optional(true))
                             Text("Off").tag(Optional(false))
                         }
-                        Picker("Translation output", selection: $model.settings.dictationProfileOverrides[index].profile.outputLanguageOverride) {
+                        Picker("Translation output", selection: $override.profile.outputLanguageOverride) {
                             Text("Use global setting").tag(DictationLanguage?.none)
                             ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { language in
                                 Text(language.displayName).tag(Optional(language))
                             }
                         }
-                        Picker("Transcript cleanup", selection: $model.settings.dictationProfileOverrides[index].profile.cleanupEnabledOverride) {
+                        Picker("Transcript cleanup", selection: $override.profile.cleanupEnabledOverride) {
                             Text("Use global setting").tag(Bool?.none)
                             Text("On").tag(Optional(true))
                             Text("Off").tag(Optional(false))
                         }
                         TextField("Cleanup model override", text: Binding(
-                            get: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride ?? "" },
-                            set: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                            get: { override.profile.cleanupModelOverride ?? "" },
+                            set: { override.profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                         ))
                         CleanupDirectivesEditor(
                             title: "Cleanup directives (comma-separated)",
-                            directives: $model.settings.dictationProfileOverrides[index].profile.cleanupDirectives
+                            directives: $override.profile.cleanupDirectives
                         )
-                        Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
-                        Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
+                        Toggle("Normalize whitespace for this app", isOn: $override.profile.normalizesWhitespace)
+                        Toggle("Capitalize sentences for this app", isOn: $override.profile.capitalizesSentences)
                     }
                     .padding(.vertical, 4)
                 }
