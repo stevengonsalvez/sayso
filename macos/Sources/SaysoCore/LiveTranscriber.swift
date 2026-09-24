@@ -90,6 +90,11 @@ private func makePumpTap(
 
 @MainActor
 public final class LiveTranscriber: NSObject, ObservableObject {
+    /// Hands-free dictation ends after this much continuous quiet audio.
+    public static let defaultHandsFreeSilenceDuration: Duration = .milliseconds(1_200)
+    public static let minimumHandsFreeSilenceDuration: Duration = .milliseconds(500)
+    public static let maximumHandsFreeSilenceDuration: Duration = .seconds(5)
+
     @Published public private(set) var phase: SessionPhase = .idle
     @Published public private(set) var partialText = ""
     @Published public private(set) var error: SaysoError?
@@ -114,6 +119,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var activeLanguage: DictationLanguage = .automatic
     private var activeRoute: ProviderRoute = .appleSpeech
     private var handsFree = false
+    public private(set) var handsFreeSilenceDuration = LiveTranscriber.defaultHandsFreeSilenceDuration
     private var silenceTask: Task<Void, Never>?
     private var startGate = TranscriptionRunGate()
     private var appleRecognitionRun = TranscriptionRunGate()
@@ -131,6 +137,17 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         self.fluidAudioModels = fluidAudioModels
         self.sherpaPunjabiModels = sherpaPunjabiModels
         super.init()
+    }
+
+    /// Keeps silence detection responsive without ending a phrase too abruptly.
+    public static func clampedHandsFreeSilenceDuration(_ duration: Duration) -> Duration {
+        if duration < minimumHandsFreeSilenceDuration {
+            return minimumHandsFreeSilenceDuration
+        }
+        if duration > maximumHandsFreeSilenceDuration {
+            return maximumHandsFreeSilenceDuration
+        }
+        return duration
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
@@ -151,6 +168,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         language: DictationLanguage,
         route: ProviderRoute,
         handsFree: Bool = false,
+        handsFreeSilenceDuration: Duration = LiveTranscriber.defaultHandsFreeSilenceDuration,
         saveAudio: Bool = false,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
@@ -176,6 +194,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         activeLanguage = language
         activeRoute = route
         self.handsFree = handsFree
+        self.handsFreeSilenceDuration = Self.clampedHandsFreeSilenceDuration(handsFreeSilenceDuration)
         error = nil
         partialText = ""
         discardSessionAudio()
@@ -293,8 +312,9 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard handsFree, phase == .listening else { return }
         if level > 0.015 { silenceTask?.cancel(); silenceTask = nil; return }
         guard silenceTask == nil else { return }
+        let silenceDuration = handsFreeSilenceDuration
         silenceTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: silenceDuration)
             guard !Task.isCancelled else { return }
             self?.stop()
         }
