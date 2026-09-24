@@ -77,7 +77,7 @@ public enum AXCandidateCapturePolicy {
 public enum PointerRowActivation: Sendable {
     case pointerSelectionChanged
     case pointerWithoutSelectionEvidence
-    case accessibilitySelection(selectionChanged: Bool)
+    case accessibilitySelection
 }
 
 public enum PointerRowHitDecision: Equatable, Sendable {
@@ -199,9 +199,8 @@ public final class AXCandidateCapture: @unchecked Sendable {
         case .covered:
             throw SaysoError.invalidAction("Visible row is covered")
         case .accessibilitySelection:
-            return .accessibilitySelection(
-                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
-            )
+            _ = try select(candidateID: candidateID, application: targetApplication)
+            return .accessibilitySelection
         case .pointer:
             break
         }
@@ -217,22 +216,11 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
         try postPointerMove(to: centre)
         try await Task.sleep(for: .milliseconds(50))
-        switch try hitDecision(target: target.element, in: systemWide, at: centre) {
-        case .covered:
-            throw SaysoError.invalidAction("Visible row changed before click")
-        case .accessibilitySelection:
-            return .accessibilitySelection(
-                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
-            )
-        case .pointer:
-            break
-        }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
         if !(try await postPointerClick(at: centre, target: target.element, systemWide: systemWide)) {
-            return .accessibilitySelection(
-                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
-            )
+            _ = try select(candidateID: candidateID, application: targetApplication)
+            return .accessibilitySelection
         }
         guard !wasSelected else { return .pointerWithoutSelectionEvidence }
         for _ in 0..<5 {
