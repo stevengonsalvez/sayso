@@ -36,6 +36,7 @@ import Testing
     #expect(settings.speechRate == 0.5)
     #expect(settings.dictationProfileOverrides.isEmpty)
     #expect(settings.handsFreeSilenceSeconds == 1.2)
+    #expect(settings.handsFreeMaximumDurationSeconds == 900)
 
     let appProfile = DictationProfile(id: "mail", name: "Mail", capitalizesSentences: true)
     var profileSettings = SaysoSettings()
@@ -56,6 +57,9 @@ import Testing
 
     let invalidSilence = Data("{\"handsFreeSilenceSeconds\":10}".utf8)
     #expect(try JSONDecoder().decode(SaysoSettings.self, from: invalidSilence).handsFreeSilenceSeconds == 5)
+
+    let invalidMaximum = Data("{\"handsFreeMaximumDurationSeconds\":4000}".utf8)
+    #expect(try JSONDecoder().decode(SaysoSettings.self, from: invalidMaximum).handsFreeMaximumDurationSeconds == 3_600)
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
