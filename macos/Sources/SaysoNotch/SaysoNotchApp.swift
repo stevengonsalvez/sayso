@@ -194,6 +194,7 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
+    private var routeChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -238,6 +239,13 @@ final class SaysoAppModel: ObservableObject {
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        routeChangeObserver = $settings
+            .map(\.route)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.settings.cloudConsentGranted = false
+            }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.handleTapDictationShortcut()
         }
@@ -3419,10 +3427,7 @@ private struct OnboardingWizard: View {
         .padding(32)
         .frame(width: 560, height: 500)
         .onChange(of: model.settings.language) { _, _ in model.clearOnboardingTestResult() }
-        .onChange(of: model.settings.route) { oldRoute, newRoute in
-            if oldRoute != newRoute {
-                model.settings.cloudConsentGranted = false
-            }
+        .onChange(of: model.settings.route) { _, newRoute in
             page = min(page, steps.count - 1)
             model.clearOnboardingTestResult()
             guard newRoute == .local, model.settings.language == .automatic else { return }
