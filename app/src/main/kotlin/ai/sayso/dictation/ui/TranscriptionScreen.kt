@@ -226,7 +226,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
         }
         SwitchRow(
             title = "Automatic language routing",
-            subtitle = "Classify first 1.5s of audio to automatically switch between English (Parakeet) and Indic (AI4Bharat) models",
+            subtitle = "Uses Whisper neural detector to route Tamil, Hindi, or Malayalam to AI4Bharat and English to Parakeet",
             checked = autoLanguageRouting,
             onCheckedChange = {
                 autoLanguageRouting = it
