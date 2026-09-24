@@ -29,9 +29,10 @@ public enum AXCandidateCapturePolicy {
         identifier: String?,
         supportsPress: Bool,
         supportsFocus: Bool,
+        supportsSelection: Bool = false,
         isProtected: Bool
     ) -> Bool {
-        guard !isProtected, !role.isEmpty, supportsPress || supportsFocus else { return false }
+        guard !isProtected, !role.isEmpty, supportsPress || supportsFocus || supportsSelection else { return false }
         return !title.isEmpty || !(identifier?.isEmpty ?? true)
     }
 
@@ -111,6 +112,26 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
     }
 
+    public func select(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws {
+        guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
+        let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
+        guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
+            throw SaysoError.staleTarget
+        }
+        let windowTitle = stringAttribute(kAXTitleAttribute as CFString, from: window) ?? ""
+        guard let target = capturedCandidates(
+            in: window,
+            processIdentifier: targetApplication.processIdentifier,
+            windowTitle: windowTitle
+        ).first(where: { $0.candidate.id == candidateID }), target.candidate.state.isSelectionTarget else {
+            throw SaysoError.staleTarget
+        }
+        guard AXUIElementSetAttributeValue(target.element, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success,
+              boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) else {
+            throw SaysoError.invalidAction("Visible row rejected selection")
+        }
+    }
+
     private struct CapturedCandidate {
         let candidate: DesktopCandidate
         let element: AXUIElement
@@ -148,6 +169,8 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let title = title(for: node.element)
             let supportsPress = supportsAction(kAXPressAction as String, on: node.element)
             let supportsFocus = attributeIsSettable(kAXFocusedAttribute as CFString, on: node.element)
+            let supportsSelection = [kAXRowRole as String, kAXCellRole as String].contains(role)
+                && attributeIsSettable(kAXSelectedAttribute as CFString, on: node.element)
             let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: node.element, defaultValue: true)
 
             if AXCandidateCapturePolicy.includesCandidate(
@@ -156,6 +179,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 identifier: identifier,
                 supportsPress: supportsPress,
                 supportsFocus: supportsFocus,
+                supportsSelection: supportsSelection,
                 isProtected: protected
             ) {
                 let candidate = DesktopCandidate(
@@ -173,6 +197,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                         isEnabled: isEnabled,
                         supportsPress: supportsPress,
                         supportsFocus: supportsFocus,
+                        supportsSelection: supportsSelection,
                         isProtected: false
                     )
                 )
