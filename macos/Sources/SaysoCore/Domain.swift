@@ -138,8 +138,9 @@ public enum OnboardingReadiness {
         transcriptionModel: String,
         hasAPIKey: Bool
     ) -> Bool {
+        let trimmedURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard hasAPIKey,
-              let url = URL(string: baseURLString),
+              let url = URL(string: trimmedURL),
               ProviderEndpointPolicy.allows(url) else {
             return false
         }
