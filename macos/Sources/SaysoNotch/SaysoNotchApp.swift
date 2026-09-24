@@ -529,6 +529,7 @@ final class SaysoAppModel: ObservableObject {
                 route: settings.route,
                 handsFree: settings.handsFree,
                 handsFreeSilenceDuration: .seconds(settings.handsFreeSilenceSeconds),
+                handsFreeMaximumDuration: .seconds(settings.handsFreeMaximumDurationSeconds),
                 preferredAudioInputUID: settings.preferredAudioInputUID,
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 onPartial: { [weak self] text in
@@ -2553,6 +2554,10 @@ private struct SaysoSettingsView: View {
                     HStack {
                         Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
+                    }
+                    HStack {
+                        Text("Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds / 60)) minute capture")
+                        Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 60 ... 3_600, step: 60)
                     }
                 }
                 Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
