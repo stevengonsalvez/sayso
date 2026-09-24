@@ -856,7 +856,7 @@ public enum ControlPlanner {
         guard FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw SaysoError.invalidAction("No folder exists at '\(path)'.")
         }
-        guard (try? folderURL.resourceValues(forKeys: [.isPackageKey]).isPackage) != true else {
+        guard let resourceValues = try? folderURL.resourceValues(forKeys: [.isPackageKey]), resourceValues.isPackage != true else {
             throw SaysoError.invalidAction("Open folder does not launch app or package bundles.")
         }
         return .init(action: .openFolder(url: folderURL), confidence: 0.85, reason: "Explicit folder path")
@@ -1018,11 +1018,13 @@ public final class AXDesktopController: @unchecked Sendable {
             openTargetBundleIdentifier = targetBundleIdentifier
         case let .openFolder(url):
             let folderURL = url.standardizedFileURL.resolvingSymlinksInPath()
+            let resourceValues = try? folderURL.resourceValues(forKeys: [.isPackageKey])
             var isDirectory = ObjCBool(false)
             guard folderURL.isFileURL,
                   FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
                   isDirectory.boolValue,
-                  (try? folderURL.resourceValues(forKeys: [.isPackageKey]).isPackage) != true,
+                  let resourceValues,
+                  resourceValues.isPackage != true,
                   NSWorkspace.shared.open(folderURL) else {
                 throw SaysoError.unavailable("Open folder")
             }
