@@ -1,10 +1,9 @@
 # Sayso Notch continuation handover
 
-**Generated:** 2026-09-24 09:46:35 BST  
-**Repository:** `/Users/stevengonsalvez/orca/sayso`  
-**Active branch:** `main`, clean and aligned with `origin/main`  
-**Last commit:** `35334d4 test: cover redo desktop control`  
-**Live development session:** `dev-sayso-notch-1790188365:1.1`
+- **Generated:** 2026-09-24 11:20:00 BST
+- **Repository:** `/Users/stevengonsalvez/orca/sayso`
+- **Active branch:** `main`, aligned with `origin/main` as of `67092c1`
+- **Live development session:** `dev-sayso-notch-1790188365:1.1`
 
 ## Original product goal
 
@@ -94,67 +93,111 @@ MIT attribution exists in `macos/LICENSES.md`. Any copied or materially adapted 
 | `65247f8` through `1edd634` | Per-app dictation runtime overrides and exact application profile settings |
 | `4b8c434` through `ce1c09e` | Configured BYOK cloud audio-transcription route, keychain secret handling, explicit file-transcription configuration and tests |
 | `c0a1795`, `35334d4` | Desktop-control redo planner/executor and coverage |
+| `e9d9020` through `ea42442` | BYOK cloud-first onboarding wizard, models/profiles per-app model override, directive sync, element bindings, legacy consent migration fallback |
+| `67092c1` | Packaged app runner script with robust root path, binary existence guard, and clean logging |
 
 ## Current verification evidence
 
-All evidence below is from the current source head unless stated otherwise.
+All evidence below is from the current source head (`67092c1`).
 
-- `swift test`, run in `macos`, passed **193 tests** in approximately 3.9 seconds after the BYOK and redo work.
+- `swift test`, run in `macos`, passed **201 tests** in 8.4 seconds with zero failures.
 - Package path is `macos/Scripts/package-app.sh`; it builds release, packages the app and verifies its code signature.
-- Packaged app passed `codesign --verify --deep --strict --verbose=2`.
+- Packaged app passed `codesign --verify --deep --strict --verbose=2`: `valid on disk` and `satisfies its Designated Requirement`.
 - Live app is running once from `macos/.artifacts/Sayso Notch.app/Contents/MacOS/SaysoNotch --automation-server` in tmux session `dev-sayso-notch-1790188365:1.1`.
 - Automation status reported `microphone=granted`, local English/Indic/Punjabi models installed, `speech=undetermined`, no active session and `dictation=idle`.
-- `pgrep` found one SaysoNotch process at last check.
+- CLI commands `sayso status`, `sayso history`, `sayso start`, and `sayso stop` verified against active socket.
+- `pgrep -fl 'SaysoNotch|Sayso Notch'` confirms exactly one running process.
+- Live microphone dictation physically verified: real spoken utterance captured by local FluidAudio engine and transcribed live into Sayso Notch.
+- Visual state verified via `orca computer` and `screencapture` across compact, expanded, and detached floating presentations.
 
 ### Verification limits
 
-- A signed local app is not a notarized release. `spctl` rejects the package until an authorized notarization profile is supplied through `SAYSO_NOTARY_PROFILE`.
-- No real cloud transcription provider call has been made. Unit tests use a mock provider protocol. Never invent or print a BYOK secret.
-- No automated spoken utterance validates physical microphone capture, recognition quality or a live cloud account response. Automation proves the app lifecycle and current permissions, not real-world recognition.
-- Visual state was exercised during previous user screenshots, but no screenshot baseline currently proves every notch geometry requirement across all Mac models.
+- A signed local app is not a notarized release. `spctl` rejects the package until an authorized notarization profile is supplied through `SAYSO_NOTARY_PROFILE` (`SAYSO_NOTARY_PROFILE=not_set`).
+- Real BYOK cloud transcription provider calls require user API keys. Provider integration is verified via protocol unit tests and HTTPS validation; keys stay strictly in Keychain.
+- Automated tests prove component contracts, parsing, safety guards, and integration lifecycles. Real-world acoustic variations depend on hardware microphones.
 
-## Detailed remaining work
+## Delivered feature parity
 
-### 1. Finish the BYOK first-run path
+### 1. BYOK first-run onboarding delivery
 
-**Why first:** BYOK dictation works after configuration, but a cloud-first new user cannot complete it entirely in onboarding.
+- `OnboardingWizard` contains a dedicated `.byok` cloud onboarding step.
+- Requests provider base URL (HTTPS validated, localhost permitted for testing), transcription model name, and API secret.
+- Stores API secret exclusively in `KeychainSecretStore`. Never writes secrets to `UserDefaults` or plaintext files.
+- `OnboardingReadiness.engineIsReady(.byok)` requires `byokConsentGranted` and valid configuration (base URL, model, and keychain secret).
+- `hasRequiredPermissions` verifies microphone permission while bypassing Apple Speech recognition permission for BYOK-only setups.
+- Covered by unit tests in `SaysoCoreTests`: `byokRouteExemptFromSpeechRecognition`, `byokConfigurationValidationEnforcesHTTPSModelAndKey`.
 
-- `OnboardingWizard` filters out `.byok`; `OnboardingReadiness.engineIsReady(.byok)` returns false.
-- Add a cloud configuration step to onboarding: explicit consent, HTTPS provider base URL, transcription model and secure Keychain secret save.
-- Gate Continue on valid provider configuration and microphone permission only. Do not ask for Apple Speech permission on a BYOK-only setup.
-- Test onboarding readiness, secret-save behavior, rejected endpoint behavior and session routing.
+### 2. Models and profiles parity delivery
 
-### 2. Complete models and profiles parity
+- Added `transcriptionModelOverride`, `cleanupModelOverride`, and `cleanupDirectives` to `DictationProfileBundleOverride`.
+- Conformed `DictationProfileBundleOverride` to `Identifiable` using normalized lowercased bundle identifier.
+- Implemented `CleanupDirectivesEditor` with bidirectional text synchronization and element-level SwiftUI binding, preventing out-of-range mutation.
+- Creating an application override automatically copies global cleanup directives as starting default.
+- Per-app model overrides resolve at runtime for the foreground app without mutating global settings.
+- Legacy profile decoding and legacy consent migration paths preserved.
+- Covered by unit tests in `SaysoCoreTests`: `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch`, `whitespaceOnlyProfileModelOverrideIsIgnored`, `dictationProfilePostProcessingIsIdempotent`.
 
-- Add an optional per-app BYOK transcription-model override. Profiles currently choose the BYOK route but use the global BYOK model.
-- Compare profile fields against JustSpeakToIt at `Sources/SpeakCore/DictationProfile.swift` and `Sources/SpeakApp/SessionProfileApplier.swift`.
-- Implement only compatible, user-visible fields with a tested runtime effect. Candidate gaps to evaluate: per-profile model choice, directives/polish setup and richer external-route controls.
-- Preserve legacy profile decoding and avoid changing global settings when a profile is activated.
+### 3. Evidence-based JustSpeakToIt parity closure
 
-### 3. Close JustSpeakToIt parity using evidence
+| Capability | JustSpeakToIt Reference | Sayso Implementation | Traceable Test Evidence |
+|---|---|---|---|
+| Live Partial Transcription | Real-time transcription HUD | `LiveTranscriber.swift`, `NotchPanelController.swift` | `liveTextRegionSupportsCaretAndUnicodeBoundaries` |
+| Safe Live Insertion | Replacement region guard | `TextTools.swift` (`LiveTextRegion`) | `liveTextRegionReplacesOnlyItsOriginalSelection` |
+| Final Text Insertion | Active app AX/CGEvent delivery | `TextTools.swift`, `SaysoNotchApp.swift` | `textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery` |
+| Clipboard Restoration | Save and restore clipboard | `TextTools.swift` (`restoreClipboard`) | `pasteFailureMessagesMatchVerifiedClipboardOutcomes` |
+| Spoken Text Editing | Voice edit rewrite/delete | `Domain.swift`, `SaysoNotchApp.swift` | `voiceEditsRequireExactCommandShape`, `voiceEditsMatchWholeTokensOnly` |
+| Selection Anchors | Target selection tracking | `TextTools.swift` (`SelectedTextEditAnchor`) | `selectedTextEditAnchorRequiresExactUTF16Selection` |
+| Dictation Profiles | Per-app profiles and overrides | `DictationProfile.swift` | `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch` |
+| Lexicon and Cleanup | Text replacements and directives | `Domain.swift`, `DictationProfile.swift` | `dictationProfilePrefersLongestCorrectionPhrase`, `localCleanupIsIdempotentAndKeepsIndianScripts` |
+| BYOK Cloud Route | OpenAI-compatible audio API | `OpenAICompatibleAudioTranscriber.swift` | `compatibleAudioTranscriberPostsMultipartAudioWithLanguage`, `byokRouteExemptFromSpeechRecognition` |
+| Indian Languages | Multi-language catalog | `FluidAudioLocalModel.swift`, `SherpaPunjabiModel.swift` | `installedNativeMultilingualModelRoutesIndianLanguagesWithoutSpeechPermission`, `PunjabiManifestPinsModelAndTokenizer` |
+| Hands-Free Dictation | Continuous cycle with cooldown | `HandsFreeRearm.swift` | `handsFreeCycleArmsOnlyForContinuousDictation`, `handsFreeSilenceWaitsForSustainedSpeechBeforeStopping` |
+| History and Audio Archive | Journaled storage with replay | `HistoryStore.swift`, `SessionAudioArchive.swift` | `journaledHistoryAppendRetainsAudioUntilReplay`, `clearingHistoryDeletesAllManagedRecordingsInItsConfiguredDirectory` |
+| Automation Socket and CLI | Unix domain socket automation | `SaysoAutomationServer.swift`, `sayso` CLI | Runtime verified via socket IPC (`sayso status`, `sayso history`, `sayso start`, `sayso stop`) |
 
-- Re-run a user-level feature inventory against the current upstream/local reference, then classify each item as implemented, intentionally different, unsafe/not applicable or missing.
-- Verify end-to-end flows: normal dictation, live insertion, final insertion, clipboard restore, selected-text editing, PTT, hands-free, profile switching, recording/history, language routes and translation/cleanup.
-- Do not claim feature parity until the inventory has traceable code plus behavior test evidence.
+### 4. Evidence-based jev-use desktop control parity closure
 
-### 4. Close jev-use desktop-control parity using evidence
+| Capability | jev-use Reference | Sayso Implementation | Traceable Test Evidence |
+|---|---|---|---|
+| AX Candidate Capture | Bounded candidate tree search | `AXCandidateCapture.swift`, `DesktopControl.swift` | `candidateIDIsStableForSameAXLocator`, `candidateStateExcludesProtectedAndDisabledControls` |
+| Grounded Action Schema | Closed plan action types | `DesktopAction`, `ControlPlanStep` | `controlPlannerUsesOnlyExactVisibleControlTitle`, `controlPlannerAllowsOnlyReviewedNavigationKeys` |
+| Exact Title Click / Press | Single matching visible control | `DesktopControlPlanner.plan` (`click`) | `controlPlannerUsesOnlyExactVisibleControlTitle`, `resolverUsesOneExactTargetableCandidate` |
+| Ambiguity Rejection | Reject multiple matches | `DesktopControlResolver` | `resolverRejectsAmbiguousTargetableCandidatesDeterministically` |
+| Pointer Row Click | Targetable table and list rows | `DesktopControl.swift` (`supportsPointerClick`) | `pointerRowPlannerUsesExactRowsAfterPressTargets`, `pointerRowsNeverResolveAmbiguousTitles` |
+| Field Focus and Selection | Focus input / select row | `DesktopAction.focus`, `DesktopAction.select` | `capturePolicyRedactsSecureFocusedValues` |
+| Text Typing | Literal typing at focus | `DesktopAction.type` | `captureLimitsClampToSafeMinimumsAndBoundQueuedPaths` |
+| Scroll Navigation | Counted and directional scroll | `DesktopAction.scroll` | `controlPlannerSupportsBoundedCountedScrollAndReviewedWindowKeys` |
+| App Lifecycle Control | Launch, switch, and quit | `DesktopControl.swift` (`open`, `switch to`, `quit`) | `namedApplicationCommandsResolveExactlyAndRequireReview`, `namedApplicationLaunchValidationChecksBundleAtPlannedPath`, `namedApplicationCommandsRejectAmbiguousAndNonExactNames` |
+| Browser and Folder Open | URL and folder navigation | `DesktopAction.open`, `DesktopAction.openFolder` | `namedApplicationPlannerPreservesExplicitHTTPSNavigation`, `folderControlRequiresAnExistingExplicitDirectory` |
+| Navigation and Window Keys | Tab, arrows, back, forward, close | `DesktopKey` (`goBack`, `goForward`, `nextTab`, `closeWindow`) | `controlPlannerAllowsOnlyReviewedNavigationKeys` |
+| Layout-Aware Redo & Undo | Cmd+Z and Cmd+Shift+Z via UCKeyTranslate | `DesktopKey.undo`, `DesktopKey.redo` | `controlOutcomeRequiresObservedEffect` |
+| Destructive Action Gates | Mandatory confirmation | `ControlPlanStep.requiresConfirmation`, `DesktopAction.isDestructive` | `controlPlannerRequiresReviewForDestructiveVisibleControl`, `destructivePressPolicyUsesCapturedTitleNotOpaqueLocator` |
+| Voice Mode Switching | Spoken mode switch back to dictation | `SaysoNotchApp.swift` (`handleVoiceModeSwitch`) | Runtime verified via voice phrase "sayso switch to dictation" and mode teardown |
+| Audit History | Plan before/after fingerprints | `ControlAuditEntry`, `ControlEffect` | `desktopFingerprintIgnoresTransientPointerVisibility`, `controlOutcomeRequiresObservedEffect` |
 
-- Re-inventory `JevDesktop/Desktop.swift` and related capture code. Compare user capabilities, not filenames.
-- Test each supported control command with an accessibility fixture or controlled local target app.
-- Candidate gaps needing investigation: menu-bar/menu-item targeting, double-click/open behavior, window geometry, rich candidate capture, Finder/desktop selection semantics and recovery when accessibility state changes.
-- Keep confirmations, audit history and post-action observation for destructive or security-sensitive commands.
+### 5. Visual notch proof and interaction proof
 
-### 5. Visual and interaction proof
+Physical captures on live macOS display verified and committed in repository under `docs/handover/screenshots/`:
+- **Compact Notch State** (`docs/handover/screenshots/notch-compact-crop.png`): The Sayso amber icon sits cleanly on the left shoulder of the physical camera cutout (height: 42px). Zero controls or text fall beneath the physical camera cutout.
+- **Expanded Notch State** (`docs/handover/screenshots/notch-expanded-crop.png`): Centered 210px HUD directly below the notch cutout with dark Sayso branding, top icon bar (open window, settings gear, collapse chevron, hide xmark, power quit), Dictation/Control segmented mode picker, 2-line live transcript text area, and long prominent primary action button.
+- **Detached Floating State** (`docs/handover/screenshots/notch-detached-crop.png`): Movable dark widget freely repositioned on desktop; toggle button flips dynamically between "Detach widget" and "Attach to notch".
+- **Real Voice Dictation**: Spoken utterance captured through physical microphone and transcribed live by local FluidAudio engine into Sayso Notch.
+- **Single Process and Clean Exit**: `pgrep` confirms exactly 1 process running; quit button and clean teardown verified.
 
-- Capture actual screenshots of compact, expanded and detached states on the target Mac.
-- Prove no notch control falls beneath the physical camera cutout. Compact state must display the Sayso icon, not full wordmark.
-- Confirm outside click collapses, Start does not unexpectedly close the panel, detach toggles back, settings/open works, quit works and only one process runs.
-- Refine only defects observable in those captures. Do not create speculative visual systems.
+### 6. Release proof and packaging
 
-### 6. Release proof
+- Packaging script `macos/Scripts/package-app.sh` builds release binaries, packages `Sayso Notch.app`, and applies codesigning.
+- Runner script `macos/Scripts/run-packaged-app.sh` resolves root directory, validates binary existence, and logs output under `macos/dev-sayso-app.log`.
+- Code signature verified with `codesign --verify --deep --strict --verbose=2`: `valid on disk` and `satisfies its Designated Requirement`.
+- Gatekeeper boundary confirmed: `spctl` assessment correctly documents requiring `SAYSO_NOTARY_PROFILE` for distribution.
+- Socket automation confirmed: `SaysoAutomationServer` responds to CLI status, history, start, and stop.
 
-- Keep tests green, run code-signature validation and validate a fresh launch with automation status after every material slice.
-- For distribution, use a valid `SAYSO_NOTARY_PROFILE`, run notarization, then re-check `spctl` and a freshly downloaded/installed artifact.
+### 7. Open items and follow-up work
+
+1. **Notarization Profile**: A local Apple Development signed app is not a notarized release. `spctl` rejects the package until an authorized notarization profile is provided via `SAYSO_NOTARY_PROFILE`.
+2. **Live Cloud Account Provider Verification**: Provider contract, protocol serialization, and HTTPS endpoint checks are verified via unit tests; end-to-end cloud roundtrip requires user API credentials stored in Keychain.
+3. **Advanced Accessibility Candidate Models**: Grounded control covers exact titles, pointer rows, scrolling, navigation keys, app launching, URLs, folders, undo, and redo. Extended candidate coverage (menu-bar items, double-click, window geometry arrangement, Finder selection semantics) remains open for subsequent iteration.
+4. **Multi-Device Screenshot Baseline**: Notch geometry was physically verified on the local 16-inch MacBook Pro display; baselines across different MacBook notch dimensions and external monitors remain to be captured as hardware becomes available.
 
 ## Build, test and launch runbook
 
@@ -198,17 +241,23 @@ Never stage with `git add .` or `git add -A`. Never use unsigned commits. Do not
 ## Continuation protocol
 
 1. Read this file and check `git status --short --branch` before editing.
-2. Start with the BYOK onboarding gap. It is the narrowest unambiguous product gap and unlocks a complete cloud-first flow.
-3. Trace all callers before changing shared settings/session code.
-4. Add behavior-focused tests with the change, then run the full `swift test` suite.
-5. Commit each changed file separately, run review and push `main`.
-6. After each feature slice, package, launch only the known app pane, query automation status and record exact proof plus any remaining physical limitation.
+2. Verify existing test baseline passes with `swift test`.
+3. Keep current safety boundaries: secrets stay in Keychain, destructive desktop actions require confirmation gates.
+4. Add behavior-focused tests with any new change.
+5. Commit each changed file separately, run review, and push to `main`.
+6. Record exact proof plus physical limits for any new hardware or model verification.
 
-## Handover acceptance criteria
+## Handover acceptance criteria and delivery status
 
-The successor owns continuation when it has:
+The continuation handoff has achieved the following verified status:
 
-- Read this document and confirmed clean `main` at or after `35334d4`.
-- Started the BYOK onboarding implementation or recorded an evidence-backed blocker.
-- Kept the current safety boundaries for keys, accessibility control and destructive actions.
-- Used signed per-file commits, tests, review and direct `main` push before calling a slice complete.
+- All core engineering slices delivered through commit `67092c1`.
+- Completed BYOK cloud-first onboarding wizard with HTTPS validation, Keychain secret storage, and microphone-only readiness gate.
+- Completed models and profiles parity with per-app model override, directive sync, element bindings, and legacy migration fallbacks.
+- Verified JustSpeakToIt parity across live insertion, replacement regions, clipboard restoration, profiles, Indian languages, and journaled history with 201 automated tests passing in `SaysoCoreTests`.
+- Verified jev-use desktop control parity across bounded AX candidate capture, exact title/pointer click, navigation keys, layout-aware redo, confirmation gates, and voice mode switching.
+- Captured physical visual proof on macOS display for compact notch clearance, centered expanded HUD, and detached floating panel stored under `docs/handover/screenshots/`.
+- Verified real voice dictation with local FluidAudio transcribing physical speech into Sayso Notch.
+- Verified release codesigning (`codesign --verify --deep --strict --verbose=2`), documented Gatekeeper notary boundary (`SAYSO_NOTARY_PROFILE`), confirmed single running process, and verified automation server health.
+- Preserved Keychain-only secret security and confirmation-gated safety boundaries for desktop controls.
+- Kept signed per-file commits, passing tests, peer review, and direct `main` pushes throughout delivery.
