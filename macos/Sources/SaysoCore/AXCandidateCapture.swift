@@ -208,7 +208,9 @@ public final class AXCandidateCapture: @unchecked Sendable {
 
         let originalPointer = CGEvent(source: nil)?.location
         defer {
-            if let originalPointer { CGWarpMouseCursorPosition(originalPointer) }
+            if let originalPointer, CGEvent(source: nil)?.location == centre {
+                CGWarpMouseCursorPosition(originalPointer)
+            }
         }
         try postPointerMove(to: centre)
         try await Task.sleep(for: .milliseconds(50))
@@ -224,7 +226,8 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
-        try postPointerClick(at: centre, target: target.element, systemWide: systemWide)
+        try await postPointerClick(at: centre, target: target.element, systemWide: systemWide)
+        guard !wasSelected else { return .pointerWithoutSelectionEvidence }
         for _ in 0..<5 {
             try? await Task.sleep(for: .milliseconds(50))
             if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
@@ -423,7 +426,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         event.post(tap: .cghidEventTap)
     }
 
-    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) throws {
+    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) async throws {
         guard try hitDecision(target: target, in: systemWide, at: point) == .pointer else {
             throw SaysoError.invalidAction("Visible row changed before click")
         }
@@ -445,6 +448,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         mouseDown.setIntegerValueField(.mouseEventClickState, value: 1)
         mouseUp.setIntegerValueField(.mouseEventClickState, value: 1)
         mouseDown.post(tap: .cghidEventTap)
+        try? await Task.sleep(for: .milliseconds(15))
         mouseUp.post(tap: .cghidEventTap)
     }
 
