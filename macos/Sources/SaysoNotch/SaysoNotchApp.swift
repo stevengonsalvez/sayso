@@ -470,10 +470,15 @@ final class SaysoAppModel: ObservableObject {
                 : lastExternalApplication?.processIdentifier != nil
                     && lastExternalApplication?.bundleIdentifier != nil
                     && lastExternalApplication?.launchDate != nil
+            let continuousRequested = rearmHandsFree
+                && settings.handsFree
+                && settings.handsFreeContinuous
+                && settings.autoInsert
+            if continuousRequested, !canPinContinuousTarget {
+                showPersistentNotice("Continuous dictation could not pin the active app. Recording one phrase instead.")
+            }
             handsFreeCycle.start(
-                rearmRequested: rearmHandsFree
-                    && settings.handsFreeContinuous
-                    && settings.autoInsert
+                rearmRequested: continuousRequested
                     && canPinContinuousTarget,
                 handsFreeEnabled: settings.handsFree,
                 isDictationMode: settings.mode == .dictation
@@ -622,7 +627,7 @@ final class SaysoAppModel: ObservableObject {
         if handsFreeCycle.isArmed {
             guard let remainingSessionDuration = handsFreeCycle.remainingSessionDuration(
                 maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
-            ), remainingSessionDuration > 0 else {
+            ), remainingSessionDuration >= 5 else {
                 cancelActiveRecordingSession()
                 showPersistentNotice("Continuous dictation reached its session limit.")
                 notch.hideAfterDelay()
