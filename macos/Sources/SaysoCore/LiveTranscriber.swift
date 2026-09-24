@@ -94,6 +94,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     public static let defaultHandsFreeSilenceDuration: Duration = .milliseconds(1_200)
     public static let minimumHandsFreeSilenceDuration: Duration = .milliseconds(500)
     public static let maximumHandsFreeSilenceDuration: Duration = .seconds(5)
+    static let handsFreeSpeechThreshold: Float = 0.015
 
     @Published public private(set) var phase: SessionPhase = .idle
     @Published public private(set) var partialText = ""
@@ -121,6 +122,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var activeLanguage: DictationLanguage = .automatic
     private var activeRoute: ProviderRoute = .appleSpeech
     private var handsFree = false
+    private var hasHeardHandsFreeSpeech = false
     public private(set) var handsFreeSilenceDuration = LiveTranscriber.defaultHandsFreeSilenceDuration
     private var silenceTask: Task<Void, Never>?
     private var startGate = TranscriptionRunGate()
@@ -152,6 +154,15 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             return maximumHandsFreeSilenceDuration
         }
         return duration
+    }
+
+    static func shouldScheduleHandsFreeStop(
+        handsFree: Bool,
+        isListening: Bool,
+        hasHeardSpeech: Bool,
+        inputLevel: Float
+    ) -> Bool {
+        handsFree && isListening && hasHeardSpeech && inputLevel <= handsFreeSpeechThreshold
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
@@ -199,6 +210,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         activeLanguage = language
         activeRoute = route
         self.handsFree = handsFree
+        hasHeardHandsFreeSpeech = false
         self.handsFreeSilenceDuration = Self.clampedHandsFreeSilenceDuration(handsFreeSilenceDuration)
         error = nil
         partialText = ""
@@ -333,8 +345,18 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func observeAudio(level: Float) {
         guard handsFree, phase == .listening else { return }
-        if level > 0.015 { silenceTask?.cancel(); silenceTask = nil; return }
-        guard silenceTask == nil else { return }
+        if level > Self.handsFreeSpeechThreshold {
+            hasHeardHandsFreeSpeech = true
+            silenceTask?.cancel()
+            silenceTask = nil
+            return
+        }
+        guard Self.shouldScheduleHandsFreeStop(
+            handsFree: handsFree,
+            isListening: phase == .listening,
+            hasHeardSpeech: hasHeardHandsFreeSpeech,
+            inputLevel: level
+        ), silenceTask == nil else { return }
         let silenceDuration = handsFreeSilenceDuration
         silenceTask = Task { [weak self] in
             try? await Task.sleep(for: silenceDuration)
