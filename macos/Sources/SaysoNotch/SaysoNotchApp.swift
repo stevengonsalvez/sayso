@@ -594,6 +594,7 @@ final class SaysoAppModel: ObservableObject {
     private var automationDictationState: String {
         if transcriber.phase == .listening { return "listening" }
         if isStartingDictation { return "preparing" }
+        if handsFreeCycle.isArmed { return "armed" }
         if let lastDictationStartError { return "failed: \(lastDictationStartError)" }
         return "idle"
     }
@@ -838,13 +839,13 @@ final class SaysoAppModel: ObservableObject {
         await sessions.upsert(session)
         transcriptProcessingNotice = nil
         if pendingDelivery.settings.soundCues { NSSound.beep() }
-        guard activeRecordingSession == nil else { return }
+        guard activeRecordingSession == nil, !isStartingDictation else { return }
         let wasDelivered: Bool
         switch output {
         case .delivered:
             wasDelivered = true
-        case let .pasteFailed(failure):
-            wasDelivered = failure.fallbackDelivery != nil
+        case .pasteFailed:
+            wasDelivered = false
         }
         if handsFreeCycle.consumeDelivery(
             wasDelivered: wasDelivered,
