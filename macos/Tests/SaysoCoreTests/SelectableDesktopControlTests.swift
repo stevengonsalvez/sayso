@@ -79,7 +79,8 @@ import Testing
     let pointerStep = try ControlPlanner.plan(command: "click Downloads", snapshot: pointerSnapshot)
 
     #expect(pointerStep.action == .clickAt(elementID: "downloads", expectedFingerprint: pointerSnapshot.fingerprint))
-    #expect(ControlPolicy.canAutoRun(pointerStep))
+    #expect(ControlPolicy.requiresConfirmation(pointerStep))
+    #expect(!ControlPolicy.canAutoRun(pointerStep))
     #expect(ControlPolicy.requiresActiveTarget(for: pointerStep.action))
     #expect(ControlOutcome.effect(for: pointerStep.action, before: pointerSnapshot, after: pointerSnapshot) == .notObserved)
     #expect(ControlOutcome.result(for: pointerStep.action, effect: .observed) == "observed pointer row action")
