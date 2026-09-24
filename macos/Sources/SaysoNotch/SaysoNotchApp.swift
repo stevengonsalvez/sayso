@@ -838,14 +838,23 @@ final class SaysoAppModel: ObservableObject {
         await sessions.upsert(session)
         transcriptProcessingNotice = nil
         if pendingDelivery.settings.soundCues { NSSound.beep() }
-        if handsFreeCycle.shouldRearm(
+        guard activeRecordingSession == nil else { return }
+        let wasDelivered: Bool
+        switch output {
+        case .delivered:
+            wasDelivered = true
+        case let .pasteFailed(failure):
+            wasDelivered = failure.fallbackDelivery != nil
+        }
+        if handsFreeCycle.consumeDelivery(
+            wasDelivered: wasDelivered,
             handsFreeEnabled: settings.handsFree,
             isDictationMode: settings.mode == .dictation
         ) {
             if !requestDictationStart(onboardingTest: false, rearmHandsFree: true) {
                 notch.hideAfterDelay()
             }
-        } else if activeRecordingSession == nil {
+        } else {
             notch.hideAfterDelay()
         }
     }
@@ -2808,7 +2817,7 @@ extension SaysoAppModel {
                 result: .init(model: settings.route.displayName, sessionActive: false)
             )
         case .stopDictation:
-            guard transcriber.canStop || isStartingDictation else {
+            guard transcriber.canStop || isStartingDictation || handsFreeCycle.isArmed else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .notRecording, message: "Sayso is not listening."))
             }
             startOrStopDictation()
