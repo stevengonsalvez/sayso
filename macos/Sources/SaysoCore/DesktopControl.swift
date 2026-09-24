@@ -260,6 +260,7 @@ public enum DesktopApplicationResolver {
 public enum DesktopAction: Codable, Equatable, Sendable {
     case type(text: String, expectedFingerprint: String)
     case open(url: URL)
+    case openFolder(url: URL)
     case activate(bundleIdentifier: String)
     case activateApplication(bundleIdentifier: String, applicationURL: URL)
     case quit(bundleIdentifier: String)
@@ -274,7 +275,7 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         switch self {
         case let .activate(bundleIdentifier), let .activateApplication(bundleIdentifier, _):
             Self.validatedBundleIdentifier(bundleIdentifier)
-        case .type, .open, .quit, .scroll, .press, .focus, .key:
+        case .type, .open, .openFolder, .quit, .scroll, .press, .focus, .key:
             nil
         }
     }
@@ -392,7 +393,7 @@ public enum ControlPolicy {
         switch action {
         case .type, .scroll, .press, .focus, .key:
             true
-        case .open, .activate, .activateApplication, .quit:
+        case .open, .openFolder, .activate, .activateApplication, .quit:
             false
         }
     }
@@ -440,7 +441,7 @@ public enum ControlOutcome {
         case .key:
             // Caret moves are not represented in DesktopSnapshot. Do not mistake them for failed actions.
             return .unknown
-        case .open, .activate, .activateApplication, .quit:
+        case .open, .openFolder, .activate, .activateApplication, .quit:
             return externalEffect
         }
     }
@@ -459,6 +460,8 @@ public enum ControlOutcome {
             return "keyboard event sent, effect not attributable"
         case .open:
             return observed ? "observed navigation" : "no observed navigation"
+        case .openFolder:
+            return observed ? "observed folder open" : "no observed folder open"
         case .activate, .activateApplication:
             return observed ? "observed target active" : "no observed target active"
         case .quit:
@@ -625,7 +628,8 @@ public enum ControlPlanner {
     public static func plan(
         command: String,
         snapshot: DesktopSnapshot,
-        installedApplications: [InstalledDesktopApplication]? = nil
+        installedApplications: [InstalledDesktopApplication]? = nil,
+        fileManager: FileManager = .default
     ) throws -> ControlPlanStep {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
@@ -719,6 +723,12 @@ public enum ControlPlanner {
             guard !target.isEmpty else {
                 throw SaysoError.invalidAction("Say an http address or exact installed application name after 'open'.")
             }
+            if target.lowercased().hasPrefix("folder ") {
+                return try folderOpenPlan(
+                    path: String(target.dropFirst(7)).trimmingCharacters(in: .whitespaces),
+                    fileManager: fileManager
+                )
+            }
             if let url = httpURL(target) {
                 return .init(action: .open(url: url), confidence: 0.80, reason: "Explicit web address")
             }
@@ -788,7 +798,7 @@ public enum ControlPlanner {
                 applications: installedApplications ?? InstalledDesktopApplication.available()
             )
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, undo, close window, go back or forward, next or previous tab, click or focus an exact visible title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
+        throw SaysoError.invalidAction("Control supports: type, press key, undo, close window, go back or forward, next or previous tab, click or focus an exact visible title, scroll, open an https URL, exact installed app, or explicit folder path, switch to an installed app, activate bundle ID, or quit an installed app.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
@@ -796,6 +806,7 @@ public enum ControlPlanner {
         let normalized = trimmed.lowercased()
         if normalized.hasPrefix("open ") {
             let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            if target.lowercased().hasPrefix("folder ") { return false }
             return !target.isEmpty && httpURL(target) == nil && !target.contains("://")
         }
         if normalized.hasPrefix("switch to ") {
@@ -831,6 +842,20 @@ public enum ControlPlanner {
                 .joined(separator: " or ")
             throw SaysoError.invalidAction("More than one installed application is named '\(requestedName)'. Say an exact unique .app filename: \(filenames), or remove a duplicate.")
         }
+    }
+
+    private static func folderOpenPlan(path: String, fileManager: FileManager) throws -> ControlPlanStep {
+        guard path.hasPrefix("/") || path.hasPrefix("~") else {
+            throw SaysoError.invalidAction("Open folder requires an absolute path or ~/ path.")
+        }
+        let folderURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        var isDirectory = ObjCBool(false)
+        guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw SaysoError.invalidAction("No folder exists at '(path)'.")
+        }
+        return .init(action: .openFolder(url: folderURL), confidence: 0.85, reason: "Explicit folder path")
     }
 
     private static func namedApplicationQuitPlan(
@@ -987,6 +1012,15 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.unavailable("Open \(url.host ?? url.absoluteString)")
             }
             openTargetBundleIdentifier = targetBundleIdentifier
+        case let .openFolder(url):
+            let folderURL = url.standardizedFileURL.resolvingSymlinksInPath()
+            var isDirectory = ObjCBool(false)
+            guard folderURL.isFileURL,
+                  FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  NSWorkspace.shared.open(folderURL) else {
+                throw SaysoError.unavailable("Open folder")
+            }
         case let .activate(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
@@ -1189,7 +1223,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 effect: ControlOutcome.effect(for: action, before: before, after: observation.snapshot)
             )
 
-        case .key:
+        case .key, .openFolder:
             return .init(snapshot: nil, action: action, effect: .unknown)
 
         case let .open(url):
