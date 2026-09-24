@@ -131,6 +131,7 @@ class DefaultDictationPipeline(
      * can act on, so that one carries a notice.
      */
     private fun resolveStt(clip: AudioClip? = null): Resolved? {
+        var customRoutingNotice: String? = null
         val targetModelId = if (settings.autoLanguageRoutingEnabled && clip != null && !clip.isEmpty) {
             val userLang = settings.language?.trim()?.lowercase()
             val fallbackLang = when (userLang) {
@@ -151,6 +152,7 @@ class DefaultDictationPipeline(
                 overrideLanguage = fallbackLang,
                 modelsDir = modelsDir,
             )
+            customRoutingNotice = decision.notice
             decision.recommendedModelId
         } else {
             val userLang = settings.language?.trim()?.lowercase()
@@ -181,7 +183,7 @@ class DefaultDictationPipeline(
         val configured = stt.find(targetModelId)
         if (configured != null) {
             val (provider, model) = configured
-            val routingNotice = if (targetModelId != settings.sttModelId) "Auto-routed to ${model.displayName}" else null
+            val routingNotice = customRoutingNotice ?: if (targetModelId != settings.sttModelId) "Auto-routed to ${model.displayName}" else null
             if (!provider.needsApiKey) return Resolved(provider, model, null, routingNotice)
             key(provider.id)?.let { return Resolved(provider, model, it, routingNotice) }
             keyless = provider
