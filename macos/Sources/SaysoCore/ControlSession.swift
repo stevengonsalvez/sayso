@@ -33,7 +33,7 @@ public enum ControlSessionStepResult: String, Codable, Equatable, Sendable {
 
     public init(_ effect: ControlEffect) {
         self = switch effect {
-        case .observed: .effectObserved
+        case .observed, .alreadySatisfied: .effectObserved
         case .notObserved: .noEffectObserved
         case .unknown: .effectUnknown
         }
