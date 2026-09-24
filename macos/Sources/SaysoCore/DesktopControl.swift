@@ -152,7 +152,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     }
 
     private static func currentLayoutKeyCode(producing character: String) -> CGKeyCode? {
-        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+        guard let inputSource = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let rawLayoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
             return nil
         }
@@ -1156,11 +1156,11 @@ public final class AXDesktopController: @unchecked Sendable {
             }
             try candidateCapture.focus(candidateID: .init(rawValue: elementID), application: target)
         case let .key(key, expectedFingerprint):
+            let virtualKey = await key.resolvedVirtualKey()
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            let virtualKey = await key.resolvedVirtualKey()
             guard
                   let source = CGEventSource(stateID: .combinedSessionState),
                   let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
