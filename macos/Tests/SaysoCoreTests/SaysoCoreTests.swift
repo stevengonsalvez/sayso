@@ -11,9 +11,9 @@ import Testing
     #expect(DictationLanguage.kannada.localeIdentifier == "kn-IN")
 }
 
-@Test func onlyImplementedSpeechRoutesAreSelectable() {
-    #expect(ProviderRoute.dictationRoutes == [.local, .appleSpeech])
-    #expect(!ProviderRoute.byok.supportsDictation)
+@Test func allConfiguredSpeechRoutesAreSelectable() {
+    #expect(ProviderRoute.dictationRoutes == [.local, .appleSpeech, .byok])
+    #expect(ProviderRoute.byok.supportsDictation)
 }
 
 @Test func settingsMigrationDefaultsMissingDictationProfile() throws {
@@ -24,6 +24,7 @@ import Testing
     #expect(settings.language == .english)
     #expect(settings.dictationProfile == .default)
     #expect(!settings.voiceEditCloudConsent)
+    #expect(settings.byokTranscriptionModel == "gpt-4o-mini-transcribe")
     #expect(settings.byokRewriteModel == "gpt-4.1-mini")
     #expect(!settings.legacyLexiconMigrated)
     #expect(!settings.autoCorrectionsEnabled)
