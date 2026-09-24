@@ -1,15 +1,15 @@
-▁HE Y ▁SAY S O @hey_sayso :2.8 #0.10
-▁HE Y ▁SAY ▁SO @hey_sayso :2.8 #0.10
-HE Y ▁SAY S O @hey_sayso :2.8 #0.10
-HE Y ▁SAY ▁SO @hey_sayso :2.8 #0.10
-▁HE Y ▁SA Y S O @hey_sayso :2.6 #0.12
-▁HE Y ▁SA Y ▁SO @hey_sayso :2.6 #0.12
-▁HE Y ▁S A Y S O @hey_sayso :2.5 #0.12
-▁HE Y ▁S A Y ▁SO @hey_sayso :2.5 #0.12
-▁SAY S O @sayso :2.8 #0.10
-▁SAY ▁SO @sayso :2.8 #0.10
-▁SA Y S O @sayso :2.6 #0.12
-▁SA Y ▁SO @sayso :2.6 #0.12
-▁S A Y S O @sayso :2.5 #0.12
-▁S A Y ▁SO @sayso :2.5 #0.12
-▁HE Y ▁SAY @hey_sayso :2.2 #0.15
+▁HE Y ▁SAY S O @hey_sayso
+▁HE Y ▁SAY ▁SO @hey_sayso
+HE Y ▁SAY S O @hey_sayso
+HE Y ▁SAY ▁SO @hey_sayso
+▁HE Y ▁SA Y S O @hey_sayso
+▁HE Y ▁SA Y ▁SO @hey_sayso
+▁HE Y ▁S A Y S O @hey_sayso
+▁HE Y ▁S A Y ▁SO @hey_sayso
+▁SAY S O @sayso
+▁SAY ▁SO @sayso
+▁SA Y S O @sayso
+▁SA Y ▁SO @sayso
+▁S A Y S O @sayso
+▁S A Y ▁SO @sayso
+▁HE Y ▁SAY @hey_sayso
