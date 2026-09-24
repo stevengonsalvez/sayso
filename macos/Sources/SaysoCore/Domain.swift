@@ -102,9 +102,9 @@ public enum ProviderRoute: String, Codable, CaseIterable, Identifiable, Sendable
 
     public var transmitsData: Bool { self != .local }
 
-    public var supportsDictation: Bool { self != .byok }
+    public var supportsDictation: Bool { true }
 
-    public static var dictationRoutes: [ProviderRoute] { [.local, .appleSpeech] }
+    public static var dictationRoutes: [ProviderRoute] { [.local, .appleSpeech, .byok] }
 }
 
 public enum OnboardingReadiness {
@@ -207,6 +207,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var voiceEditCloudConsent = false
     public var desktopControlEnabled = false
     public var byokBaseURL = "https://api.openai.com/v1"
+    public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
     public var cleanupEnabled = false
@@ -230,7 +231,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
-        case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
+        case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
     }
@@ -286,6 +287,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
+        byokTranscriptionModel = decoded(String.self, .byokTranscriptionModel, fallback: byokTranscriptionModel)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
         byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
         cleanupEnabled = decoded(Bool.self, .cleanupEnabled, fallback: cleanupEnabled)
