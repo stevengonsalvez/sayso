@@ -84,5 +84,8 @@ class WakeWordDetectorTest {
         assertTrue(WakeWordDetector.matchesWakePhrase("say so", SettingsStore.WAKE_PHRASE_BOTH))
         assertTrue(WakeWordDetector.matchesWakePhrase("hey say so", SettingsStore.WAKE_PHRASE_HEY))
         assertFalse(WakeWordDetector.matchesWakePhrase("say so", SettingsStore.WAKE_PHRASE_HEY))
+        assertTrue(WakeWordDetector.matchesWakePhrase("say so", SettingsStore.WAKE_PHRASE_SAYSO))
+        assertTrue(WakeWordDetector.matchesWakePhrase("@say_so", SettingsStore.WAKE_PHRASE_SAYSO))
+        assertFalse(WakeWordDetector.matchesWakePhrase("hey say so", SettingsStore.WAKE_PHRASE_SAYSO))
     }
 }
