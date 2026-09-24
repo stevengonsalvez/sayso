@@ -591,7 +591,7 @@ final class SaysoAppModel: ObservableObject {
             destination: dictationDestination?.recordingDestination
         )
         activeRecordingSession = session
-        liveInsertion = !onboardingTest && capture == nil && sessionSettings.livePartialInsertion
+        liveInsertion = !onboardingTest && capture == nil && sessionSettings.autoInsert && sessionSettings.livePartialInsertion
             ? dictationDestination.flatMap(TextOutput.LiveInsertion.init(destination:))
             : nil
         if onboardingTest {
@@ -909,9 +909,12 @@ final class SaysoAppModel: ObservableObject {
                     )
                     : (TextOutput.copy(finalText) ? .delivered(.clipboard) : .pasteFailed(.clipboardUnavailable))
             case .failed:
-                output = TextOutput.copy(finalText)
-                    ? .delivered(.clipboard)
-                    : .pasteFailed(.clipboardUnavailable)
+                if TextOutput.copy(finalText) {
+                    transcriptProcessingNotice = "Live text could not be finalized. Final text copied to clipboard."
+                    output = .delivered(.clipboard)
+                } else {
+                    output = .pasteFailed(.clipboardUnavailable)
+                }
             }
         } else if pendingDelivery.settings.autoInsert {
             output = TextOutput.insertOrCopy(
