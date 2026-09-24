@@ -33,4 +33,6 @@ import Testing
     #expect(DesktopKey.keyCode(producing: "w") { azerty[$0] } == 6)
     #expect(DesktopKey.keyCode(producing: "[") { azerty[$0] } == 30)
     #expect(DesktopKey.keyCode(producing: "]") { azerty[$0] } == 33)
+    #expect(DesktopKey.keyCode(producing: "z") { _ in nil } == nil)
+    #expect(DesktopKey.resolvedKeyCode(nil, fallback: DesktopKey.undo.virtualKey) == 6)
 }
