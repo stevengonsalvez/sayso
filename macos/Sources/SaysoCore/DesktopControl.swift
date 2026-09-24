@@ -55,6 +55,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     case `return`
     case escape
     case goBack
+    case goForward
     case nextTab
     case previousTab
 
@@ -81,6 +82,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .return: 36
         case .escape: 53
         case .goBack: 33
+        case .goForward: 30
         case .nextTab: 48
         case .previousTab: 48
         }
@@ -89,6 +91,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     var modifierFlags: CGEventFlags {
         switch self {
         case .goBack: .maskCommand
+        case .goForward: .maskCommand
         case .nextTab: .maskControl
         case .previousTab: [.maskControl, .maskShift]
         default: []
@@ -621,6 +624,14 @@ public enum ControlPlanner {
                 requiresConfirmation: true
             )
         }
+        if normalized == "go forward" {
+            return .init(
+                action: .key(.goForward, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Go forward",
+                requiresConfirmation: true
+            )
+        }
         if normalized == "next tab" {
             return .init(
                 action: .key(.nextTab, expectedFingerprint: snapshot.fingerprint),
@@ -710,7 +721,7 @@ public enum ControlPlanner {
                 applications: installedApplications ?? InstalledDesktopApplication.available()
             )
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, go back, next or previous tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
+        throw SaysoError.invalidAction("Control supports: type, press key, go back or forward, next or previous tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
