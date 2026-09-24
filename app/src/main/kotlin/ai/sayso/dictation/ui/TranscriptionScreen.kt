@@ -819,28 +819,34 @@ fun WakeWordSensitivitySelector(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            val options = listOf(
-                Triple(
-                    SettingsStore.WAKE_SENSITIVITY_HIGH,
-                    stringResource(R.string.wake_word_sensitivity_high),
-                    stringResource(R.string.wake_word_sensitivity_high_desc),
-                ),
-                Triple(
-                    SettingsStore.WAKE_SENSITIVITY_DEFAULT,
-                    stringResource(R.string.wake_word_sensitivity_medium),
-                    stringResource(R.string.wake_word_sensitivity_medium_desc),
-                ),
-                Triple(
-                    SettingsStore.WAKE_SENSITIVITY_LOW,
-                    stringResource(R.string.wake_word_sensitivity_low),
-                    stringResource(R.string.wake_word_sensitivity_low_desc),
-                ),
-            )
+            val options = remember {
+                listOf(
+                    Triple(
+                        SettingsStore.WAKE_SENSITIVITY_HIGH,
+                        R.string.wake_word_sensitivity_high,
+                        R.string.wake_word_sensitivity_high_desc,
+                    ),
+                    Triple(
+                        SettingsStore.WAKE_SENSITIVITY_DEFAULT,
+                        R.string.wake_word_sensitivity_medium,
+                        R.string.wake_word_sensitivity_medium_desc,
+                    ),
+                    Triple(
+                        SettingsStore.WAKE_SENSITIVITY_LOW,
+                        R.string.wake_word_sensitivity_low,
+                        R.string.wake_word_sensitivity_low_desc,
+                    ),
+                )
+            }
 
-            for ((key, title, desc) in options) {
+            for ((key, titleRes, descRes) in options) {
                 val isSelected = selectedSensitivity == key
                 Surface(
-                    onClick = { onSelectSensitivity(key) },
+                    onClick = {
+                        if (selectedSensitivity != key) {
+                            onSelectSensitivity(key)
+                        }
+                    },
                     shape = RoundedCornerShape(8.dp),
                     color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
@@ -864,13 +870,13 @@ fun WakeWordSensitivitySelector(
                         )
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = title,
+                                text = stringResource(titleRes),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
                                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             )
                             Text(
-                                text = desc,
+                                text = stringResource(descRes),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
