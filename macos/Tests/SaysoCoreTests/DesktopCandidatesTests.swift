@@ -7,6 +7,7 @@ private func candidate(
     enabled: Bool = true,
     pressable: Bool = true,
     focusable: Bool = false,
+    selectable: Bool = false,
     protected: Bool = false,
     ancestry: [Int] = [0]
 ) -> DesktopCandidate {
@@ -25,6 +26,7 @@ private func candidate(
             isEnabled: enabled,
             supportsPress: pressable,
             supportsFocus: focusable,
+            supportsSelection: selectable,
             isProtected: protected
         )
     )
@@ -50,16 +52,23 @@ private func candidate(
 }
 
 @Test func candidateStateExcludesProtectedAndDisabledControls() {
-    let protected = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, isProtected: true)
-    let disabled = DesktopCandidateState(isEnabled: false, supportsPress: true, supportsFocus: true, isProtected: false)
-    let interactive = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, isProtected: false)
+    let protected = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: true)
+    let disabled = DesktopCandidateState(isEnabled: false, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: false)
+    let interactive = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: false)
+    let selectableRow = DesktopCandidateState(
+        isEnabled: true, supportsPress: false, supportsFocus: false, supportsSelection: true, isProtected: false
+    )
 
     #expect(!protected.isTargetable)
     #expect(!protected.isSelectable)
+    #expect(!protected.isSelectionTarget)
     #expect(!disabled.isTargetable)
     #expect(!disabled.isSelectable)
+    #expect(!disabled.isSelectionTarget)
     #expect(interactive.isTargetable)
     #expect(interactive.isSelectable)
+    #expect(interactive.isSelectionTarget)
+    #expect(selectableRow.isSelectionTarget)
 }
 
 @Test func resolverUsesOneExactTargetableCandidate() {
