@@ -429,6 +429,58 @@ public struct TextUTF16Range: Codable, Equatable, Sendable {
     public var end: Int { location + length }
 }
 
+public struct LiveTextRegion: Equatable, Sendable {
+    public let baseline: String
+    public let selection: TextUTF16Range
+    public private(set) var insertedText = ""
+
+    public init?(baseline: String, selection: TextUTF16Range) {
+        guard Self.nsRange(in: baseline, at: selection) != nil else { return nil }
+        self.baseline = baseline
+        self.selection = selection
+    }
+
+    public var expectedValue: String? { replacing(with: insertedText, in: baseline) }
+
+    public func matches(_ currentValue: String) -> Bool {
+        currentValue == expectedValue
+    }
+
+    public mutating func replace(with text: String) {
+        insertedText = text
+    }
+
+    public func rangeForInsertedText() -> TextUTF16Range {
+        .init(location: selection.location, length: insertedText.utf16.count)
+    }
+
+    public func value(afterReplacingWith text: String) -> String? {
+        replacing(with: text, in: baseline)
+    }
+
+    private func replacing(with text: String, in value: String) -> String? {
+        guard let range = Self.nsRange(in: value, at: rangeForCurrentText(in: value)) else { return nil }
+        return (value as NSString).replacingCharacters(in: range, with: text)
+    }
+
+    private func rangeForCurrentText(in value: String) -> TextUTF16Range {
+        value == baseline ? selection : rangeForInsertedText()
+    }
+
+    private static func nsRange(in value: String, at range: TextUTF16Range) -> NSRange? {
+        let utf16Count = value.utf16.count
+        guard range.location >= 0,
+              range.length >= 0,
+              range.location <= utf16Count,
+              range.length <= utf16Count - range.location else { return nil }
+        let start = String.Index(utf16Offset: range.location, in: value)
+        let end = String.Index(utf16Offset: range.location + range.length, in: value)
+        guard start.samePosition(in: value.unicodeScalars) != nil,
+              end.samePosition(in: value.unicodeScalars) != nil else { return nil }
+        return .init(location: range.location, length: range.length)
+    }
+}
+
 public struct SelectedTextEditAnchor: Equatable, Sendable {
     public let selectedText: String
     public let range: TextUTF16Range
