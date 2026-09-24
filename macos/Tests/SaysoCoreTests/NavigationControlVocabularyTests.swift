@@ -18,6 +18,7 @@ import Testing
     #expect(step.reason == "Go forward")
     #expect(ControlPolicy.requiresConfirmation(step))
     #expect(DesktopKey.goForward.commandCharacter == "]")
+    #expect(DesktopKey.goForward.virtualKey == 30)
     #expect(DesktopKey.goForward.modifierFlags == .maskCommand)
 }
 
