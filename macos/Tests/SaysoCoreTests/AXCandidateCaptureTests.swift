@@ -76,6 +76,21 @@ import Testing
     ))
 }
 
+@Test func pointerRowsNeedSelectionAndVisibleFrame() {
+    #expect(AXCandidateCapturePolicy.supportsPointerClick(
+        supportsSelection: true,
+        hasClickableFrame: true
+    ))
+    #expect(!AXCandidateCapturePolicy.supportsPointerClick(
+        supportsSelection: false,
+        hasClickableFrame: true
+    ))
+    #expect(!AXCandidateCapturePolicy.supportsPointerClick(
+        supportsSelection: true,
+        hasClickableFrame: false
+    ))
+}
+
 @Test func captureLocatorIsStableForSameBoundedAncestry() {
     let first = DesktopCandidateID(
         processIdentifier: 12,
