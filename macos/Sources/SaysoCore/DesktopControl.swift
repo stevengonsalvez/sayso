@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
@@ -112,6 +113,71 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .previousTab: [.maskControl, .maskShift]
         default: []
         }
+    }
+
+    var commandCharacter: String? {
+        switch self {
+        case .undo: "z"
+        case .closeWindow: "w"
+        case .goBack: "["
+        case .goForward: "]"
+        case .tab, .up, .down, .left, .right, .space, .return, .escape, .nextTab, .previousTab: nil
+        }
+    }
+
+    func resolvedVirtualKey() throws -> CGKeyCode {
+        guard let commandCharacter else { return virtualKey }
+        guard let keyCode = Self.currentLayoutKeyCode(producing: commandCharacter) else {
+            throw SaysoError.unavailable("Keyboard layout key '\(commandCharacter)'")
+        }
+        return keyCode
+    }
+
+    static func keyCode(
+        producing character: String,
+        translated: (CGKeyCode) -> String?
+    ) -> CGKeyCode? {
+        let expected = character.lowercased()
+        for rawKeyCode in 0 ... 127 {
+            let keyCode = CGKeyCode(rawKeyCode)
+            if translated(keyCode)?.lowercased() == expected { return keyCode }
+        }
+        return nil
+    }
+
+    private static func currentLayoutKeyCode(producing character: String) -> CGKeyCode? {
+        guard let inputSource = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let rawLayoutData = TISGetInputSourceProperty(inputSource, kTISPropertyUnicodeKeyLayoutData) else {
+            return nil
+        }
+        let layoutData = Unmanaged<CFData>.fromOpaque(rawLayoutData).takeUnretainedValue()
+        guard let bytes = CFDataGetBytePtr(layoutData) else { return nil }
+        return bytes.withMemoryRebound(to: UCKeyboardLayout.self, capacity: 1) { layout in
+            keyCode(producing: character) { translatedCharacter(for: $0, layout: layout) }
+        }
+    }
+
+    private static func translatedCharacter(
+        for keyCode: CGKeyCode,
+        layout: UnsafePointer<UCKeyboardLayout>
+    ) -> String? {
+        var deadKeyState: UInt32 = 0
+        var actualLength = 0
+        var characters = [UniChar](repeating: 0, count: 4)
+        let result = UCKeyTranslate(
+            layout,
+            keyCode,
+            UInt16(kUCKeyActionDown),
+            0,
+            UInt32(LMGetKbdType()),
+            OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            &deadKeyState,
+            characters.count,
+            &actualLength,
+            &characters
+        )
+        guard result == noErr, actualLength > 0 else { return nil }
+        return String(utf16CodeUnits: characters, count: actualLength)
     }
 }
 
@@ -1088,10 +1154,11 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
+            let virtualKey = try key.resolvedVirtualKey()
             guard
                   let source = CGEventSource(stateID: .combinedSessionState),
-                  let keyDown = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: key.virtualKey, keyDown: false) else {
+                  let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: false) else {
                 throw SaysoError.unavailable("Keyboard event")
             }
             keyDown.flags = key.modifierFlags
