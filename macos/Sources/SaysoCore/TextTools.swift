@@ -139,18 +139,75 @@ public enum TextOutput {
         fileprivate let field: AXUIElement
         fileprivate let processIdentifier: pid_t
         fileprivate let applicationIdentity: TextOutputTargetIdentity
+        public let bundleIdentifier: String?
         public let recordingDestination: RecordingDestination
 
         fileprivate init(
             field: AXUIElement,
             processIdentifier: pid_t,
             applicationIdentity: TextOutputTargetIdentity,
+            bundleIdentifier: String?,
             recordingDestination: RecordingDestination
         ) {
             self.field = field
             self.processIdentifier = processIdentifier
             self.applicationIdentity = applicationIdentity
+            self.bundleIdentifier = bundleIdentifier
             self.recordingDestination = recordingDestination
+        }
+    }
+
+    @MainActor
+    public final class LiveInsertion {
+        public enum FinalizationResult: Equatable { case applied, deferred, failed }
+
+        private let destination: Destination
+        private var region: LiveTextRegion
+        private var isUsable = true
+        public private(set) var hasWritten = false
+
+        public init?(destination: Destination) {
+            guard ["com.apple.TextEdit", "com.apple.Notes"].contains(destination.bundleIdentifier),
+                  TextOutput.isFocused(destination),
+                  let value = TextOutput.value(in: destination),
+                  let selection = TextOutput.selectedRange(in: destination),
+                  let region = LiveTextRegion(baseline: value, selection: selection) else { return nil }
+            self.destination = destination
+            self.region = region
+        }
+
+        @discardableResult
+        public func update(_ text: String) -> Bool { replace(with: text) }
+
+        public func finalize(_ text: String) -> FinalizationResult {
+            guard hasWritten else { return .deferred }
+            return replace(with: text) ? .applied : .failed
+        }
+
+        public func discard() {
+            guard hasWritten else { return }
+            _ = replace(with: "")
+        }
+
+        @discardableResult
+        private func replace(with text: String) -> Bool {
+            guard isUsable,
+                  TextOutput.isFocused(destination),
+                  let current = TextOutput.value(in: destination),
+                  region.matches(current),
+                  let expected = region.value(afterReplacingWith: text),
+                  TextOutput.setSelectedRange(region.rangeForInsertedText(), in: destination),
+                  AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
+                isUsable = false
+                return false
+            }
+            hasWritten = true
+            guard TextOutput.value(in: destination) == expected else {
+                isUsable = false
+                return false
+            }
+            region.replace(with: text)
+            return true
         }
     }
 
@@ -191,6 +248,7 @@ public enum TextOutput {
                 bundleIdentifier: runningApplication?.bundleIdentifier,
                 launchDate: runningApplication?.launchDate
             ),
+            bundleIdentifier: runningApplication?.bundleIdentifier,
             recordingDestination: .init(
                 processIdentifier: targetProcessIdentifier,
                 applicationName: name,
@@ -233,6 +291,29 @@ public enum TextOutput {
 
     public static func isFocused(_ destination: Destination) -> Bool {
         destination.isSafeDeliveryTarget && !isProtected(destination.field)
+    }
+
+    private static func value(in destination: Destination) -> String? {
+        copyAttribute(kAXValueAttribute as CFString, from: destination.field) as? String
+    }
+
+    private static func selectedRange(in destination: Destination) -> TextUTF16Range? {
+        guard let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: destination.field),
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let rangeValue = unsafeDowncast(value, to: AXValue.self)
+        var range = CFRange()
+        guard AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
+        return .init(location: range.location, length: range.length)
+    }
+
+    private static func setSelectedRange(_ range: TextUTF16Range, in destination: Destination) -> Bool {
+        var value = CFRange(location: range.location, length: range.length)
+        guard let rangeValue = AXValueCreate(.cfRange, &value) else { return false }
+        return AXUIElementSetAttributeValue(
+            destination.field,
+            kAXSelectedTextRangeAttribute as CFString,
+            rangeValue
+        ) == .success
     }
 
     private static func clipboardFallback(for text: String) -> DeliveryResult {
