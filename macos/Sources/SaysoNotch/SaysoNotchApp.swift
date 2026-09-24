@@ -1196,18 +1196,38 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    func saveBYOKKey(_ key: String) {
-        guard !key.isEmpty else { return }
+    @discardableResult
+    func saveBYOKKey(_ key: String) -> Bool {
+        guard !key.isEmpty else { return false }
         guard let baseURL = URL(string: settings.byokBaseURL), ProviderEndpointPolicy.allows(baseURL) else {
             showPersistentNotice("BYOK provider must use HTTPS, except localhost HTTP.")
-            return
+            return false
         }
         do {
             try secrets.store(key, named: "byok-api-key")
             notice = "BYOK key stored in Keychain."
+            return true
         } catch {
             notice = "Could not store BYOK key."
+            return false
         }
+    }
+
+    var hasBYOKKey: Bool {
+        secrets.secret(named: "byok-api-key") != nil
+    }
+
+    var isBYOKBaseURLValid: Bool {
+        guard let baseURL = URL(string: settings.byokBaseURL) else { return false }
+        return ProviderEndpointPolicy.allows(baseURL)
+    }
+
+    var isBYOKConfigured: Bool {
+        OnboardingReadiness.isBYOKConfigured(
+            baseURLString: settings.byokBaseURL,
+            transcriptionModel: settings.byokTranscriptionModel,
+            hasAPIKey: hasBYOKKey
+        )
     }
 
     private func cloudTranscriptionConfiguration(
@@ -3124,9 +3144,46 @@ private struct CloudProviderSettings: View {
 private struct OnboardingWizard: View {
     @ObservedObject var model: SaysoAppModel
     @State private var page = 0
+    @State private var byokAPIKey = ""
     @Environment(\.dismiss) private var dismiss
 
-    private let steps = ["Language", "Engine", "Delivery", "Shortcut", "Permissions"]
+    private enum WizardStep: Equatable {
+        case language
+        case engine
+        case cloud
+        case delivery
+        case shortcut
+        case permissions
+    }
+
+    private var steps: [String] {
+        if model.settings.route == .byok {
+            return ["Language", "Engine", "Cloud", "Delivery", "Shortcut", "Permissions"]
+        } else {
+            return ["Language", "Engine", "Delivery", "Shortcut", "Permissions"]
+        }
+    }
+
+    private var currentStep: WizardStep {
+        if model.settings.route == .byok {
+            switch page {
+            case 0: return .language
+            case 1: return .engine
+            case 2: return .cloud
+            case 3: return .delivery
+            case 4: return .shortcut
+            default: return .permissions
+            }
+        } else {
+            switch page {
+            case 0: return .language
+            case 1: return .engine
+            case 2: return .delivery
+            case 3: return .shortcut
+            default: return .permissions
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -3159,8 +3216,8 @@ private struct OnboardingWizard: View {
                 }
             }
             Group {
-                switch page {
-                case 0:
+                switch currentStep {
+                case .language:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Your words, your script.").font(.title2.bold())
                         Text("Choose the spoken language. An explicit language keeps recognition focused.")
@@ -3173,13 +3230,13 @@ private struct OnboardingWizard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                case 1:
+                case .engine:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Choose your engine.").font(.title2.bold())
-                        Text("On-device keeps recognition local. Download the selected Sayso model before starting, or choose Apple Speech to use Apple’s recognizer.")
+                        Text("On-device keeps recognition local. Download the selected Sayso model before starting, choose Apple Speech to use Apple’s recognizer, or bring your own OpenAI-compatible endpoint.")
                             .foregroundStyle(.secondary)
                         Picker("Speech route", selection: $model.settings.route) {
-                            ForEach(ProviderRoute.dictationRoutes.filter { $0 != .byok }) { Text($0.displayName).tag($0) }
+                            ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.segmented)
                         .onChange(of: model.settings.route) { _, route in
@@ -3187,8 +3244,13 @@ private struct OnboardingWizard: View {
                             guard route == .local, model.settings.language == .automatic else { return }
                             model.settings.language = .english
                         }
-                        if model.settings.route.transmitsData {
+                        if model.settings.route == .appleSpeech {
                             Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
+                        }
+                        if model.settings.route == .byok {
+                            Text("Connect an OpenAI-compatible speech endpoint. You will configure your provider in the next step.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         if model.settings.route == .local,
                            model.nativeModelDownloadAvailable(for: model.settings.language),
@@ -3205,13 +3267,69 @@ private struct OnboardingWizard: View {
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                         }
+                        if !engineReady && model.settings.route != .byok {
+                            Label(engineReadinessMessage, systemImage: "exclamationmark.circle")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.crimson)
+                        }
+                    }
+                case .cloud:
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Configure your provider.").font(.title2.bold())
+                        Text("Connect an OpenAI-compatible audio transcription endpoint. Your API key is stored securely in the macOS Keychain and never leaves your Mac except to authenticate requests.")
+                            .foregroundStyle(.secondary)
+
+                        Toggle("I understand BYOK transcription transmits voice data to my provider", isOn: $model.settings.cloudConsentGranted)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Base URL").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            TextField("Base URL", text: $model.settings.byokBaseURL)
+                                .textFieldStyle(.roundedBorder)
+                            if !model.isBYOKBaseURLValid {
+                                Text("BYOK provider must use HTTPS, except localhost HTTP.")
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.crimson)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Transcription model").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            TextField("Transcription model", text: $model.settings.byokTranscriptionModel)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("API key").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            HStack {
+                                SecureField("API key", text: $byokAPIKey)
+                                    .textFieldStyle(.roundedBorder)
+                                Button(model.hasBYOKKey ? "Update key" : "Store key") {
+                                    if model.saveBYOKKey(byokAPIKey) {
+                                        byokAPIKey = ""
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(SaysoPalette.cobalt)
+                                .disabled(byokAPIKey.isEmpty)
+                            }
+                            if model.hasBYOKKey {
+                                Label("API key stored in Keychain.", systemImage: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.cobalt)
+                            } else {
+                                Label("API key is required to use your provider.", systemImage: "exclamationmark.circle")
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.crimson)
+                            }
+                        }
+
                         if !engineReady {
                             Label(engineReadinessMessage, systemImage: "exclamationmark.circle")
                                 .font(.caption)
                                 .foregroundStyle(SaysoPalette.crimson)
                         }
                     }
-                case 2:
+                case .delivery:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Choose where words land.").font(.title2.bold())
                         Text("Sayso first tries to insert safely into your active app. If macOS blocks that, it can paste while preserving your clipboard.")
@@ -3225,7 +3343,7 @@ private struct OnboardingWizard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                case 3:
+                case .shortcut:
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Choose your shortcut.").font(.title2.bold())
                         Text("Use it once to start or stop dictation. Double-tap with selected text to voice edit.")
@@ -3241,7 +3359,7 @@ private struct OnboardingWizard: View {
                         }
                         if model.settings.hotKeyActivation.usesPressAndHold {
                             HStack {
-                                Text("Hold for (model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
+                                Text("Hold for \(model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
                                 Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
                             }
                         }
@@ -3249,12 +3367,14 @@ private struct OnboardingWizard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                default:
+                case .permissions:
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Grant only what you use.").font(.title2.bold())
-                        Text("Microphone powers dictation. Speech Recognition is only needed for Apple Speech. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
+                        Text(model.settings.route == .appleSpeech
+                            ? "Microphone powers dictation. Speech Recognition is only needed for Apple Speech. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey."
+                            : "Microphone powers dictation. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
                             .foregroundStyle(.secondary)
-                        ForEach(PermissionKind.allCases) { permission in
+                        ForEach(displayedPermissions) { permission in
                             HStack(spacing: 12) {
                                 Image(systemName: model.permissions.states[permission] == .granted ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(model.permissions.states[permission] == .granted ? SaysoPalette.cobalt : .secondary)
@@ -3309,6 +3429,10 @@ private struct OnboardingWizard: View {
         .padding(32)
         .frame(width: 560, height: 500)
         .onChange(of: model.settings.language) { _, _ in model.clearOnboardingTestResult() }
+        .onChange(of: model.settings.route) { _, _ in
+            page = min(page, steps.count - 1)
+            model.clearOnboardingTestResult()
+        }
         .onChange(of: model.settings) { _, _ in model.save() }
     }
 
@@ -3323,12 +3447,20 @@ private struct OnboardingWizard: View {
         dismiss()
     }
 
+    private var displayedPermissions: [PermissionKind] {
+        if model.settings.route == .appleSpeech {
+            return PermissionKind.allCases
+        }
+        return PermissionKind.allCases.filter { $0 != .speechRecognition }
+    }
+
     private var engineReady: Bool {
         OnboardingReadiness.engineIsReady(
             route: model.settings.route,
             language: model.settings.language,
             hasLocalModel: model.nativeModelReady(for: model.settings.language),
-            cloudConsentGranted: model.settings.cloudConsentGranted
+            cloudConsentGranted: model.settings.cloudConsentGranted,
+            byokConfigured: model.isBYOKConfigured
         )
     }
 
@@ -3342,7 +3474,19 @@ private struct OnboardingWizard: View {
         case .appleSpeech:
             return "Confirm the Apple Speech data path before continuing."
         case .byok:
-            return "Choose an available dictation engine."
+            if !model.settings.cloudConsentGranted {
+                return "Confirm cloud data transmission before continuing."
+            }
+            if !model.isBYOKBaseURLValid {
+                return "BYOK provider must use HTTPS, except localhost HTTP."
+            }
+            if model.settings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Enter a transcription model before continuing."
+            }
+            if !model.hasBYOKKey {
+                return "Store an API key in Keychain before continuing."
+            }
+            return "Configure your provider before continuing."
         }
     }
 
@@ -3368,16 +3512,23 @@ private struct OnboardingWizard: View {
     }
 
     private var canAdvance: Bool {
-        switch page {
-        case 1:
+        switch currentStep {
+        case .language:
+            return true
+        case .engine:
+            if model.settings.route == .byok {
+                return true
+            }
             return engineReady
-        case steps.count - 1:
+        case .cloud:
+            return engineReady
+        case .delivery, .shortcut:
+            return true
+        case .permissions:
             if model.isOnboardingTestActive {
                 return model.isStartingDictation || model.transcriber.canStop
             }
             return requiredPermissionsGranted
-        default:
-            return true
         }
     }
 
