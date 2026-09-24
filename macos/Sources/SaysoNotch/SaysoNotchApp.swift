@@ -524,7 +524,10 @@ final class SaysoAppModel: ObservableObject {
             return .rejected(.transcriptionFailed, "Your provider supports translation, not transcription.")
         }
         guard !sessionSettings.route.transmitsData || sessionSettings.cloudConsentGranted else {
-            return .rejected(.transcriptionFailed, "Confirm the Apple Speech data path before recording.")
+            return .rejected(.transcriptionFailed, "Confirm the selected cloud data path before recording.")
+        }
+        if sessionSettings.route == .byok, cloudTranscriptionConfiguration(for: sessionSettings) == nil {
+            return .rejected(.transcriptionFailed, "Configure your cloud transcription model and API key before recording.")
         }
         isStartingDictation = true
         dictationStartCancellationRequested = false
@@ -657,6 +660,7 @@ final class SaysoAppModel: ObservableObject {
                 handsFreeMaximumDuration: maximumDuration,
                 preferredAudioInputUID: settings.preferredAudioInputUID,
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
+                cloudTranscription: cloudTranscriptionConfiguration(for: sessionSettings),
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
                         guard self?.voiceEditCapture == nil else { return }
@@ -1204,6 +1208,21 @@ final class SaysoAppModel: ObservableObject {
         } catch {
             notice = "Could not store BYOK key."
         }
+    }
+
+    private func cloudTranscriptionConfiguration(
+        for currentSettings: SaysoSettings
+    ) -> OpenAICompatibleAudioTranscriptionConfiguration? {
+        guard currentSettings.route == .byok,
+              currentSettings.cloudConsentGranted,
+              let apiKey = secrets.secret(named: "byok-api-key"),
+              let baseURL = URL(string: currentSettings.byokBaseURL),
+              ProviderEndpointPolicy.allows(baseURL) else {
+            return nil
+        }
+        let model = currentSettings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty else { return nil }
+        return .init(baseURL: baseURL, apiKey: apiKey, model: model)
     }
 
     func addLexiconCorrection(_ spoken: String, replacement: String) {
@@ -3049,13 +3068,24 @@ extension SaysoAppModel {
                 return .failure(
                     id: request.id,
                     command: request.command,
-                    error: .init(code: .transcriptionFailed, message: "Confirm the Apple Speech data path before transcribing audio.")
+                    error: .init(code: .transcriptionFailed, message: "Confirm the selected cloud data path before transcribing audio.")
                 )
             }
             do {
-                let transcript = try await FileTranscriber.transcribe(
-                    fileURL: URL(fileURLWithPath: path), language: settings.language, route: settings.route
-                )
+                let fileURL = URL(fileURLWithPath: path)
+                let transcript: Transcript
+                if settings.route == .byok {
+                    guard let configuration = cloudTranscriptionConfiguration(for: settings) else {
+                        throw SaysoError.unavailable("Configure your cloud transcription model and API key before transcribing audio.")
+                    }
+                    let text = try await OpenAICompatibleAudioTranscriber(configuration: configuration)
+                        .transcribe(fileURL: fileURL, language: settings.language)
+                    transcript = .init(text: text, language: settings.language, route: .byok, isFinal: true)
+                } else {
+                    transcript = try await FileTranscriber.transcribe(
+                        fileURL: fileURL, language: settings.language, route: settings.route
+                    )
+                }
                 let final = await translated(transcript, settings: settings)
                 lastTranscript = final
                 await history.append(final)
