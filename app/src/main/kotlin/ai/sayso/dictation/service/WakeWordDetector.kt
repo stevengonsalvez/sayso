@@ -29,8 +29,8 @@ class WakeWordDetector(
 
     /** Initializes the spotter and opens an active recognition stream. */
     fun start(): Boolean = synchronized(lock) {
-        if (spotter != null) return true
-        return try {
+        if (spotter != null) return@synchronized true
+        return@synchronized try {
             val transducerConfig = OnlineTransducerModelConfig(
                 encoder = "kws/encoder.onnx",
                 decoder = "kws/decoder.onnx",
@@ -66,9 +66,9 @@ class WakeWordDetector(
     }
 
     /** Feeds 16 kHz audio samples into the keyword spotter stream. */
-    fun acceptWaveform(samples: FloatArray) = synchronized(lock) {
-        val s = spotter ?: return
-        val str = stream ?: return
+    fun acceptWaveform(samples: FloatArray): Unit = synchronized(lock) {
+        val s = spotter ?: return@synchronized
+        val str = stream ?: return@synchronized
         try {
             str.acceptWaveform(samples, sampleRate = SAMPLE_RATE)
             while (s.isReady(str)) {
@@ -90,7 +90,7 @@ class WakeWordDetector(
     }
 
     /** Releases native stream and model resources. */
-    fun release() = synchronized(lock) {
+    fun release(): Unit = synchronized(lock) {
         try {
             stream?.release()
         } catch (_: Throwable) {}
