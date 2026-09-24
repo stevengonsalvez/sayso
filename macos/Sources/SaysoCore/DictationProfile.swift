@@ -161,7 +161,8 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
 
 /// An app-specific profile that takes precedence only for its exact bundle identifier.
 /// The profile itself stays unchanged, so normal dictation remains the fallback.
-public struct DictationProfileBundleOverride: Codable, Equatable, Sendable {
+public struct DictationProfileBundleOverride: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { profile.id }
     public var bundleIdentifier: String
     public var profile: DictationProfile
 
