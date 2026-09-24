@@ -2556,9 +2556,10 @@ private struct SaysoSettingsView: View {
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
                     }
                     HStack {
-                        Text(model.settings.handsFreeMaximumDurationSeconds < 60
-                            ? "Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds)) second capture"
-                            : "Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds / 60)) minute capture")
+                        let maximumCaptureSeconds = Int(model.settings.handsFreeMaximumDurationSeconds)
+                        let remainingSeconds = maximumCaptureSeconds % 60
+                        let captureLabel = "\(maximumCaptureSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
+                        Text("Maximum \(captureLabel) capture")
                         Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
                     }
                 }
