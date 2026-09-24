@@ -35,6 +35,7 @@ import Testing
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
     #expect(settings.dictationProfileOverrides.isEmpty)
+    #expect(settings.handsFreeSilenceSeconds == 1.2)
 
     let appProfile = DictationProfile(id: "mail", name: "Mail", capitalizesSentences: true)
     var profileSettings = SaysoSettings()
@@ -52,6 +53,9 @@ import Testing
 
     let automaticSpeech = Data("{\"speechLanguage\":\"automatic\"}".utf8)
     #expect(try JSONDecoder().decode(SaysoSettings.self, from: automaticSpeech).speechLanguage == .english)
+
+    let invalidSilence = Data("{\"handsFreeSilenceSeconds\":10}".utf8)
+    #expect(try JSONDecoder().decode(SaysoSettings.self, from: invalidSilence).handsFreeSilenceSeconds == 5)
 }
 
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
