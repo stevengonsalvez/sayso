@@ -205,11 +205,25 @@ public final class AXCandidateCapture: @unchecked Sendable {
             break
         }
 
-        let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
-        let originalPointer = try postPointerClick(at: centre, target: target.element, systemWide: systemWide)
+        let originalPointer = CGEvent(source: nil)?.location
         defer {
             if let originalPointer { CGWarpMouseCursorPosition(originalPointer) }
         }
+        try postPointerMove(to: centre)
+        try await Task.sleep(for: .milliseconds(50))
+        switch try hitDecision(target: target.element, in: systemWide, at: centre) {
+        case .covered:
+            throw SaysoError.invalidAction("Visible row changed before click")
+        case .accessibilitySelection:
+            return .accessibilitySelection(
+                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
+            )
+        case .pointer:
+            break
+        }
+
+        let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
+        try postPointerClick(at: centre, target: target.element, systemWide: systemWide)
         for _ in 0..<5 {
             try await Task.sleep(for: .milliseconds(50))
             if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
@@ -409,25 +423,42 @@ public final class AXCandidateCapture: @unchecked Sendable {
         return .covered
     }
 
-    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) throws -> CGPoint? {
+    private func postPointerMove(to point: CGPoint) throws {
+        guard let event = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .mouseMoved,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        ) else {
+            throw SaysoError.unavailable("Pointer event")
+        }
+        event.flags = []
+        event.post(tap: .cghidEventTap)
+    }
+
+    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) throws {
         guard try hitDecision(target: target, in: systemWide, at: point) == .pointer else {
             throw SaysoError.invalidAction("Visible row changed before click")
         }
-        let originalPointer = CGEvent(source: nil)?.location
-        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-            guard let event = CGEvent(
-                mouseEventSource: nil,
-                mouseType: type,
-                mouseCursorPosition: point,
-                mouseButton: .left
-            ) else {
-                throw SaysoError.unavailable("Pointer event")
-            }
-            event.flags = []
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
-            event.post(tap: .cghidEventTap)
+        guard let mouseDown = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseDown,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        ), let mouseUp = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .leftMouseUp,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        ) else {
+            throw SaysoError.unavailable("Pointer event")
         }
-        return originalPointer
+        mouseDown.flags = []
+        mouseUp.flags = []
+        mouseDown.setIntegerValueField(.mouseEventClickState, value: 1)
+        mouseUp.setIntegerValueField(.mouseEventClickState, value: 1)
+        mouseDown.post(tap: .cghidEventTap)
+        mouseUp.post(tap: .cghidEventTap)
     }
 
     private func pointAttribute(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {
