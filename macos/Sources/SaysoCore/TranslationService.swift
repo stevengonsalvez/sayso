@@ -7,9 +7,10 @@ public protocol Translating: Sendable {
 
 public enum ProviderEndpointPolicy {
     public static func allows(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), !host.isEmpty else { return false }
         if url.scheme?.lowercased() == "https" { return true }
         guard url.scheme?.lowercased() == "http" else { return false }
-        return ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased())
+        return ["localhost", "127.0.0.1", "::1"].contains(host)
     }
 }
 
