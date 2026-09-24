@@ -35,6 +35,7 @@ import Testing
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
     #expect(settings.dictationProfileOverrides.isEmpty)
+    #expect(!settings.livePartialInsertion)
     #expect(!settings.handsFreeContinuous)
     #expect(settings.handsFreeSilenceSeconds == 1.2)
     #expect(settings.handsFreeMaximumDurationSeconds == 900)
