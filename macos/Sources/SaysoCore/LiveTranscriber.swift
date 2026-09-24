@@ -373,8 +373,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     private func observeAudio(level: Float) {
         guard handsFree, phase == .listening else { return }
+        handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
         if level > Self.handsFreeSpeechThreshold {
-            handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
             guard handsFreeSpeechGate.hasHeardSpeech else { return }
             silenceTask?.cancel()
             silenceTask = nil
@@ -382,7 +382,6 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             noSpeechTask = nil
             return
         }
-        handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
         guard handsFreeSpeechGate.hasHeardSpeech, silenceTask == nil else { return }
         let silenceDuration = handsFreeSilenceDuration
         silenceTask = Task { [weak self] in
