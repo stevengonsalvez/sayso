@@ -1091,7 +1091,9 @@ public enum FileTranscriber {
         route: ProviderRoute
     ) async throws -> Transcript {
         try Task.checkCancellation()
-        guard route.supportsDictation else { throw SaysoError.unavailable("Your provider is available for translation, not transcription") }
+        guard route != .byok else {
+            throw SaysoError.unavailable("Cloud file transcription requires provider configuration")
+        }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw SaysoError.invalidAction("Audio file was not found")
         }
