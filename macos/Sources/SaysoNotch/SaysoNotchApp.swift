@@ -386,6 +386,8 @@ final class SaysoAppModel: ObservableObject {
         requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFreeContinuous)
     }
 
+    var isContinuousDictationArmed: Bool { handsFreeCycle.isArmed }
+
     private func handleTapDictationShortcut() {
         guard settings.hotKeyActivation.usesTapToggle else { return }
         startOrStopDictation()
@@ -621,8 +623,7 @@ final class SaysoAppModel: ObservableObject {
             guard let remainingSessionDuration = handsFreeCycle.remainingSessionDuration(
                 maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
             ), remainingSessionDuration > 0 else {
-                handsFreeCycle.disarm()
-                failActiveSession("Continuous dictation reached its session limit.")
+                cancelActiveRecordingSession()
                 showPersistentNotice("Continuous dictation reached its session limit.")
                 notch.hideAfterDelay()
                 return false
@@ -1740,10 +1741,10 @@ private struct MenuContent: View {
                 .font(.headline)
             Text(model.transcriber.partialText.isEmpty ? "Ready" : model.transcriber.partialText)
                 .lineLimit(2)
-            Button(model.transcriber.canStop ? "Stop dictation" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation") {
+            Button(model.transcriber.canStop ? "Stop dictation" : model.isContinuousDictationArmed ? "Stop continuous dictation" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation") {
                 model.startOrStopDictation()
             }
-            .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+            .disabled(!model.transcriber.canStop && !model.transcriber.canStart && !model.isContinuousDictationArmed)
             if model.lastVoiceEditRewrite != nil {
                 Button("Copy pending voice edit rewrite") { model.copyLastVoiceEditRewrite() }
             }
