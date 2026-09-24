@@ -36,6 +36,14 @@ public enum AXCandidateCapturePolicy {
         return !title.isEmpty || !(identifier?.isEmpty ?? true)
     }
 
+    public static func defersSelectionCandidate(
+        supportsPress: Bool,
+        supportsFocus: Bool,
+        supportsSelection: Bool
+    ) -> Bool {
+        supportsSelection && !supportsPress && !supportsFocus
+    }
+
     static func childPaths(
         from ancestry: [Int],
         childCount: Int,
@@ -112,7 +120,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
     }
 
-    public func select(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws {
+    public func select(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws -> Bool {
         guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
         let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
         guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
@@ -126,10 +134,14 @@ public final class AXCandidateCapture: @unchecked Sendable {
         ).first(where: { $0.candidate.id == candidateID }), target.candidate.state.isSelectionTarget else {
             throw SaysoError.staleTarget
         }
+        guard !boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) else {
+            return false
+        }
         guard AXUIElementSetAttributeValue(target.element, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success,
               boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) else {
             throw SaysoError.invalidAction("Visible row rejected selection")
         }
+        return true
     }
 
     private struct CapturedCandidate {
@@ -152,6 +164,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         var index = 0
         var visited = 0
         var captured = [CapturedCandidate]()
+        var deferredSelectionCandidates = [CapturedCandidate]()
 
         while index < pending.count,
               visited < limits.maximumNodes,
@@ -201,7 +214,16 @@ public final class AXCandidateCapture: @unchecked Sendable {
                         isProtected: false
                     )
                 )
-                captured.append(.init(candidate: candidate, element: node.element))
+                let capturedCandidate = CapturedCandidate(candidate: candidate, element: node.element)
+                if AXCandidateCapturePolicy.defersSelectionCandidate(
+                    supportsPress: supportsPress,
+                    supportsFocus: supportsFocus,
+                    supportsSelection: supportsSelection
+                ) {
+                    deferredSelectionCandidates.append(capturedCandidate)
+                } else {
+                    captured.append(capturedCandidate)
+                }
             }
 
             guard node.depth < limits.maximumDepth else { continue }
@@ -217,6 +239,10 @@ public final class AXCandidateCapture: @unchecked Sendable {
             }
         }
 
+        let remaining = limits.maximumCandidates - captured.count
+        if remaining > 0 {
+            captured.append(contentsOf: deferredSelectionCandidates.prefix(remaining))
+        }
         return captured
     }
 
