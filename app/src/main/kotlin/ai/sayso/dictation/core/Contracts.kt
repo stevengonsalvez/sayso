@@ -157,6 +157,7 @@ interface SettingsStore {
     var bubbleAlwaysVisible: Boolean
     var wakeWordEnabled: Boolean
     var wakeWordPhrase: String get() = WAKE_PHRASE_BOTH; set(_) {}
+    var wakeWordSensitivity: String get() = WAKE_SENSITIVITY_DEFAULT; set(_) {}
     var appContextAwarenessEnabled: Boolean get() = true; set(_) {}
     var smartDictationModesEnabled: Boolean get() = true; set(_) {}
     var hasCompletedOnboarding: Boolean get() = false; set(_) {}
@@ -169,6 +170,10 @@ interface SettingsStore {
         const val WAKE_PHRASE_BOTH = "both"
         const val WAKE_PHRASE_HEY = "hey_sayso"
         const val WAKE_PHRASE_SAYSO = "sayso"
+
+        const val WAKE_SENSITIVITY_HIGH = "high"
+        const val WAKE_SENSITIVITY_DEFAULT = "medium"
+        const val WAKE_SENSITIVITY_LOW = "low"
     }
 }
 
