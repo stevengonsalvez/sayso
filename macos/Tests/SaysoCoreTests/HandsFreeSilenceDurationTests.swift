@@ -21,3 +21,24 @@ import Testing
             == .milliseconds(850)
     )
 }
+
+@Test @MainActor func handsFreeSilenceWaitsForSpeechBeforeStopping() {
+    #expect(!LiveTranscriber.shouldScheduleHandsFreeStop(
+        handsFree: true,
+        isListening: true,
+        hasHeardSpeech: false,
+        inputLevel: 0
+    ))
+    #expect(!LiveTranscriber.shouldScheduleHandsFreeStop(
+        handsFree: true,
+        isListening: true,
+        hasHeardSpeech: true,
+        inputLevel: LiveTranscriber.handsFreeSpeechThreshold + 0.001
+    ))
+    #expect(LiveTranscriber.shouldScheduleHandsFreeStop(
+        handsFree: true,
+        isListening: true,
+        hasHeardSpeech: true,
+        inputLevel: 0
+    ))
+}
