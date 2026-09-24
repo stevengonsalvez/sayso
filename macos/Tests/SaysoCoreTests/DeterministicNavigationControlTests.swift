@@ -16,10 +16,13 @@ import Testing
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "scroll down 101 lines", snapshot: snapshot) }
 
     let undo = try ControlPlanner.plan(command: "undo", snapshot: snapshot)
+    let redo = try ControlPlanner.plan(command: "redo", snapshot: snapshot)
     let close = try ControlPlanner.plan(command: "close window", snapshot: snapshot)
     #expect(undo.action == .key(.undo, expectedFingerprint: snapshot.fingerprint))
+    #expect(redo.action == .key(.redo, expectedFingerprint: snapshot.fingerprint))
     #expect(close.action == .key(.closeWindow, expectedFingerprint: snapshot.fingerprint))
     #expect(ControlPolicy.requiresConfirmation(undo))
+    #expect(ControlPolicy.requiresConfirmation(redo))
     #expect(ControlPolicy.requiresConfirmation(close))
 }
 
