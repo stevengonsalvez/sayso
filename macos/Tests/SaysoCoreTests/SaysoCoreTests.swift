@@ -412,6 +412,28 @@ import Testing
     #expect(ControlOutcome.result(for: action, effect: .observed) == "observed target active")
 }
 
+@Test func explicitActivationsExposeOnlyValidatedHandoffTargets() {
+    let safari = "com.apple.Safari"
+    let activation = DesktopAction.activate(bundleIdentifier: safari)
+    let launch = DesktopAction.activateApplication(
+        bundleIdentifier: safari,
+        applicationURL: URL(fileURLWithPath: "/Applications/Safari.app")
+    )
+    let nonActivations = [
+        DesktopAction.open(url: URL(string: "https://example.com")!),
+        .quit(bundleIdentifier: safari),
+        .type(text: "hello", expectedFingerprint: "target"),
+        .scroll(lines: 1, expectedFingerprint: "target"),
+        .press(elementID: "button", expectedFingerprint: "target"),
+        .key(.return, expectedFingerprint: "target"),
+    ]
+
+    #expect(activation.validatedNextTargetBundleIdentifier == safari)
+    #expect(launch.validatedNextTargetBundleIdentifier == safari)
+    #expect(DesktopAction.activate(bundleIdentifier: "com..apple").validatedNextTargetBundleIdentifier == nil)
+    #expect(nonActivations.allSatisfy { $0.validatedNextTargetBundleIdentifier == nil })
+}
+
 @Test func externalControlEffectsRequireExactTargetAndNavigation() {
     let targetURL = URL(string: "https://example.com/docs?version=1#read")!
 
