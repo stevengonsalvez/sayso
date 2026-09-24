@@ -178,11 +178,11 @@ All code evidence below is from source head `67092c1`; documentation and verific
 
 ### Sayso voice mode transition (hybrid capability)
 
-Sayso bridges dictation and desktop control by recognizing spoken mode switches during control sessions:
+Sayso bridges dictation and desktop control by recognizing spoken mode switches during partial transcription in both directions ("sayso switch to control" and "sayso switch to dictation", `SaysoNotchApp.swift:1348-1362`):
 
 | Capability | Mode Design | Sayso Implementation | Traceable Evidence |
 |---|---|---|---|
-| Spoken Mode Switch | Hands-free transition back to dictation | `SaysoNotchApp.swift` (`handleVoiceModeSwitch`) | [manual] Spoken phrase "sayso switch to dictation" stops control session and re-arms dictation ready state |
+| Spoken Mode Switch | Hands-free two-way transition between dictation and control | `SaysoNotchApp.swift` (`handleVoiceModeSwitch`) | [manual] Spoken phrases "sayso switch to control" and "sayso switch to dictation" transition modes and re-arm session readiness |
 
 ### 5. Visual notch proof and interaction proof
 
@@ -193,7 +193,7 @@ Physical captures on live macOS display verified and committed in repository und
 - **Real Voice Dictation**: Manually observed utterance captured through physical microphone and transcribed live by local FluidAudio engine into the HUD text field.
 - **Single Process and Clean Exit**: `pgrep` confirms exactly 1 process running; quit button and clean teardown verified.
 - **HUD Interaction Proof**:
-  - Collapse toggle: Tapped HUD body or chevron up button collapses expanded panel to compact 42px notch height (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`). Panel also auto-collapses approximately 2 seconds after transcription delivery or error notices via `hideAfterDelay()` (`NotchPanelController.swift:66-75`).
+  - Collapse toggle: Tapping the compact notch body expands the HUD; the chevron up button collapses the expanded panel back to 42px notch height (`macos/Sources/SaysoNotch/NotchPanelController.swift:77, 178`). Panel also auto-collapses approximately 2 seconds after transcription delivery or error notices via `hideAfterDelay()` (`NotchPanelController.swift:66-75`).
   - Start does not dismiss: [manual] Clicking "Start dictation" was observed to toggle live recording without dismissing the HUD.
   - Detach toggles presentation: Clicking detach button alternates between `.notch` (attached beside camera) and `.floating` (desktop-positioned overlay).
   - Open Settings and Open Sayso: Clicking open settings (`macos/Sources/SaysoNotch/NotchPanelController.swift:177`) or open app brings forward the full multi-section settings workspace.
@@ -218,7 +218,7 @@ Physical captures on live macOS display verified and committed in repository und
 3. **Advanced Accessibility Candidate Models**: Grounded control covers exact titles, pointer rows, scrolling, navigation keys, app launching, URLs, folders, undo, and redo. Extended candidate coverage (menu-bar items, double-click, window geometry arrangement, Finder selection semantics) remains open for subsequent iteration.
 4. **Multi-Device Screenshot Baseline**: Notch geometry was physically verified on the local 16-inch MacBook Pro display; baselines across different MacBook notch dimensions and external monitors remain to be captured as hardware becomes available.
 5. **Outside-Click Auto-Collapse (Dropped from initial criteria)**: Earlier criteria suggested outside-click HUD collapse. In current design, collapse occurs explicitly via tap toggle or chevron button (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`), or automatically via the 2-second timer `hideAfterDelay()` (`NotchPanelController.swift:66-75`). Outside-click collapse via NSEvent global/local click monitor is not implemented and remains an open UX enhancement.
-6. **Spoken Mode Switch Exact Matching**: `handleVoiceModeSwitch` (`SaysoNotchApp.swift:1348-1362`) matches spoken commands by substring check (`command.contains("sayso switch to dictation")`). Unlike voice-edit commands which enforce whole-token shape, automated unit test coverage and stricter command parsing for spoken mode switches remain open.
+6. **Spoken Mode Switch Substring and False-Trigger Risk**: `handleVoiceModeSwitch` (`SaysoNotchApp.swift:1348-1362`) runs on partial transcripts (`handleDictationPartial`, line 707) and matches two-way transitions via substring checks (`command.contains("sayso switch to control")` and `command.contains("sayso switch to dictation")`). If spoken during dictation, a phrase containing those words triggers a mode change and stops recording. Stricter token-boundary parsing, state guards, and automated test coverage remain open.
 
 ## Build, test and launch runbook
 
