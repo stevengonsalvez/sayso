@@ -226,7 +226,16 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
-        try await postPointerClick(at: centre, target: target.element, systemWide: systemWide)
+        switch try await postPointerClick(at: centre, target: target.element, systemWide: systemWide) {
+        case .covered:
+            throw SaysoError.invalidAction("Visible row changed before click")
+        case .accessibilitySelection:
+            return .accessibilitySelection(
+                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
+            )
+        case .pointer:
+            break
+        }
         guard !wasSelected else { return .pointerWithoutSelectionEvidence }
         for _ in 0..<5 {
             try? await Task.sleep(for: .milliseconds(50))
@@ -426,9 +435,14 @@ public final class AXCandidateCapture: @unchecked Sendable {
         event.post(tap: .cghidEventTap)
     }
 
-    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) async throws {
-        guard try hitDecision(target: target, in: systemWide, at: point) == .pointer else {
+    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) async throws -> PointerRowHitDecision {
+        switch try hitDecision(target: target, in: systemWide, at: point) {
+        case .covered:
             throw SaysoError.invalidAction("Visible row changed before click")
+        case .accessibilitySelection:
+            return .accessibilitySelection
+        case .pointer:
+            break
         }
         guard let mouseDown = CGEvent(
             mouseEventSource: nil,
@@ -450,6 +464,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         mouseDown.post(tap: .cghidEventTap)
         try? await Task.sleep(for: .milliseconds(15))
         mouseUp.post(tap: .cghidEventTap)
+        return .pointer
     }
 
     private func pointAttribute(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {
