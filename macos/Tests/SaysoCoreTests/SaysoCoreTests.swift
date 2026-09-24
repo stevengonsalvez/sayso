@@ -183,8 +183,13 @@ import Testing
         #expect(store.secret(named: account) == "sk-test-secret-key-123")
         store.remove(named: account)
         #expect(store.secret(named: account) == nil)
+    } catch let error as SaysoError {
+        guard case .unavailable("Keychain") = error else {
+            Issue.record(error)
+            return
+        }
     } catch {
-        // Headless CI environments may deny keychain interaction
+        Issue.record(error)
     }
 }
 
