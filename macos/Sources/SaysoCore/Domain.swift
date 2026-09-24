@@ -173,6 +173,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var autoInsert = true
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
+    public var handsFreeSilenceSeconds = 1.2
     public var saveSessionAudio = false
     public var soundCues = true
     public var onboardingCompleted = false
@@ -201,7 +202,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
-        case autoInsert, restoreClipboardAfterPaste, handsFree, saveSessionAudio, soundCues, onboardingCompleted
+        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
@@ -228,6 +229,10 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
         restoreClipboardAfterPaste = decoded(Bool.self, .restoreClipboardAfterPaste, fallback: restoreClipboardAfterPaste)
         handsFree = decoded(Bool.self, .handsFree, fallback: handsFree)
+        handsFreeSilenceSeconds = min(
+            max(decoded(Double.self, .handsFreeSilenceSeconds, fallback: handsFreeSilenceSeconds), 0.5),
+            5
+        )
         saveSessionAudio = decoded(Bool.self, .saveSessionAudio, fallback: saveSessionAudio)
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
