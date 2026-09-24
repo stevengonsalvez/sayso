@@ -323,7 +323,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
-        byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: false)
+        byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: cloudConsentGranted)
         voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
