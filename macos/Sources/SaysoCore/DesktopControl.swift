@@ -248,6 +248,27 @@ public enum DesktopAction: Codable, Equatable, Sendable {
     case press(elementID: String, expectedFingerprint: String)
     case key(DesktopKey, expectedFingerprint: String)
 
+    /// A syntactically valid, explicit app activation target. Observe the action
+    /// before transferring a multi-step command to this target.
+    public var validatedNextTargetBundleIdentifier: String? {
+        switch self {
+        case let .activate(bundleIdentifier), let .activateApplication(bundleIdentifier, _):
+            Self.validatedBundleIdentifier(bundleIdentifier)
+        case .type, .open, .quit, .scroll, .press, .key:
+            nil
+        }
+    }
+
+    static func validatedBundleIdentifier(_ candidate: String) -> String? {
+        let identifier = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let components = identifier.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count >= 2,
+              components.allSatisfy({ !$0.isEmpty && $0.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" } }) else {
+            return nil
+        }
+        return identifier
+    }
+
     public var isDestructive: Bool {
         switch self {
         case .quit:
@@ -737,10 +758,7 @@ public enum ControlPlanner {
     }
 
     private static func bundleIdentifier(from command: String, prefix: Int) -> String? {
-        let identifier = String(command.dropFirst(prefix)).trimmingCharacters(in: .whitespaces)
-        guard identifier.split(separator: ".").count >= 2,
-              identifier.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }) else { return nil }
-        return identifier
+        DesktopAction.validatedBundleIdentifier(String(command.dropFirst(prefix)))
     }
 }
 
