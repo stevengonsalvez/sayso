@@ -56,6 +56,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     }
 
     public var fingerprint: String {
+        // Capability flags bind a plan to the visible interaction method, not just its title.
         // Transient pointer visibility is rechecked immediately before an HID click.
         let visibleControls = elements.map {
             [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description]
@@ -1263,13 +1264,8 @@ public final class AXDesktopController: @unchecked Sendable {
                 )
             case .pointerWithoutSelectionEvidence:
                 break
-            case let .accessibilitySelection(selectionChanged):
+            case .accessibilitySelection:
                 executionMethod = .accessibilitySelection
-                directObservation = .init(
-                    snapshot: snapshot,
-                    effect: selectionChanged ? .observed : .alreadySatisfied,
-                    result: selectionChanged ? "observed accessibility row selection" : "row already selected"
-                )
             }
         case let .key(key, expectedFingerprint):
             let virtualKey = await key.resolvedVirtualKey()
