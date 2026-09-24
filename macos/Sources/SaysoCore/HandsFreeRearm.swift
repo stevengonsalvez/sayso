@@ -40,6 +40,14 @@ public struct HandsFreeCycle: Equatable, Sendable {
         isArmed && handsFreeEnabled && isDictationMode && continuousEnabled
     }
 
+    public func remainingSessionDuration(
+        maximumSessionDuration: TimeInterval,
+        now: Date = .now
+    ) -> TimeInterval? {
+        guard isArmed, let startedAt else { return nil }
+        return max(0, maximumSessionDuration - now.timeIntervalSince(startedAt))
+    }
+
     public mutating func consumeDelivery(
         wasDelivered: Bool,
         handsFreeEnabled: Bool,
