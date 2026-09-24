@@ -697,10 +697,20 @@ public enum ControlPlanner {
         if normalized.hasPrefix("activate "), let identifier = bundleIdentifier(from: trimmed, prefix: 9) {
             return .init(action: .activate(bundleIdentifier: identifier), confidence: 0.80, reason: "Exact bundle identifier")
         }
-        if normalized.hasPrefix("quit "), let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
-            return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
+        if normalized.hasPrefix("quit ") {
+            let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            guard !target.isEmpty else {
+                throw SaysoError.invalidAction("Say an exact installed application name or bundle identifier after 'quit'.")
+            }
+            if let identifier = bundleIdentifier(from: trimmed, prefix: 5) {
+                return .init(action: .quit(bundleIdentifier: identifier), confidence: 0.70, reason: "Exact bundle identifier")
+            }
+            return try namedApplicationQuitPlan(
+                requestedName: target,
+                applications: installedApplications ?? InstalledDesktopApplication.available()
+            )
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, go back, next or previous tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit bundle ID.")
+        throw SaysoError.invalidAction("Control supports: type, press key, go back, next or previous tab, click exact title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
@@ -712,6 +722,10 @@ public enum ControlPlanner {
         }
         if normalized.hasPrefix("switch to ") {
             return !String(trimmed.dropFirst(10)).trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if normalized.hasPrefix("quit ") {
+            let target = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            return !target.isEmpty && bundleIdentifier(from: trimmed, prefix: 5) == nil
         }
         return false
     }
@@ -729,6 +743,28 @@ public enum ControlPlanner {
                 ),
                 confidence: 0.85,
                 reason: "Launch \(application.name) at \(application.applicationURL.path)",
+                requiresConfirmation: true
+            )
+        case .notFound:
+            throw SaysoError.invalidAction("No installed application exactly named '\(requestedName)'.")
+        case let .ambiguous(applications):
+            let filenames = Set(applications.map { $0.applicationURL.lastPathComponent })
+                .sorted()
+                .joined(separator: " or ")
+            throw SaysoError.invalidAction("More than one installed application is named '\(requestedName)'. Say an exact unique .app filename: \(filenames), or remove a duplicate.")
+        }
+    }
+
+    private static func namedApplicationQuitPlan(
+        requestedName: String,
+        applications: [InstalledDesktopApplication]
+    ) throws -> ControlPlanStep {
+        switch DesktopApplicationResolver.resolve(requestedName, in: applications) {
+        case let .resolved(application):
+            return .init(
+                action: .quit(bundleIdentifier: application.bundleIdentifier),
+                confidence: 0.70,
+                reason: "Quit \(application.name)",
                 requiresConfirmation: true
             )
         case .notFound:
