@@ -91,6 +91,33 @@ import Testing
     ))
 }
 
+@Test func pointerHitDecisionProtectsInteractiveRowChildren() {
+    #expect(AXCandidateCapturePolicy.pointerHitDecision(
+        reachesTarget: true,
+        hitsTargetDirectly: true,
+        descendantSupportsPress: false,
+        descendantSupportsFocus: false
+    ) == .pointer)
+    #expect(AXCandidateCapturePolicy.pointerHitDecision(
+        reachesTarget: true,
+        hitsTargetDirectly: false,
+        descendantSupportsPress: false,
+        descendantSupportsFocus: false
+    ) == .pointer)
+    #expect(AXCandidateCapturePolicy.pointerHitDecision(
+        reachesTarget: true,
+        hitsTargetDirectly: false,
+        descendantSupportsPress: true,
+        descendantSupportsFocus: false
+    ) == .accessibilitySelection)
+    #expect(AXCandidateCapturePolicy.pointerHitDecision(
+        reachesTarget: false,
+        hitsTargetDirectly: false,
+        descendantSupportsPress: false,
+        descendantSupportsFocus: false
+    ) == .covered)
+}
+
 @Test func captureLocatorIsStableForSameBoundedAncestry() {
     let first = DesktopCandidateID(
         processIdentifier: 12,
