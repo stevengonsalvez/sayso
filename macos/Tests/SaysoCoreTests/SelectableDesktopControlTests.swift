@@ -61,6 +61,7 @@ import Testing
     #expect(ControlPolicy.requiresConfirmation(step))
     #expect(!ControlPolicy.canAutoRun(step))
     #expect(ControlOutcome.result(for: step.action, effect: .observed) == "observed row selection")
+    #expect(ControlOutcome.result(for: step.action, effect: .alreadySatisfied) == "row already selected")
     #expect(ControlOutcome.result(for: step.action, effect: .notObserved) == "no observed row selection")
 }
 
