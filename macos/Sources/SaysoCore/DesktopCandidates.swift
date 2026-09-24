@@ -33,6 +33,7 @@ public struct DesktopCandidateState: Codable, Equatable, Sendable {
     public let supportsPress: Bool
     public let supportsFocus: Bool
     public let supportsSelection: Bool
+    public let supportsPointerClick: Bool
     public let isProtected: Bool
 
     public init(
@@ -40,12 +41,14 @@ public struct DesktopCandidateState: Codable, Equatable, Sendable {
         supportsPress: Bool,
         supportsFocus: Bool,
         supportsSelection: Bool = false,
+        supportsPointerClick: Bool = false,
         isProtected: Bool
     ) {
         self.isEnabled = isEnabled
         self.supportsPress = supportsPress
         self.supportsFocus = supportsFocus
         self.supportsSelection = supportsSelection
+        self.supportsPointerClick = supportsPointerClick
         self.isProtected = isProtected
     }
 
@@ -59,6 +62,10 @@ public struct DesktopCandidateState: Codable, Equatable, Sendable {
 
     public var isSelectionTarget: Bool {
         isEnabled && supportsSelection && !isProtected
+    }
+
+    public var isPointerTarget: Bool {
+        isEnabled && supportsPointerClick && !isProtected
     }
 }
 
