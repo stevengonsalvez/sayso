@@ -158,6 +158,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
     @Published private(set) var audioInputDevices: [AudioInputDevice] = []
+    @Published private(set) var hasBYOKKey = false
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -227,6 +228,7 @@ final class SaysoAppModel: ObservableObject {
         settings = saved
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
+        hasBYOKKey = secrets.secret(named: "byok-api-key") != nil
         dictationHotKey = Self.loadDictationHotKey()
         hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
         notch = NotchPanelController()
@@ -1198,23 +1200,21 @@ final class SaysoAppModel: ObservableObject {
 
     @discardableResult
     func saveBYOKKey(_ key: String) -> Bool {
-        guard !key.isEmpty else { return false }
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
         guard let baseURL = URL(string: settings.byokBaseURL), ProviderEndpointPolicy.allows(baseURL) else {
             showPersistentNotice("BYOK provider must use HTTPS, except localhost HTTP.")
             return false
         }
         do {
-            try secrets.store(key, named: "byok-api-key")
+            try secrets.store(trimmed, named: "byok-api-key")
+            hasBYOKKey = true
             notice = "BYOK key stored in Keychain."
             return true
         } catch {
             notice = "Could not store BYOK key."
             return false
         }
-    }
-
-    var hasBYOKKey: Bool {
-        secrets.secret(named: "byok-api-key") != nil
     }
 
     var isBYOKBaseURLValid: Bool {
@@ -3429,9 +3429,14 @@ private struct OnboardingWizard: View {
         .padding(32)
         .frame(width: 560, height: 500)
         .onChange(of: model.settings.language) { _, _ in model.clearOnboardingTestResult() }
-        .onChange(of: model.settings.route) { _, _ in
+        .onChange(of: model.settings.route) { oldRoute, newRoute in
+            if oldRoute != newRoute {
+                model.settings.cloudConsentGranted = false
+            }
             page = min(page, steps.count - 1)
             model.clearOnboardingTestResult()
+            guard newRoute == .local, model.settings.language == .automatic else { return }
+            model.settings.language = .english
         }
         .onChange(of: model.settings) { _, _ in model.save() }
     }
