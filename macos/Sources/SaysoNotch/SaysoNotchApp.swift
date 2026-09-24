@@ -463,7 +463,7 @@ final class SaysoAppModel: ObservableObject {
             handsFreeDestinationLaunchDate = nil
             handsFreeDestination = nil
         }
-        switch reserveDictationStart() {
+        switch reserveDictationStart(onboardingTest: onboardingTest) {
         case .reserved:
             let canPinContinuousTarget = isContinuousRearm
                 ? handsFreeDestinationProcessIdentifier != nil
@@ -504,7 +504,7 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    private func reserveDictationStart() -> DictationStartReservation {
+    private func reserveDictationStart(onboardingTest: Bool = false) -> DictationStartReservation {
         guard !isStartingDictation, transcriber.canStart else {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
@@ -512,10 +512,18 @@ final class SaysoAppModel: ObservableObject {
         guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning else {
             return .rejected(.alreadyRecording, "Finish the current history audio task before dictating.")
         }
-        guard settings.route.supportsDictation else {
+        let pinnedApplication = handsFreeDestinationProcessIdentifier
+            .flatMap(NSRunningApplication.init(processIdentifier:))
+        let destinationApplication = handsFreeCycle.isArmed
+            ? pinnedApplication ?? lastExternalApplication
+            : lastExternalApplication
+        let sessionSettings = settings.resolvedDictationSettings(
+            forBundleIdentifier: onboardingTest ? nil : destinationApplication?.bundleIdentifier
+        )
+        guard sessionSettings.route.supportsDictation else {
             return .rejected(.transcriptionFailed, "Your provider supports translation, not transcription.")
         }
-        guard !settings.route.transmitsData || settings.cloudConsentGranted else {
+        guard !sessionSettings.route.transmitsData || sessionSettings.cloudConsentGranted else {
             return .rejected(.transcriptionFailed, "Confirm the Apple Speech data path before recording.")
         }
         isStartingDictation = true
@@ -540,9 +548,8 @@ final class SaysoAppModel: ObservableObject {
         let destinationApplication = handsFreeCycle.isArmed
             ? pinnedApplication ?? lastExternalApplication
             : lastExternalApplication
-        var sessionSettings = settings
-        sessionSettings.dictationProfile = settings.resolvedDictationProfile(
-            forBundleIdentifier: destinationApplication?.bundleIdentifier
+        let sessionSettings = settings.resolvedDictationSettings(
+            forBundleIdentifier: onboardingTest ? nil : destinationApplication?.bundleIdentifier
         )
         activeDictationSettings = sessionSettings
         let targetProcessIdentifier = destinationApplication?.processIdentifier
@@ -586,8 +593,8 @@ final class SaysoAppModel: ObservableObject {
             }
         }
         let session = RecordingSession(
-            language: settings.language,
-            route: settings.route,
+            language: sessionSettings.language,
+            route: sessionSettings.route,
             destination: dictationDestination?.recordingDestination
         )
         activeRecordingSession = session
@@ -615,7 +622,7 @@ final class SaysoAppModel: ObservableObject {
             handleTranscriptionTermination(.cancelled)
             return false
         }
-        if transcriber.requiresSpeechRecognition(language: settings.language, route: settings.route) {
+        if transcriber.requiresSpeechRecognition(language: sessionSettings.language, route: sessionSettings.route) {
             guard await permissions.authorize(.speechRecognition) == .granted else {
                 showPersistentNotice("Speech Recognition access is required before Sayso can transcribe. Grant it in Settings.")
                 failActiveSession(notice ?? "Speech Recognition access denied")
@@ -643,8 +650,8 @@ final class SaysoAppModel: ObservableObject {
             maximumDuration = .seconds(settings.handsFreeMaximumDurationSeconds)
         }
         let started = await transcriber.start(
-                language: settings.language,
-                route: settings.route,
+                language: sessionSettings.language,
+                route: sessionSettings.route,
                 handsFree: settings.handsFree,
                 handsFreeSilenceDuration: .seconds(settings.handsFreeSilenceSeconds),
                 handsFreeMaximumDuration: maximumDuration,
