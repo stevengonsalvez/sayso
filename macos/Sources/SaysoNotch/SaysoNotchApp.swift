@@ -183,7 +183,7 @@ final class SaysoAppModel: ObservableObject {
     private var activeRecordingSession: RecordingSession?
     private var activeDictationSettings: SaysoSettings?
     private var pendingVoiceMode: SaysoMode?
-    private var handsFreeArmed = false
+    private var handsFreeCycle = HandsFreeCycle()
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
@@ -363,18 +363,18 @@ final class SaysoAppModel: ObservableObject {
 
     func startOrStopDictation() {
         if transcriber.canStop {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             transcriber.stop()
             return
         }
         if isStartingDictation {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             dictationStartCancellationRequested = true
             notice = "Cancelling dictation start."
             return
         }
-        if handsFreeArmed {
-            handsFreeArmed = false
+        if handsFreeCycle.isArmed {
+            handsFreeCycle.disarm()
             notice = "Continuous hands-free dictation stopped."
             notch.hideAfterDelay()
             return
@@ -406,7 +406,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startOrStopVoiceEdit() {
-        handsFreeArmed = false
+        handsFreeCycle.disarm()
         if voiceEditCapture != nil, transcriber.canStop {
             transcriber.stop()
             return
@@ -444,21 +444,23 @@ final class SaysoAppModel: ObservableObject {
         onboardingTestTranscriptID = nil
     }
 
-    private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) {
-        handsFreeArmed = false
+    @discardableResult
+    private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) -> Bool {
+        handsFreeCycle.disarm()
         switch reserveDictationStart() {
         case .reserved:
-            handsFreeArmed = HandsFreeRearmPolicy.shouldRearm(
-                isArmed: rearmHandsFree,
+            handsFreeCycle.start(
+                rearmRequested: rearmHandsFree,
                 handsFreeEnabled: settings.handsFree,
                 isDictationMode: settings.mode == .dictation
             )
             Task {
                 _ = await performDictationStart(onboardingTest: onboardingTest)
             }
+            return true
         case let .rejected(_, message):
             notice = message
-            return
+            return false
         }
     }
 
@@ -602,7 +604,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let capture = voiceEditCapture {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             voiceEditCapture = nil
             guard let delivery = takeActiveDictationDelivery() else {
                 discardTranscriptAudio(transcript)
@@ -614,7 +616,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let testID = onboardingTestSessionID, activeRecordingSession?.id == testID {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             guard let delivery = takeActiveDictationDelivery() else {
                 discardTranscriptAudio(transcript)
                 return
@@ -624,7 +626,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         guard settings.mode == .dictation else {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             discardTranscriptAudio(transcript)
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
@@ -634,9 +636,9 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let current = lastTranscript {
-            handsFreeArmed = false
             switch VoiceEdits.outcome(transcript.text, to: current.displayText) {
             case let .applied(edited):
+                handsFreeCycle.disarm()
                 var updated = current
                 updated.text = edited
                 updated.translatedText = nil
@@ -667,7 +669,7 @@ final class SaysoAppModel: ObservableObject {
             }
         }
         guard let delivery = takeActiveDictationDelivery() else {
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             Task { await deliverUnboundTranscript(transcript) }
             return
         }
@@ -836,12 +838,13 @@ final class SaysoAppModel: ObservableObject {
         await sessions.upsert(session)
         transcriptProcessingNotice = nil
         if pendingDelivery.settings.soundCues { NSSound.beep() }
-        if HandsFreeRearmPolicy.shouldRearm(
-            isArmed: handsFreeArmed,
+        if handsFreeCycle.shouldRearm(
             handsFreeEnabled: settings.handsFree,
             isDictationMode: settings.mode == .dictation
         ) {
-            requestDictationStart(onboardingTest: false, rearmHandsFree: true)
+            if !requestDictationStart(onboardingTest: false, rearmHandsFree: true) {
+                notch.hideAfterDelay()
+            }
         } else if activeRecordingSession == nil {
             notch.hideAfterDelay()
         }
@@ -932,7 +935,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func failActiveSession(_ message: String) {
-        handsFreeArmed = false
+        handsFreeCycle.disarm()
         lastDictationStartError = message
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.fail(message) }
@@ -943,7 +946,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func cancelActiveRecordingSession() {
-        handsFreeArmed = false
+        handsFreeCycle.disarm()
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
@@ -957,7 +960,7 @@ final class SaysoAppModel: ObservableObject {
         pendingVoiceMode = nil
         switch termination {
         case .cancelled:
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             clearOnboardingTest(for: activeRecordingSession)
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
@@ -1161,7 +1164,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func applyPendingVoiceMode() -> Bool {
         guard let target = pendingVoiceMode else { return false }
-        handsFreeArmed = false
+        handsFreeCycle.disarm()
         pendingVoiceMode = nil
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
@@ -2788,7 +2791,7 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
-            handsFreeArmed = false
+            handsFreeCycle.disarm()
             switch reserveDictationStart() {
             case let .rejected(code, message):
                 return .failure(id: request.id, command: request.command, error: .init(code: code, message: message))
