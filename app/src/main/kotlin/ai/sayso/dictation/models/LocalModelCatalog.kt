@@ -33,6 +33,8 @@ data class LocalModel(
 
 /** Sizes and checksums measured from the release assets on 2026-09-11 and HF assets on 2026-09-17. */
 object LocalModelCatalog {
+    const val LID_MODEL_DIR = "sherpa-onnx-whisper-tiny"
+
     val all: List<LocalModel> = listOf(
         LocalModel(
             dirName = "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8",
@@ -46,7 +48,7 @@ object LocalModelCatalog {
             dirName = "sherpa-onnx-whisper-tiny",
             displayName = "Whisper Multilingual Tiny",
             sizeMb = 111,
-            note = "Multilingual (English + Indic). Note: Lower dialect accuracy than AI4Bharat",
+            note = "Multilingual & Neural Language Detector (LID). Auto-routes Tamil/Hindi to AI4Bharat and English to Parakeet",
             sha256 = "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1",
         ),
         LocalModel(
