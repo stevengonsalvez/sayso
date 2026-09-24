@@ -417,12 +417,14 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
     public let beforeFingerprint: String
     public let afterFingerprint: String?
     public let effect: ControlEffect
+    public let executionMethod: ControlExecutionMethod
     /// Human-readable description of `effect`. Never parse it; branch on `effect`.
     public let result: String
 
     public init(
         id: UUID = UUID(), timestamp: Date = .now, action: DesktopAction,
-        beforeFingerprint: String, afterFingerprint: String?, effect: ControlEffect, result: String
+        beforeFingerprint: String, afterFingerprint: String?, effect: ControlEffect,
+        executionMethod: ControlExecutionMethod = .unspecified, result: String
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -430,6 +432,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
         self.beforeFingerprint = beforeFingerprint
         self.afterFingerprint = afterFingerprint
         self.effect = effect
+        self.executionMethod = executionMethod
         self.result = result
     }
 
@@ -442,6 +445,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
         afterFingerprint = try container.decodeIfPresent(String.self, forKey: .afterFingerprint)
         // Entries written before typed effects carry only prose; do not infer from it.
         effect = try container.decodeIfPresent(ControlEffect.self, forKey: .effect) ?? .unknown
+        executionMethod = try container.decodeIfPresent(ControlExecutionMethod.self, forKey: .executionMethod) ?? .unspecified
         result = try container.decode(String.self, forKey: .result)
     }
 }
@@ -450,6 +454,12 @@ public enum ControlEffect: String, Codable, Equatable, Sendable {
     case observed
     case notObserved
     case unknown
+}
+
+public enum ControlExecutionMethod: String, Codable, Equatable, Sendable {
+    case unspecified
+    case pointerClick
+    case accessibilitySelection
 }
 
 public enum ControlPolicy {
@@ -1125,6 +1135,7 @@ public final class AXDesktopController: @unchecked Sendable {
         var openTargetWasFrontmost = false
         var openBeforeURL: URL?
         var directObservation: ActionObservation?
+        var executionMethod: ControlExecutionMethod = .unspecified
 
         switch step.action {
         case let .type(text, expectedFingerprint):
@@ -1217,6 +1228,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.staleTarget
             }
             let selectionChanged = try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
+            executionMethod = .accessibilitySelection
             directObservation = .init(
                 snapshot: try? capture(application: targetApplication),
                 action: step.action,
@@ -1228,6 +1240,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.staleTarget
             }
             let activation = try await candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
+            executionMethod = .pointerClick
             let snapshot = try? capture(application: targetApplication)
             switch activation {
             case .pointerSelectionChanged:
@@ -1239,6 +1252,7 @@ public final class AXDesktopController: @unchecked Sendable {
             case .pointerWithoutSelectionEvidence:
                 break
             case let .accessibilitySelection(selectionChanged):
+                executionMethod = .accessibilitySelection
                 directObservation = .init(
                     snapshot: snapshot,
                     effect: selectionChanged ? .observed : .notObserved,
@@ -1282,6 +1296,7 @@ public final class AXDesktopController: @unchecked Sendable {
             beforeFingerprint: before.fingerprint,
             afterFingerprint: observation.snapshot?.fingerprint,
             effect: observation.effect,
+            executionMethod: executionMethod,
             result: observation.result
         )
     }
