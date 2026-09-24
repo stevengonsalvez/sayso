@@ -76,47 +76,13 @@ import Testing
     ))
 }
 
-@Test func pointerRowsNeedSelectionAndVisibleFrame() {
-    #expect(AXCandidateCapturePolicy.supportsPointerClick(
-        supportsSelection: true,
-        hasClickableFrame: true
-    ))
-    #expect(!AXCandidateCapturePolicy.supportsPointerClick(
-        supportsSelection: false,
-        hasClickableFrame: true
-    ))
-    #expect(!AXCandidateCapturePolicy.supportsPointerClick(
-        supportsSelection: true,
-        hasClickableFrame: false
-    ))
-}
-
 @Test func pointerHitDecisionProtectsInteractiveRowChildren() {
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
-        reachesTarget: true,
-        hitsTargetDirectly: true,
         hasInteractiveDescendant: false
     ) == .pointer)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
-        reachesTarget: true,
-        hitsTargetDirectly: false,
-        hasInteractiveDescendant: false
-    ) == .pointer)
-    #expect(AXCandidateCapturePolicy.pointerHitDecision(
-        reachesTarget: true,
-        hitsTargetDirectly: false,
         hasInteractiveDescendant: true
     ) == .accessibilitySelection)
-    #expect(AXCandidateCapturePolicy.pointerHitDecision(
-        reachesTarget: true,
-        hitsTargetDirectly: false,
-        hasInteractiveDescendant: true
-    ) == .accessibilitySelection)
-    #expect(AXCandidateCapturePolicy.pointerHitDecision(
-        reachesTarget: false,
-        hitsTargetDirectly: false,
-        hasInteractiveDescendant: false
-    ) == .covered)
 }
 
 @Test func captureLocatorIsStableForSameBoundedAncestry() {
