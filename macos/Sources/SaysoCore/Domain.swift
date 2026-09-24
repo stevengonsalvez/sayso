@@ -323,6 +323,9 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
+        // Legacy versions used cloudConsentGranted for all cloud features (Apple Speech and BYOK).
+        // Carry forward cloudConsentGranted when byokConsentGranted is missing so upgrading users
+        // do not lose existing BYOK dictation, translation, and cleanup without warning.
         byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: cloudConsentGranted)
         voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
