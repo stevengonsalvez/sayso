@@ -337,6 +337,27 @@ import Testing
     #expect(ControlOutcome.effect(for: select, before: before, after: before) == .unknown)
 }
 
+@Test func desktopFingerprintIgnoresTransientPointerVisibility() {
+    let hidden = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Finder", windowTitle: "Downloads",
+        focusedRole: "AXOutline", focusedValue: "", isProtected: false,
+        elements: [.init(
+            id: "downloads", role: "AXRow", title: "Downloads", supportsPress: false,
+            supportsSelection: true, supportsPointerClick: false
+        )]
+    )
+    let visible = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Finder", windowTitle: "Downloads",
+        focusedRole: "AXOutline", focusedValue: "", isProtected: false,
+        elements: [.init(
+            id: "downloads", role: "AXRow", title: "Downloads", supportsPress: false,
+            supportsSelection: true, supportsPointerClick: true
+        )]
+    )
+
+    #expect(hidden.fingerprint == visible.fingerprint)
+}
+
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
     actor Snapshots {
         private var values: [DesktopSnapshot]
