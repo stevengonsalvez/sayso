@@ -246,9 +246,10 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let element: AXUIElement
             let ancestry: [Int]
             let depth: Int
+            let visibleClip: CGRect?
         }
 
-        var pending = [PendingNode(element: root, ancestry: [], depth: 0)]
+        var pending = [PendingNode(element: root, ancestry: [], depth: 0, visibleClip: frame(of: root))]
         var index = 0
         var visited = 0
         var captured = [CapturedCandidate]()
@@ -260,6 +261,16 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let node = pending[index]
             index += 1
             visited += 1
+            let nodeFrame = frame(of: node.element)
+            let visibleClip: CGRect?
+            switch (node.visibleClip, nodeFrame) {
+            case let (.some(clip), .some(frame)):
+                visibleClip = clip.intersection(frame)
+            case let (.some(clip), .none):
+                visibleClip = clip
+            case let (.none, frame):
+                visibleClip = frame
+            }
 
             let role = stringAttribute(kAXRoleAttribute as CFString, from: node.element) ?? ""
             let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: node.element) ?? ""
@@ -272,7 +283,9 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let supportsFocus = attributeIsSettable(kAXFocusedAttribute as CFString, on: node.element)
             let supportsSelection = [kAXRowRole as String, kAXCellRole as String].contains(role)
                 && attributeIsSettable(kAXSelectedAttribute as CFString, on: node.element)
-            let hasClickableFrame = supportsSelection && hasVisibleClickableCentre(of: node.element, within: root)
+            let hasClickableFrame = supportsSelection && nodeFrame.map { frame in
+                visibleClip?.contains(CGPoint(x: frame.midX, y: frame.midY)) ?? true
+            } == true
             let supportsPointerClick = AXCandidateCapturePolicy.supportsPointerClick(
                 supportsSelection: supportsSelection,
                 hasClickableFrame: hasClickableFrame
@@ -329,7 +342,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 remainingNodeCapacity: remaining
             )
             pending += zip(children, paths).map { child, ancestry in
-                PendingNode(element: child, ancestry: ancestry, depth: node.depth + 1)
+                PendingNode(element: child, ancestry: ancestry, depth: node.depth + 1, visibleClip: visibleClip)
             }
         }
 
@@ -380,18 +393,6 @@ public final class AXCandidateCapture: @unchecked Sendable {
     private func clickableCentre(of element: AXUIElement) -> CGPoint? {
         guard let frame = frame(of: element) else { return nil }
         return CGPoint(x: frame.midX, y: frame.midY)
-    }
-
-    private func hasVisibleClickableCentre(of element: AXUIElement, within root: AXUIElement) -> Bool {
-        guard let centre = clickableCentre(of: element) else { return false }
-        var ancestor: AXUIElement? = element
-        for _ in 0..<Self.maximumPointerAncestors {
-            guard let current = ancestor else { return false }
-            if let frame = frame(of: current), !frame.contains(centre) { return false }
-            if CFEqual(current, root) { return true }
-            ancestor = copyElement(kAXParentAttribute as CFString, from: current)
-        }
-        return false
     }
 
     private func hitDecision(target: AXUIElement, in root: AXUIElement, at point: CGPoint) throws -> PointerRowHitDecision {
