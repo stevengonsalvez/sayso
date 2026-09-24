@@ -156,11 +156,13 @@ final class SaysoAppModel: ObservableObject {
     @Published var onboardingDeferredThisLaunch = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
+    @Published private(set) var audioInputDevices: [AudioInputDevice] = []
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
     let localEnglishModel: FluidAudioLocalModelManager
     let localPunjabiModel: SherpaPunjabiModelManager
+    let audioInputDeviceController = CoreAudioInputDeviceController()
     let speech = SpeechOutput()
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
@@ -217,6 +219,7 @@ final class SaysoAppModel: ObservableObject {
         }
         settings = saved
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
+        audioInputDevices = audioInputDeviceController.inputDevices()
         dictationHotKey = Self.loadDictationHotKey()
         notch = NotchPanelController()
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
@@ -264,6 +267,10 @@ final class SaysoAppModel: ObservableObject {
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         settingsStore.save(settings)
+    }
+
+    func refreshAudioInputDevices() {
+        audioInputDevices = audioInputDeviceController.inputDevices()
     }
 
     func setDictationHotKey(_ hotKey: HotKey) {
@@ -496,6 +503,7 @@ final class SaysoAppModel: ObservableObject {
                 route: settings.route,
                 handsFree: settings.handsFree,
                 handsFreeSilenceDuration: .seconds(settings.handsFreeSilenceSeconds),
+                preferredAudioInputUID: settings.preferredAudioInputUID,
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
@@ -2526,6 +2534,25 @@ private struct SaysoSettingsView: View {
                 Text("New audio stays on this Mac. Existing History audio remains until deleted.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Section("Microphone") {
+                Picker("Input", selection: $model.settings.preferredAudioInputUID) {
+                    Text("macOS default").tag(nil as AudioInputDeviceUID?)
+                    ForEach(model.audioInputDevices) { device in
+                        Text(device.displayName).tag(Optional(device.uid))
+                    }
+                }
+                Button("Refresh microphones") { model.refreshAudioInputDevices() }
+                if let selected = model.settings.preferredAudioInputUID,
+                   !model.audioInputDevices.contains(where: { $0.uid == selected }) {
+                    Text("Selected microphone is unavailable. Sayso uses the macOS default until it reconnects.")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.amber)
+                } else {
+                    Text("A selected microphone is used only while dictating, then Sayso restores your prior macOS default.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("Overlay") {
                 Picker("Presentation", selection: Binding(
