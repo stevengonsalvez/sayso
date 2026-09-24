@@ -184,6 +184,7 @@ final class SaysoAppModel: ObservableObject {
     private var activeDictationSettings: SaysoSettings?
     private var pendingVoiceMode: SaysoMode?
     private var handsFreeCycle = HandsFreeCycle()
+    private var handsFreeDestinationProcessIdentifier: pid_t?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
@@ -379,7 +380,7 @@ final class SaysoAppModel: ObservableObject {
             notch.hideAfterDelay()
             return
         }
-        requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFree)
+        requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFreeContinuous)
     }
 
     private func handleTapDictationShortcut() {
@@ -446,19 +447,27 @@ final class SaysoAppModel: ObservableObject {
 
     @discardableResult
     private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) -> Bool {
-        handsFreeCycle.disarm()
+        let isContinuousRearm = rearmHandsFree && handsFreeCycle.isArmed
+        if !isContinuousRearm { handsFreeCycle.disarm() }
         switch reserveDictationStart() {
         case .reserved:
             handsFreeCycle.start(
-                rearmRequested: rearmHandsFree,
+                rearmRequested: rearmHandsFree && settings.handsFreeContinuous,
                 handsFreeEnabled: settings.handsFree,
                 isDictationMode: settings.mode == .dictation
             )
+            if handsFreeCycle.isArmed, !isContinuousRearm {
+                handsFreeDestinationProcessIdentifier = lastExternalApplication?.processIdentifier
+            }
             Task {
-                _ = await performDictationStart(onboardingTest: onboardingTest)
+                _ = await performDictationStart(
+                    onboardingTest: onboardingTest,
+                    isContinuousRearm: isContinuousRearm
+                )
             }
             return true
         case let .rejected(_, message):
+            handsFreeCycle.disarm()
             notice = message
             return false
         }
@@ -486,7 +495,8 @@ final class SaysoAppModel: ObservableObject {
 
     private func performDictationStart(
         onboardingTest: Bool = false,
-        voiceEditCapture capture: SelectedTextEdit.Capture? = nil
+        voiceEditCapture capture: SelectedTextEdit.Capture? = nil,
+        isContinuousRearm: Bool = false
     ) async -> Bool {
         defer {
             isStartingDictation = false
@@ -499,8 +509,11 @@ final class SaysoAppModel: ObservableObject {
             forBundleIdentifier: lastExternalApplication?.bundleIdentifier
         )
         activeDictationSettings = sessionSettings
+        let targetProcessIdentifier = handsFreeCycle.isArmed
+            ? handsFreeDestinationProcessIdentifier ?? lastExternalApplication?.processIdentifier
+            : lastExternalApplication?.processIdentifier
         dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
-            ? TextOutput.captureDestination(targetProcessIdentifier: lastExternalApplication?.processIdentifier)
+            ? TextOutput.captureDestination(targetProcessIdentifier: targetProcessIdentifier)
             : nil
         let session = RecordingSession(
             language: settings.language,
@@ -576,7 +589,7 @@ final class SaysoAppModel: ObservableObject {
             return false
         }
         lastDictationStartError = nil
-        if sessionSettings.soundCues { NSSound.beep() }
+        if sessionSettings.soundCues, !isContinuousRearm { NSSound.beep() }
         updateActiveSession { $0.transition(to: .listening) }
         try? await Task.sleep(for: .milliseconds(250))
         return transcriber.phase == .listening
@@ -850,7 +863,8 @@ final class SaysoAppModel: ObservableObject {
         if handsFreeCycle.consumeDelivery(
             wasDelivered: wasDelivered,
             handsFreeEnabled: settings.handsFree,
-            isDictationMode: settings.mode == .dictation
+            isDictationMode: settings.mode == .dictation,
+            maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
         ) {
             if !requestDictationStart(onboardingTest: false, rearmHandsFree: true) {
                 notch.hideAfterDelay()
@@ -2598,6 +2612,7 @@ private struct SaysoSettingsView: View {
                     .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
                 if model.settings.handsFree {
+                    Toggle("Keep listening between phrases", isOn: $model.settings.handsFreeContinuous)
                     HStack {
                         Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
@@ -2606,8 +2621,20 @@ private struct SaysoSettingsView: View {
                         let maximumCaptureSeconds = Int(model.settings.handsFreeMaximumDurationSeconds)
                         let remainingSeconds = maximumCaptureSeconds % 60
                         let captureLabel = "\(maximumCaptureSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
-                        Text("Maximum \(captureLabel) capture")
+                        Text("Maximum \(captureLabel) phrase")
                         Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
+                    }
+                    if model.settings.handsFreeContinuous {
+                        HStack {
+                            let maximumSessionSeconds = Int(model.settings.handsFreeMaximumSessionDurationSeconds)
+                            let remainingSeconds = maximumSessionSeconds % 60
+                            let sessionLabel = "\(maximumSessionSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
+                            Text("Maximum \(sessionLabel) continuous session")
+                            Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
+                        }
+                        Text("Pins the original text target. Ends after this limit or 50 phrases.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
