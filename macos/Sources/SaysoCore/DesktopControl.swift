@@ -1084,7 +1084,7 @@ public final class AXDesktopController: @unchecked Sendable {
             ),
             isProtected: isProtected,
             elements: candidateSnapshot.candidates.filter {
-                $0.state.isTargetable || $0.state.isSelectable || $0.state.isSelectionTarget || $0.state.isPointerTarget
+                $0.state.isTargetable || $0.state.isSelectable || $0.state.isSelectionTarget
             }.map {
                 DesktopElement(
                     id: $0.id.rawValue,
@@ -1124,7 +1124,7 @@ public final class AXDesktopController: @unchecked Sendable {
         var openTargetBundleIdentifier: String?
         var openTargetWasFrontmost = false
         var openBeforeURL: URL?
-        var selectionChanged: Bool?
+        var directObservation: ActionObservation?
 
         switch step.action {
         case let .type(text, expectedFingerprint):
@@ -1216,13 +1216,33 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            selectionChanged = try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
+            let selectionChanged = try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
+            directObservation = .init(
+                snapshot: try? capture(application: targetApplication),
+                action: step.action,
+                effect: selectionChanged ? .observed : .notObserved
+            )
         case let .clickAt(elementID, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            selectionChanged = try candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
+            let activation = try candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
+            let snapshot = try? capture(application: targetApplication)
+            switch activation {
+            case let .pointer(selectionChanged):
+                directObservation = .init(
+                    snapshot: snapshot,
+                    action: step.action,
+                    effect: selectionChanged ? .observed : .notObserved
+                )
+            case let .accessibilitySelection(selectionChanged):
+                directObservation = .init(
+                    snapshot: snapshot,
+                    effect: selectionChanged ? .observed : .notObserved,
+                    result: selectionChanged ? "observed accessibility row selection" : "no observed accessibility row selection"
+                )
+            }
         case let .key(key, expectedFingerprint):
             let virtualKey = await key.resolvedVirtualKey()
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -1242,12 +1262,8 @@ public final class AXDesktopController: @unchecked Sendable {
         }
 
         let observation: ActionObservation
-        if let selectionChanged {
-            observation = .init(
-                snapshot: try? capture(application: targetApplication),
-                action: step.action,
-                effect: selectionChanged ? .observed : .notObserved
-            )
+        if let directObservation {
+            observation = directObservation
         } else {
             observation = try await observeEffect(
                 for: step.action,
@@ -1336,6 +1352,12 @@ public final class AXDesktopController: @unchecked Sendable {
             self.snapshot = snapshot
             self.effect = effect
             result = ControlOutcome.result(for: action, effect: effect)
+        }
+
+        init(snapshot: DesktopSnapshot?, effect: ControlEffect, result: String) {
+            self.snapshot = snapshot
+            self.effect = effect
+            self.result = result
         }
 
         init(snapshot: DesktopSnapshot?, open outcome: OpenNavigationOutcome) {
