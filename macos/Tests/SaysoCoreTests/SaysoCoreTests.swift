@@ -111,6 +111,18 @@ import Testing
     #expect(OnboardingReadiness.engineIsReady(
         route: .appleSpeech, language: .english, hasLocalModel: false, cloudConsentGranted: true
     ))
+    #expect(!OnboardingReadiness.engineIsReady(
+        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: false, byokConfigured: false
+    ))
+    #expect(!OnboardingReadiness.engineIsReady(
+        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: true, byokConfigured: false
+    ))
+    #expect(!OnboardingReadiness.engineIsReady(
+        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: false, byokConfigured: true
+    ))
+    #expect(OnboardingReadiness.engineIsReady(
+        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: true, byokConfigured: true
+    ))
     #expect(OnboardingReadiness.hasRequiredPermissions(
         route: .local, microphoneGranted: true, speechRecognitionGranted: false
     ))
@@ -120,6 +132,59 @@ import Testing
     #expect(OnboardingReadiness.hasRequiredPermissions(
         route: .appleSpeech, microphoneGranted: true, speechRecognitionGranted: true
     ))
+    #expect(OnboardingReadiness.hasRequiredPermissions(
+        route: .byok, microphoneGranted: true, speechRecognitionGranted: false
+    ))
+    #expect(!OnboardingReadiness.hasRequiredPermissions(
+        route: .byok, microphoneGranted: false, speechRecognitionGranted: true
+    ))
+}
+
+@Test func byokConfigurationValidationEnforcesHTTPSModelAndKey() {
+    #expect(OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "https://api.openai.com/v1", transcriptionModel: "gpt-4o-mini-transcribe", hasAPIKey: true
+    ))
+    #expect(OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "http://localhost:8080/v1", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+    #expect(OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "http://127.0.0.1:11434/v1", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "http://insecure-api.example.com/v1", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "https://api.openai.com/v1", transcriptionModel: "   ", hasAPIKey: true
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "https://api.openai.com/v1", transcriptionModel: "whisper-1", hasAPIKey: false
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "invalid-url", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+}
+
+@Test func byokKeychainSecretStoreStoresAndRemovesKeys() throws {
+    let testService = "ai.sayso.notch.test.\(UUID().uuidString)"
+    let store = KeychainSecretStore(service: testService)
+    let account = "test-byok-api-key"
+
+    defer { store.remove(named: account) }
+
+    #expect(store.secret(named: account) == nil)
+    try store.store("sk-test-secret-key-123", named: account)
+    #expect(store.secret(named: account) == "sk-test-secret-key-123")
+    store.remove(named: account)
+    #expect(store.secret(named: account) == nil)
+}
+
+@Test @MainActor func byokRouteExemptFromSpeechRecognition() {
+    let transcriber = LiveTranscriber(
+        fluidAudioModels: FluidAudioLocalModelManager(),
+        sherpaPunjabiModels: SherpaPunjabiModelManager()
+    )
+    #expect(!transcriber.requiresSpeechRecognition(language: .english, route: .byok))
+    #expect(!transcriber.requiresSpeechRecognition(language: .hindi, route: .byok))
 }
 
 @Test func lexiconCorrectionsApplyBeforeOutput() {
