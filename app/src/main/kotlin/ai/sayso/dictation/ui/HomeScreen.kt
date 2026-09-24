@@ -1679,7 +1679,7 @@ private fun LanguageRoutingDownloadDialog(
     onDownloadSelected: (List<LocalModel>) -> Unit,
 ) {
     val routingModels = remember {
-        listOfNotNull(LocalModelCatalog.byDirName("sherpa-onnx-whisper-tiny")) + LocalModelCatalog.indicModels
+        listOfNotNull(LocalModelCatalog.byDirName(LocalModelCatalog.LID_MODEL_DIR)) + LocalModelCatalog.indicModels
     }
     val selectedDirNames = remember(installedDirNames) {
         mutableStateMapOf<String, Boolean>().apply {
