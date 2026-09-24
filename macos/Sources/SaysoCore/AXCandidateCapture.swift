@@ -52,6 +52,17 @@ public enum AXCandidateCapturePolicy {
         supportsSelection && hasClickableFrame
     }
 
+    public static func pointerHitDecision(
+        reachesTarget: Bool,
+        hitsTargetDirectly: Bool,
+        descendantSupportsPress: Bool,
+        descendantSupportsFocus: Bool
+    ) -> PointerRowHitDecision {
+        guard reachesTarget else { return .covered }
+        guard !hitsTargetDirectly else { return .pointer }
+        return descendantSupportsPress || descendantSupportsFocus ? .accessibilitySelection : .pointer
+    }
+
     static func childPaths(
         from ancestry: [Int],
         childCount: Int,
@@ -63,8 +74,15 @@ public enum AXCandidateCapturePolicy {
 }
 
 public enum PointerRowActivation: Sendable {
-    case pointer(selectionChanged: Bool)
+    case pointerSelectionChanged
+    case pointerWithoutSelectionEvidence
     case accessibilitySelection(selectionChanged: Bool)
+}
+
+public enum PointerRowHitDecision: Equatable, Sendable {
+    case pointer
+    case accessibilitySelection
+    case covered
 }
 
 public final class AXCandidateCapture: @unchecked Sendable {
@@ -158,7 +176,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
     }
 
     /// Clicks only an exact, still-visible row whose centre resolves back to that row.
-    public func click(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws -> PointerRowActivation {
+    public func click(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) async throws -> PointerRowActivation {
         guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
         let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
         guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
@@ -175,14 +193,15 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
 
         let systemWide = AXUIElementCreateSystemWide()
-        let hit = try hitTest(target: target.element, in: systemWide, at: centre)
-        guard hit.matchesTarget else {
+        switch try hitDecision(target: target.element, in: systemWide, at: centre) {
+        case .covered:
             throw SaysoError.invalidAction("Visible row is covered")
-        }
-        guard hit.hitsTargetDirectly else {
+        case .accessibilitySelection:
             return .accessibilitySelection(
                 selectionChanged: try select(candidateID: candidateID, application: targetApplication)
             )
+        case .pointer:
+            break
         }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
@@ -191,12 +210,12 @@ public final class AXCandidateCapture: @unchecked Sendable {
             if let originalPointer { CGWarpMouseCursorPosition(originalPointer) }
         }
         for _ in 0..<5 {
-            usleep(50_000)
+            try await Task.sleep(for: .milliseconds(50))
             if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
-                return .pointer(selectionChanged: true)
+                return .pointerSelectionChanged
             }
         }
-        return .pointer(selectionChanged: false)
+        return .pointerWithoutSelectionEvidence
     }
 
     private struct CapturedCandidate {
@@ -241,7 +260,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 && attributeIsSettable(kAXSelectedAttribute as CFString, on: node.element)
             let supportsPointerClick = AXCandidateCapturePolicy.supportsPointerClick(
                 supportsSelection: supportsSelection,
-                hasClickableFrame: clickableCentre(of: node.element) != nil
+                hasClickableFrame: hasVisibleClickableCentre(of: node.element, within: root)
             )
             let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: node.element, defaultValue: true)
 
@@ -344,32 +363,48 @@ public final class AXCandidateCapture: @unchecked Sendable {
     }
 
     private func clickableCentre(of element: AXUIElement) -> CGPoint? {
-        guard let position = pointAttribute(kAXPositionAttribute as CFString, from: element),
-              let size = sizeAttribute(kAXSizeAttribute as CFString, from: element),
-              size.width > 0, size.height > 0 else { return nil }
-        return CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+        guard let frame = frame(of: element) else { return nil }
+        return CGPoint(x: frame.midX, y: frame.midY)
     }
 
-    private func hitTest(target: AXUIElement, in root: AXUIElement, at point: CGPoint) throws -> (matchesTarget: Bool, hitsTargetDirectly: Bool) {
+    private func hasVisibleClickableCentre(of element: AXUIElement, within root: AXUIElement) -> Bool {
+        guard let centre = clickableCentre(of: element) else { return false }
+        var ancestor: AXUIElement? = element
+        for _ in 0..<12 {
+            guard let current = ancestor else { return false }
+            if let frame = frame(of: current), !frame.contains(centre) { return false }
+            if CFEqual(current, root) { return true }
+            ancestor = copyElement(kAXParentAttribute as CFString, from: current)
+        }
+        return false
+    }
+
+    private func hitDecision(target: AXUIElement, in root: AXUIElement, at point: CGPoint) throws -> PointerRowHitDecision {
         var element: AXUIElement?
         guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &element) == .success,
               let deepest = element else {
             throw SaysoError.invalidAction("Visible row no longer accepts clicks")
         }
-        guard !CFEqual(deepest, target) else { return (true, true) }
+        guard !CFEqual(deepest, target) else { return .pointer }
 
         var ancestor = deepest
-        for _ in 0..<4 {
+        for _ in 0..<12 {
             guard let parent = copyElement(kAXParentAttribute as CFString, from: ancestor) else { break }
-            if CFEqual(parent, target) { return (true, false) }
+            if CFEqual(parent, target) {
+                return AXCandidateCapturePolicy.pointerHitDecision(
+                    reachesTarget: true,
+                    hitsTargetDirectly: false,
+                    descendantSupportsPress: supportsAction(kAXPressAction as String, on: deepest),
+                    descendantSupportsFocus: attributeIsSettable(kAXFocusedAttribute as CFString, on: deepest)
+                )
+            }
             ancestor = parent
         }
-        return (false, false)
+        return .covered
     }
 
     private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) throws -> CGPoint? {
-        let finalHit = try hitTest(target: target, in: systemWide, at: point)
-        guard finalHit.matchesTarget, finalHit.hitsTargetDirectly else {
+        guard try hitDecision(target: target, in: systemWide, at: point) == .pointer else {
             throw SaysoError.invalidAction("Visible row changed before click")
         }
         let originalPointer = CGEvent(source: nil)?.location
@@ -401,5 +436,12 @@ public final class AXCandidateCapture: @unchecked Sendable {
               CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         var size = CGSize.zero
         return AXValueGetValue(value as! AXValue, .cgSize, &size) ? size : nil
+    }
+
+    private func frame(of element: AXUIElement) -> CGRect? {
+        guard let position = pointAttribute(kAXPositionAttribute as CFString, from: element),
+              let size = sizeAttribute(kAXSizeAttribute as CFString, from: element),
+              size.width > 0, size.height > 0 else { return nil }
+        return CGRect(origin: position, size: size)
     }
 }
