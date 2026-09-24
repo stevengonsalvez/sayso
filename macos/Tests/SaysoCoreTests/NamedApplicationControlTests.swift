@@ -46,6 +46,11 @@ private func installedApplication(
         snapshot: namedApplicationSnapshot,
         installedApplications: [safari]
     )
+    let quit = try ControlPlanner.plan(
+        command: "quit Safari",
+        snapshot: namedApplicationSnapshot,
+        installedApplications: [safari]
+    )
     let spokenColon = try ControlPlanner.plan(
         command: "open Safari:",
         snapshot: namedApplicationSnapshot,
@@ -61,9 +66,11 @@ private func installedApplication(
     #expect(spokenPunctuation.action == expected)
     #expect(appFilename.action == expected)
     #expect(spokenColon.action == expected)
+    #expect(quit.action == .quit(bundleIdentifier: "com.apple.Safari"))
     #expect(open.reason == "Launch Safari at /Applications/Safari.app")
     #expect(ControlPolicy.requiresConfirmation(open))
     #expect(!ControlPolicy.canAutoRun(open))
+    #expect(ControlPolicy.requiresConfirmation(quit))
 }
 
 @Test func namedApplicationResolverChoosesDuplicateBundleDeterministically() {
@@ -119,7 +126,9 @@ private func installedApplication(
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari:"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "open Safari"))
     #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "switch to Safari"))
+    #expect(ControlPlanner.requiresInstalledApplicationCatalog(for: "quit Safari"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "activate com.apple.Safari"))
+    #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "quit com.apple.Safari"))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open"))
 }
 
