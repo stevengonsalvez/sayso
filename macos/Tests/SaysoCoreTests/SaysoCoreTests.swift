@@ -193,6 +193,25 @@ import Testing
     }
 }
 
+@Test func routeChangeResetsConsentOnlyForBYOK() {
+    var settings = SaysoSettings()
+    settings.cloudConsentGranted = true
+
+    // Switching between non-BYOK routes preserves consent for other cloud features
+    settings.route = .local
+    settings.setRoute(.appleSpeech)
+    #expect(settings.cloudConsentGranted == true)
+
+    // Switching to BYOK resets consent
+    settings.setRoute(.byok)
+    #expect(settings.cloudConsentGranted == false)
+
+    // Grant consent for BYOK, switching away resets consent
+    settings.cloudConsentGranted = true
+    settings.setRoute(.local)
+    #expect(settings.cloudConsentGranted == false)
+}
+
 @Test @MainActor func byokRouteExemptFromSpeechRecognition() {
     let transcriber = LiveTranscriber(
         fluidAudioModels: FluidAudioLocalModelManager(),
