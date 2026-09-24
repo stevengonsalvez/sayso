@@ -120,3 +120,34 @@ import Testing
     #expect(ControlPolicy.requiresConfirmation(step))
     #expect(!ControlPolicy.canAutoRun(step))
 }
+
+@Test func pointerRowsNeverResolveAmbiguousTitles() {
+    let duplicatePointerRows = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Finder",
+        windowTitle: "Downloads",
+        focusedRole: "AXOutline",
+        focusedValue: "",
+        isProtected: false,
+        elements: [
+            .init(id: "first-row", role: "AXRow", title: "Recents", supportsPress: false, supportsSelection: true, supportsPointerClick: true),
+            .init(id: "second-row", role: "AXRow", title: "Recents", supportsPress: false, supportsSelection: true, supportsPointerClick: true),
+        ]
+    )
+    let ambiguousPressTargets = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Finder",
+        windowTitle: "Downloads",
+        focusedRole: "AXOutline",
+        focusedValue: "",
+        isProtected: false,
+        elements: [
+            .init(id: "first-button", role: "AXButton", title: "Downloads"),
+            .init(id: "second-button", role: "AXButton", title: "Downloads"),
+            .init(id: "downloads-row", role: "AXRow", title: "Downloads", supportsPress: false, supportsSelection: true, supportsPointerClick: true),
+        ]
+    )
+
+    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "click Recents", snapshot: duplicatePointerRows) }
+    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "click Downloads", snapshot: ambiguousPressTargets) }
+}
