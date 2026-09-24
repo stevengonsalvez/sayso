@@ -25,8 +25,10 @@ class WakeWordDetector(
     private var spotter: KeywordSpotter? = null
     private var stream: OnlineStream? = null
 
+    private val lock = Any()
+
     /** Initializes the spotter and opens an active recognition stream. */
-    fun start(): Boolean {
+    fun start(): Boolean = synchronized(lock) {
         if (spotter != null) return true
         return try {
             val transducerConfig = OnlineTransducerModelConfig(
@@ -64,7 +66,7 @@ class WakeWordDetector(
     }
 
     /** Feeds 16 kHz audio samples into the keyword spotter stream. */
-    fun acceptWaveform(samples: FloatArray) {
+    fun acceptWaveform(samples: FloatArray) = synchronized(lock) {
         val s = spotter ?: return
         val str = stream ?: return
         try {
@@ -88,7 +90,7 @@ class WakeWordDetector(
     }
 
     /** Releases native stream and model resources. */
-    fun release() {
+    fun release() = synchronized(lock) {
         try {
             stream?.release()
         } catch (_: Throwable) {}
@@ -105,7 +107,7 @@ class WakeWordDetector(
         const val SAMPLE_RATE = 16_000
 
         fun matchesWakePhrase(detectedKeyword: String, allowedPhrase: String): Boolean {
-            val clean = detectedKeyword.lowercase()
+            val clean = detectedKeyword.lowercase().replace(" ", "").replace("_", "").replace("@", "")
             return when (allowedPhrase) {
                 SettingsStore.WAKE_PHRASE_HEY -> clean.contains("hey")
                 SettingsStore.WAKE_PHRASE_SAYSO -> clean.contains("sayso") && !clean.contains("hey")
