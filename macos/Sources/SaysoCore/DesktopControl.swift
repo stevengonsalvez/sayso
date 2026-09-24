@@ -452,6 +452,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
 
 public enum ControlEffect: String, Codable, Equatable, Sendable {
     case observed
+    case alreadySatisfied
     case notObserved
     case unknown
 }
@@ -550,6 +551,14 @@ public enum ControlOutcome {
 
     public static func result(for action: DesktopAction, effect: ControlEffect) -> String {
         guard effect != .unknown else { return "unknown effect" }
+        if effect == .alreadySatisfied {
+            switch action {
+            case .select, .clickAt:
+                return "row already selected"
+            default:
+                return "target already satisfied"
+            }
+        }
         let observed = effect == .observed
         switch action {
         case .type:
@@ -1234,8 +1243,8 @@ public final class AXDesktopController: @unchecked Sendable {
             executionMethod = .accessibilitySelection
             directObservation = .init(
                 snapshot: try? capture(application: targetApplication),
-                effect: .observed,
-                result: selectionChanged ? "observed row selection" : "row already selected"
+                action: step.action,
+                effect: selectionChanged ? .observed : .alreadySatisfied
             )
         case let .clickAt(elementID, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -1258,8 +1267,8 @@ public final class AXDesktopController: @unchecked Sendable {
                 executionMethod = .accessibilitySelection
                 directObservation = .init(
                     snapshot: snapshot,
-                    effect: .observed,
-                    result: selectionChanged ? "observed accessibility row selection" : "row already selected"
+                    action: step.action,
+                    effect: selectionChanged ? .observed : .alreadySatisfied
                 )
             }
         case let .key(key, expectedFingerprint):
