@@ -523,6 +523,7 @@ final class SaysoAppModel: ObservableObject {
             return false
         }
         lastDictationStartError = nil
+        if sessionSettings.soundCues { NSSound.beep() }
         updateActiveSession { $0.transition(to: .listening) }
         try? await Task.sleep(for: .milliseconds(250))
         return transcriber.phase == .listening
@@ -778,6 +779,7 @@ final class SaysoAppModel: ObservableObject {
         }
         await sessions.upsert(session)
         transcriptProcessingNotice = nil
+        if pendingDelivery.settings.soundCues { NSSound.beep() }
         if activeRecordingSession == nil { notch.hideAfterDelay() }
     }
 
@@ -2519,6 +2521,7 @@ private struct SaysoSettingsView: View {
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
                     }
                 }
+                Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
                 Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
                 Text("New audio stays on this Mac. Existing History audio remains until deleted.")
                     .font(.caption)
