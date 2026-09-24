@@ -21,6 +21,12 @@ import Testing
     #expect(rearmed)
     #expect(cycle.isArmed)
 
+    cycle.start(
+        rearmRequested: true,
+        handsFreeEnabled: true,
+        isDictationMode: true,
+        now: startedAt.addingTimeInterval(1)
+    )
     let rearmedAgain = cycle.consumeDelivery(
         wasDelivered: true,
         handsFreeEnabled: true,
