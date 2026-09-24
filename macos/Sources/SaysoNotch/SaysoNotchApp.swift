@@ -1200,14 +1200,15 @@ final class SaysoAppModel: ObservableObject {
 
     @discardableResult
     func saveBYOKKey(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        guard let baseURL = URL(string: settings.byokBaseURL), ProviderEndpointPolicy.allows(baseURL) else {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else { return false }
+        let trimmedURL = settings.byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: trimmedURL), ProviderEndpointPolicy.allows(baseURL) else {
             showPersistentNotice("BYOK provider must use HTTPS, except localhost HTTP.")
             return false
         }
         do {
-            try secrets.store(trimmed, named: "byok-api-key")
+            try secrets.store(trimmedKey, named: "byok-api-key")
             hasBYOKKey = true
             notice = "BYOK key stored in Keychain."
             return true
@@ -1218,7 +1219,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     var isBYOKBaseURLValid: Bool {
-        guard let baseURL = URL(string: settings.byokBaseURL) else { return false }
+        let trimmedURL = settings.byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let baseURL = URL(string: trimmedURL) else { return false }
         return ProviderEndpointPolicy.allows(baseURL)
     }
 
@@ -2723,7 +2725,7 @@ private struct ModelsWorkspace: View {
                 TextField("Translation model", text: $model.settings.byokTranslationModel)
                 TextField("Voice edit model", text: $model.settings.byokRewriteModel)
                 SecureField("API key", text: $apiKey)
-                Button("Store key") { model.saveBYOKKey(apiKey); apiKey = "" }
+                Button("Store key") { if model.saveBYOKKey(apiKey) { apiKey = "" } }
             }
         }
         .formStyle(.grouped)
@@ -3136,7 +3138,7 @@ private struct CloudProviderSettings: View {
             TextField("Translation model", text: $model.settings.byokTranslationModel)
             TextField("Voice edit model", text: $model.settings.byokRewriteModel)
             SecureField("API key", text: $apiKey)
-            Button("Store key") { model.saveBYOKKey(apiKey); apiKey = "" }
+            Button("Store key") { if model.saveBYOKKey(apiKey) { apiKey = "" } }
         }
     }
 }
@@ -3239,11 +3241,6 @@ private struct OnboardingWizard: View {
                             ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.segmented)
-                        .onChange(of: model.settings.route) { _, route in
-                            model.clearOnboardingTestResult()
-                            guard route == .local, model.settings.language == .automatic else { return }
-                            model.settings.language = .english
-                        }
                         if model.settings.route == .appleSpeech {
                             Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
                         }
@@ -3370,8 +3367,8 @@ private struct OnboardingWizard: View {
                 case .permissions:
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Grant only what you use.").font(.title2.bold())
-                        Text(model.settings.route == .appleSpeech
-                            ? "Microphone powers dictation. Speech Recognition is only needed for Apple Speech. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey."
+                        Text(requiresSpeechRecognition
+                            ? "Microphone powers dictation. Speech Recognition is required for this setup. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey."
                             : "Microphone powers dictation. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
                             .foregroundStyle(.secondary)
                         ForEach(displayedPermissions) { permission in
@@ -3452,8 +3449,15 @@ private struct OnboardingWizard: View {
         dismiss()
     }
 
+    private var requiresSpeechRecognition: Bool {
+        model.transcriber.requiresSpeechRecognition(
+            language: model.settings.language,
+            route: model.settings.route
+        )
+    }
+
     private var displayedPermissions: [PermissionKind] {
-        if model.settings.route == .appleSpeech {
+        if requiresSpeechRecognition {
             return PermissionKind.allCases
         }
         return PermissionKind.allCases.filter { $0 != .speechRecognition }
