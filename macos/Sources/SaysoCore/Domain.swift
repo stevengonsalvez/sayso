@@ -174,6 +174,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeSilenceSeconds = 1.2
+    public var preferredAudioInputUID: AudioInputDeviceUID?
     public var saveSessionAudio = false
     public var soundCues = true
     public var onboardingCompleted = false
@@ -202,7 +203,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
-        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, saveSessionAudio, soundCues, onboardingCompleted
+        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
@@ -232,6 +233,11 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         handsFreeSilenceSeconds = min(
             max(decoded(Double.self, .handsFreeSilenceSeconds, fallback: handsFreeSilenceSeconds), 0.5),
             5
+        )
+        preferredAudioInputUID = decoded(
+            AudioInputDeviceUID?.self,
+            .preferredAudioInputUID,
+            fallback: preferredAudioInputUID
         )
         saveSessionAudio = decoded(Bool.self, .saveSessionAudio, fallback: saveSessionAudio)
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
