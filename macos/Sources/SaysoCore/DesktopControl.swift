@@ -56,9 +56,9 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     }
 
     public var fingerprint: String {
-        // Capability flags bind a plan to the visible interaction method, not just its title.
+        // Transient pointer visibility is rechecked immediately before an HID click.
         let visibleControls = elements.map {
-            [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description, $0.supportsPointerClick.description]
+            [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description]
                 .joined(separator: "\u{1F}")
         }
             .joined(separator: "\u{1E}")
