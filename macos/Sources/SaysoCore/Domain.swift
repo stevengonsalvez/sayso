@@ -128,9 +128,11 @@ public enum OnboardingReadiness {
     public static func hasRequiredPermissions(
         route: ProviderRoute,
         microphoneGranted: Bool,
-        speechRecognitionGranted: Bool
+        speechRecognitionGranted: Bool,
+        requiresSpeechRecognition: Bool? = nil
     ) -> Bool {
-        microphoneGranted && (route != .appleSpeech || speechRecognitionGranted)
+        let needsSpeech = requiresSpeechRecognition ?? (route == .appleSpeech)
+        return microphoneGranted && (!needsSpeech || speechRecognitionGranted)
     }
 
     public static func isBYOKConfigured(
@@ -225,6 +227,13 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
+    public var normalizedBYOKBaseURL: URL? {
+        let trimmed = byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), ProviderEndpointPolicy.allows(url) else {
+            return nil
+        }
+        return url
+    }
     public var cleanupEnabled = false
     public var cloudCleanupEnabled = false
     public var byokCleanupModel = "gpt-4.1-mini"
