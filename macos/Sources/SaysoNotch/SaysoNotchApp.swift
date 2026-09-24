@@ -2556,8 +2556,10 @@ private struct SaysoSettingsView: View {
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
                     }
                     HStack {
-                        Text("Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds / 60)) minute capture")
-                        Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 60 ... 3_600, step: 60)
+                        Text(model.settings.handsFreeMaximumDurationSeconds < 60
+                            ? "Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds)) second capture"
+                            : "Maximum \(Int(model.settings.handsFreeMaximumDurationSeconds / 60)) minute capture")
+                        Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
                     }
                 }
                 Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
