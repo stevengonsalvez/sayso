@@ -1,9 +1,21 @@
-public enum HandsFreeRearmPolicy {
-    public static func shouldRearm(
-        isArmed: Bool,
+public struct HandsFreeCycle: Equatable, Sendable {
+    public private(set) var isArmed = false
+
+    public init() {}
+
+    public mutating func start(
+        rearmRequested: Bool,
         handsFreeEnabled: Bool,
         isDictationMode: Bool
-    ) -> Bool {
+    ) {
+        isArmed = rearmRequested && handsFreeEnabled && isDictationMode
+    }
+
+    public mutating func disarm() {
+        isArmed = false
+    }
+
+    public func shouldRearm(handsFreeEnabled: Bool, isDictationMode: Bool) -> Bool {
         isArmed && handsFreeEnabled && isDictationMode
     }
 }
