@@ -37,11 +37,15 @@ import Testing
     }
 
     let homeStep = try ControlPlanner.plan(command: "open folder ~/", snapshot: snapshot)
-    #expect(homeStep.action == .openFolder(url: FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath()))
+    if case let .openFolder(url) = homeStep.action {
+        #expect(url.path == FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path)
+    } else {
+        Issue.record("Expected home folder action")
+    }
 
     #expect(throws: SaysoError.invalidAction("Open folder requires a path.")) { try ControlPlanner.plan(command: "open folder", snapshot: snapshot) }
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open folder Documents", snapshot: snapshot) }
     #expect(throws: SaysoError.invalidAction("No folder exists at '/does/not/exist'.")) { try ControlPlanner.plan(command: "open folder /does/not/exist", snapshot: snapshot) }
-    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open folder \(plainFile.path)", snapshot: snapshot) }
+    #expect(throws: SaysoError.invalidAction("No folder exists at '\(plainFile.path)'.")) { try ControlPlanner.plan(command: "open folder \(plainFile.path)", snapshot: snapshot) }
     #expect(throws: SaysoError.invalidAction("Open folder does not launch app or package bundles.")) { try ControlPlanner.plan(command: "open folder \(appBundle.path)", snapshot: snapshot) }
 }
