@@ -87,6 +87,7 @@ public enum PointerRowHitDecision: Equatable, Sendable {
 
 public final class AXCandidateCapture: @unchecked Sendable {
     public let limits: AXCandidateCaptureLimits
+    private static let maximumPointerAncestors = 32
 
     public init(limits: AXCandidateCaptureLimits = .init()) {
         self.limits = limits
@@ -258,9 +259,10 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let supportsFocus = attributeIsSettable(kAXFocusedAttribute as CFString, on: node.element)
             let supportsSelection = [kAXRowRole as String, kAXCellRole as String].contains(role)
                 && attributeIsSettable(kAXSelectedAttribute as CFString, on: node.element)
+            let hasClickableFrame = supportsSelection && hasVisibleClickableCentre(of: node.element, within: root)
             let supportsPointerClick = AXCandidateCapturePolicy.supportsPointerClick(
                 supportsSelection: supportsSelection,
-                hasClickableFrame: hasVisibleClickableCentre(of: node.element, within: root)
+                hasClickableFrame: hasClickableFrame
             )
             let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: node.element, defaultValue: true)
 
@@ -370,7 +372,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
     private func hasVisibleClickableCentre(of element: AXUIElement, within root: AXUIElement) -> Bool {
         guard let centre = clickableCentre(of: element) else { return false }
         var ancestor: AXUIElement? = element
-        for _ in 0..<12 {
+        for _ in 0..<Self.maximumPointerAncestors {
             guard let current = ancestor else { return false }
             if let frame = frame(of: current), !frame.contains(centre) { return false }
             if CFEqual(current, root) { return true }
@@ -388,14 +390,18 @@ public final class AXCandidateCapture: @unchecked Sendable {
         guard !CFEqual(deepest, target) else { return .pointer }
 
         var ancestor = deepest
-        for _ in 0..<12 {
+        var hasInteractiveDescendant = false
+        for _ in 0..<Self.maximumPointerAncestors {
+            hasInteractiveDescendant = hasInteractiveDescendant
+                || supportsAction(kAXPressAction as String, on: ancestor)
+                || attributeIsSettable(kAXFocusedAttribute as CFString, on: ancestor)
             guard let parent = copyElement(kAXParentAttribute as CFString, from: ancestor) else { break }
             if CFEqual(parent, target) {
                 return AXCandidateCapturePolicy.pointerHitDecision(
                     reachesTarget: true,
                     hitsTargetDirectly: false,
-                    descendantSupportsPress: supportsAction(kAXPressAction as String, on: deepest),
-                    descendantSupportsFocus: attributeIsSettable(kAXFocusedAttribute as CFString, on: deepest)
+                    descendantSupportsPress: hasInteractiveDescendant,
+                    descendantSupportsFocus: false
                 )
             }
             ancestor = parent
