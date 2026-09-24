@@ -106,6 +106,10 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
         get() = prefs.getString(KEY_WAKE_WORD_PHRASE, SettingsStore.WAKE_PHRASE_BOTH) ?: SettingsStore.WAKE_PHRASE_BOTH
         set(value) = putString(KEY_WAKE_WORD_PHRASE, value)
 
+    override var wakeWordSensitivity: String
+        get() = prefs.getString(KEY_WAKE_WORD_SENSITIVITY, SettingsStore.WAKE_SENSITIVITY_DEFAULT) ?: SettingsStore.WAKE_SENSITIVITY_DEFAULT
+        set(value) = putString(KEY_WAKE_WORD_SENSITIVITY, value)
+
     override var appContextAwarenessEnabled: Boolean
         get() = prefs.getBoolean(KEY_APP_CONTEXT_AWARENESS, true)
         set(value) = prefs.edit().putBoolean(KEY_APP_CONTEXT_AWARENESS, value).apply()
@@ -204,6 +208,9 @@ class Settings(private val prefs: SharedPreferences) : SettingsStore {
 
         /** Which wake phrase triggers detection: "both", "hey_sayso", or "sayso". */
         const val KEY_WAKE_WORD_PHRASE = "wake_word_phrase"
+
+        /** Detection sensitivity level: "high", "medium", or "low". */
+        const val KEY_WAKE_WORD_SENSITIVITY = "wake_word_sensitivity"
 
         /** Whether the active target application context alters dictation style. */
         const val KEY_APP_CONTEXT_AWARENESS = "app_context_awareness_enabled"
