@@ -628,8 +628,7 @@ public enum ControlPlanner {
     public static func plan(
         command: String,
         snapshot: DesktopSnapshot,
-        installedApplications: [InstalledDesktopApplication]? = nil,
-        fileManager: FileManager = .default
+        installedApplications: [InstalledDesktopApplication]? = nil
     ) throws -> ControlPlanStep {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
@@ -723,10 +722,12 @@ public enum ControlPlanner {
             guard !target.isEmpty else {
                 throw SaysoError.invalidAction("Say an http address or exact installed application name after 'open'.")
             }
+            if target.lowercased() == "folder" {
+                throw SaysoError.invalidAction("Open folder requires a path.")
+            }
             if target.lowercased().hasPrefix("folder ") {
                 return try folderOpenPlan(
-                    path: String(target.dropFirst(7)).trimmingCharacters(in: .whitespaces),
-                    fileManager: fileManager
+                    path: String(target.dropFirst(7)).trimmingCharacters(in: .whitespaces)
                 )
             }
             if let url = httpURL(target) {
@@ -844,7 +845,7 @@ public enum ControlPlanner {
         }
     }
 
-    private static func folderOpenPlan(path: String, fileManager: FileManager) throws -> ControlPlanStep {
+    private static func folderOpenPlan(path: String) throws -> ControlPlanStep {
         guard path.hasPrefix("/") || path.hasPrefix("~") else {
             throw SaysoError.invalidAction("Open folder requires an absolute path or ~/ path.")
         }
@@ -852,8 +853,11 @@ public enum ControlPlanner {
             .standardizedFileURL
             .resolvingSymlinksInPath()
         var isDirectory = ObjCBool(false)
-        guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw SaysoError.invalidAction("No folder exists at '(path)'.")
+        guard FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw SaysoError.invalidAction("No folder exists at '\(path)'.")
+        }
+        guard (try? folderURL.resourceValues(forKeys: [.isPackageKey]).isPackage) != true else {
+            throw SaysoError.invalidAction("Open folder does not launch app or package bundles.")
         }
         return .init(action: .openFolder(url: folderURL), confidence: 0.85, reason: "Explicit folder path")
     }
@@ -1018,6 +1022,7 @@ public final class AXDesktopController: @unchecked Sendable {
             guard folderURL.isFileURL,
                   FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
                   isDirectory.boolValue,
+                  (try? folderURL.resourceValues(forKeys: [.isPackageKey]).isPackage) != true,
                   NSWorkspace.shared.open(folderURL) else {
                 throw SaysoError.unavailable("Open folder")
             }
