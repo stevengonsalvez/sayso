@@ -40,11 +40,7 @@ class WakeWordDetector(
                 numThreads = 1,
                 modelType = "zipformer2",
             )
-            val (score, threshold, paths) = when (sensitivity) {
-                SettingsStore.WAKE_SENSITIVITY_HIGH -> Triple(3.0f, 0.08f, 16)
-                SettingsStore.WAKE_SENSITIVITY_LOW -> Triple(2.2f, 0.16f, 8)
-                else -> Triple(2.8f, 0.10f, 12)
-            }
+            val (score, threshold, paths) = sensitivityParams(sensitivity)
             val config = KeywordSpotterConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                 modelConfig = modelConfig,
@@ -115,6 +111,12 @@ class WakeWordDetector(
                 SettingsStore.WAKE_PHRASE_SAYSO -> clean.contains("sayso") && !clean.contains("hey")
                 else -> true
             }
+        }
+
+        fun sensitivityParams(sensitivity: String): Triple<Float, Float, Int> = when (sensitivity) {
+            SettingsStore.WAKE_SENSITIVITY_HIGH -> Triple(3.0f, 0.08f, 16)
+            SettingsStore.WAKE_SENSITIVITY_LOW -> Triple(2.2f, 0.16f, 8)
+            else -> Triple(2.8f, 0.10f, 12)
         }
     }
 }
