@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import SaysoCore
 
@@ -16,6 +17,20 @@ import Testing
     #expect(step.action == .key(.goForward, expectedFingerprint: snapshot.fingerprint))
     #expect(step.reason == "Go forward")
     #expect(ControlPolicy.requiresConfirmation(step))
-    #expect(DesktopKey.goForward.virtualKey == 30)
+    #expect(DesktopKey.goForward.commandCharacter == "]")
     #expect(DesktopKey.goForward.modifierFlags == .maskCommand)
+}
+
+@Test func commandKeysUseCharactersInsteadOfPhysicalKeyPositions() {
+    let azerty: [CGKeyCode: String] = [
+        6: "w",
+        13: "z",
+        33: "]",
+        30: "[",
+    ]
+
+    #expect(DesktopKey.keyCode(producing: "z") { azerty[$0] } == 13)
+    #expect(DesktopKey.keyCode(producing: "w") { azerty[$0] } == 6)
+    #expect(DesktopKey.keyCode(producing: "[") { azerty[$0] } == 30)
+    #expect(DesktopKey.keyCode(producing: "]") { azerty[$0] } == 33)
 }
