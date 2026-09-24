@@ -23,6 +23,7 @@ import ai.sayso.dictation.R
 import ai.sayso.dictation.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -40,6 +41,7 @@ class WakeWordService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var detector: WakeWordDetector? = null
     private var audioRecord: AudioRecord? = null
+    private var audioJob: Job? = null
     private var isListening = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,7 +95,7 @@ class WakeWordService : Service() {
         if (isListening) return
         isListening = true
 
-        scope.launch(Dispatchers.Default) {
+        audioJob = scope.launch(Dispatchers.Default) {
             val settings = ai.sayso.dictation.AppGraph.settings
             val phrase = settings.wakeWordPhrase
             val sensitivity = settings.wakeWordSensitivity
@@ -126,6 +128,41 @@ class WakeWordService : Service() {
         }
     }
 
+    fun reloadDetector() {
+        if (!isListening) return
+        scope.launch(Dispatchers.Default) {
+            val settings = ai.sayso.dictation.AppGraph.settings
+            val phrase = settings.wakeWordPhrase
+            val sensitivity = settings.wakeWordSensitivity
+            val newDetector = WakeWordDetector(this@WakeWordService, phrase, sensitivity) { keyword ->
+                Log.i(TAG, "Wake word trigger: $keyword")
+                triggerWakeWordFeedback()
+                scope.launch(Dispatchers.Main) {
+                    val service = DictationService.instance
+                    if (service != null) {
+                        runCatching { audioRecord?.stop() }
+                        service.startRecordingFromWakeWord()
+                    } else {
+                        Toast.makeText(
+                            this@WakeWordService,
+                            R.string.wake_word_accessibility_not_enabled,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+            if (newDetector.start()) {
+                val oldDetector = detector
+                detector = newDetector
+                oldDetector?.release()
+                Log.i(TAG, "Reloaded WakeWordDetector in-process with sensitivity: $sensitivity")
+            } else {
+                newDetector.release()
+                Log.e(TAG, "Failed to reload WakeWordDetector")
+            }
+        }
+    }
+
     private fun triggerWakeWordFeedback() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -148,6 +185,8 @@ class WakeWordService : Service() {
 
     private fun stopListening() {
         isListening = false
+        audioJob?.cancel()
+        audioJob = null
         runCatching {
             audioRecord?.stop()
             audioRecord?.release()
@@ -217,13 +256,6 @@ class WakeWordService : Service() {
         val shortBuffer = ShortArray(chunkSize)
         val floatBuffer = FloatArray(chunkSize)
 
-        val sensitivity = ai.sayso.dictation.AppGraph.settings.wakeWordSensitivity
-        val gain = when (sensitivity) {
-            ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_HIGH -> 1.5f
-            ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_LOW -> 0.9f
-            else -> 1.2f
-        }
-
         while (scope.isActive && isListening) {
             // While DictationService is recording or busy, pause wake-word ingestion to avoid mic contention
             if (DictationService.isBusyOrRecording()) {
@@ -234,6 +266,13 @@ class WakeWordService : Service() {
                 continue
             } else if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 try { record.startRecording() } catch (_: Throwable) {}
+            }
+
+            val sensitivity = ai.sayso.dictation.AppGraph.settings.wakeWordSensitivity
+            val gain = when (sensitivity) {
+                ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_HIGH -> 1.5f
+                ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_LOW -> 0.9f
+                else -> 1.2f
             }
 
             val read = record.read(shortBuffer, 0, shortBuffer.size)
@@ -332,8 +371,10 @@ class WakeWordService : Service() {
         }
 
         fun restartWithSettings(context: Context) {
-            if (instance != null) {
-                stop(context)
+            val s = instance
+            if (s != null) {
+                s.reloadDetector()
+            } else {
                 start(context)
             }
         }
