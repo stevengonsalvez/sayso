@@ -143,7 +143,7 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     #expect(archive.finish() == nil)
 }
 
-@Test func sessionAudioArchiveSweepKeepsOnlyReferencedRecordings() throws {
+@Test func sessionAudioArchiveSweepKeepsOwnedRecordingsOnly() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
@@ -156,9 +156,9 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
     let staleArchive = try SessionAudioArchive(directory: directory, inputFormat: format)
     staleArchive.append(buffer)
     let staleURL = try #require(staleArchive.finish())
-    let historicalCAF = directory.appendingPathComponent("Recording-legacy.caf")
+    let foreignCAF = directory.appendingPathComponent("Recording-legacy.caf")
     _ = try AVAudioFile(
-        forWriting: historicalCAF,
+        forWriting: foreignCAF,
         settings: format.settings,
         commonFormat: format.commonFormat,
         interleaved: format.isInterleaved
@@ -171,7 +171,7 @@ private final class HistoryRemovalFailingFileManager: FileManager, @unchecked Se
 
     #expect(FileManager.default.fileExists(atPath: retainedURL.path))
     #expect(!FileManager.default.fileExists(atPath: staleURL.path))
-    #expect(!FileManager.default.fileExists(atPath: historicalCAF.path))
+    #expect(FileManager.default.fileExists(atPath: foreignCAF.path))
 }
 
 @Test func sessionAudioArchiveSweepRespectsOlderThanCutoff() throws {
