@@ -491,6 +491,7 @@ private func openOutcome(
 
 @Test func controlSessionStepResultComesFromTypedEffect() {
     #expect(ControlSessionStepResult(ControlEffect.observed) == .effectObserved)
+    #expect(ControlSessionStepResult(ControlEffect.alreadySatisfied) == .effectObserved)
     #expect(ControlSessionStepResult(ControlEffect.notObserved) == .noEffectObserved)
     #expect(ControlSessionStepResult(ControlEffect.unknown) == .effectUnknown)
 }
