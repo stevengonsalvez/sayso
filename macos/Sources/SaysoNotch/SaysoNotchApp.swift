@@ -2564,8 +2564,8 @@ private struct LanguageWorkspace: View {
                 Picker("Output language", selection: $model.settings.outputLanguage) {
                     ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
                 }
-                if model.settings.translationEnabled && !model.settings.cloudConsentGranted {
-                    Label("Translation stays off until cloud consent and provider setup.", systemImage: "lock.fill")
+                if model.settings.translationEnabled && !model.settings.byokConsentGranted {
+                    Label("Translation stays off until BYOK cloud consent and provider setup.", systemImage: "lock.fill")
                         .font(.caption)
                         .foregroundStyle(SaysoPalette.amber)
                 }
@@ -2959,6 +2959,10 @@ private struct SaysoSettingsView: View {
                         TextField("Cleanup model override", text: Binding(
                             get: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride ?? "" },
                             set: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                        ))
+                        TextField("Cleanup directives (comma-separated)", text: Binding(
+                            get: { model.settings.dictationProfileOverrides[index].profile.cleanupDirectives.joined(separator: ", ") },
+                            set: { model.settings.dictationProfileOverrides[index].profile.cleanupDirectives = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
                         ))
                         Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
                         Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
@@ -3475,7 +3479,7 @@ private struct OnboardingWizard: View {
             route: model.settings.route,
             language: model.settings.language,
             hasLocalModel: model.nativeModelReady(for: model.settings.language),
-            cloudConsentGranted: model.settings.hasConsent(for: model.settings.route),
+            routeConsentGranted: model.settings.hasConsent(for: model.settings.route),
             byokConfigured: model.isBYOKConfigured
         )
     }
