@@ -48,4 +48,41 @@ class WakeWordDetectorTest {
         assertFalse(WakeWordDetector.matchesWakePhrase("@hey_sayso", SettingsStore.WAKE_PHRASE_SAYSO))
         assertFalse(WakeWordDetector.matchesWakePhrase("hey sayso", SettingsStore.WAKE_PHRASE_SAYSO))
     }
+
+    @Test
+    fun `wake word sensitivity defaults to medium`() {
+        val settings = InMemorySettings()
+        assertEquals(SettingsStore.WAKE_SENSITIVITY_DEFAULT, settings.wakeWordSensitivity)
+        settings.wakeWordSensitivity = SettingsStore.WAKE_SENSITIVITY_HIGH
+        assertEquals(SettingsStore.WAKE_SENSITIVITY_HIGH, settings.wakeWordSensitivity)
+        settings.wakeWordSensitivity = SettingsStore.WAKE_SENSITIVITY_LOW
+        assertEquals(SettingsStore.WAKE_SENSITIVITY_LOW, settings.wakeWordSensitivity)
+    }
+
+    @Test
+    fun `sensitivityParams returns tuned values for high medium and low`() {
+        val (highScore, highThreshold, highPaths) = WakeWordDetector.sensitivityParams(SettingsStore.WAKE_SENSITIVITY_HIGH)
+        assertEquals(3.0f, highScore, 0.001f)
+        assertEquals(0.08f, highThreshold, 0.001f)
+        assertEquals(16, highPaths)
+
+        val (medScore, medThreshold, medPaths) = WakeWordDetector.sensitivityParams(SettingsStore.WAKE_SENSITIVITY_DEFAULT)
+        assertEquals(2.8f, medScore, 0.001f)
+        assertEquals(0.10f, medThreshold, 0.001f)
+        assertEquals(12, medPaths)
+
+        val (lowScore, lowThreshold, lowPaths) = WakeWordDetector.sensitivityParams(SettingsStore.WAKE_SENSITIVITY_LOW)
+        assertEquals(2.2f, lowScore, 0.001f)
+        assertEquals(0.16f, lowThreshold, 0.001f)
+        assertEquals(8, lowPaths)
+    }
+
+    @Test
+    fun `matchesWakePhrase matches phonetic keyword variants`() {
+        assertTrue(WakeWordDetector.matchesWakePhrase("@hey_sayso_v1", SettingsStore.WAKE_PHRASE_BOTH))
+        assertTrue(WakeWordDetector.matchesWakePhrase("hey say so", SettingsStore.WAKE_PHRASE_BOTH))
+        assertTrue(WakeWordDetector.matchesWakePhrase("say so", SettingsStore.WAKE_PHRASE_BOTH))
+        assertTrue(WakeWordDetector.matchesWakePhrase("hey say so", SettingsStore.WAKE_PHRASE_HEY))
+        assertFalse(WakeWordDetector.matchesWakePhrase("say so", SettingsStore.WAKE_PHRASE_HEY))
+    }
 }
