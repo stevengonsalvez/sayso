@@ -8,6 +8,7 @@ private func candidate(
     pressable: Bool = true,
     focusable: Bool = false,
     selectable: Bool = false,
+    pointerClickable: Bool = false,
     protected: Bool = false,
     ancestry: [Int] = [0]
 ) -> DesktopCandidate {
@@ -27,6 +28,7 @@ private func candidate(
             supportsPress: pressable,
             supportsFocus: focusable,
             supportsSelection: selectable,
+            supportsPointerClick: pointerClickable,
             isProtected: protected
         )
     )
@@ -52,23 +54,27 @@ private func candidate(
 }
 
 @Test func candidateStateExcludesProtectedAndDisabledControls() {
-    let protected = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: true)
-    let disabled = DesktopCandidateState(isEnabled: false, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: false)
-    let interactive = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, isProtected: false)
+    let protected = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, supportsPointerClick: true, isProtected: true)
+    let disabled = DesktopCandidateState(isEnabled: false, supportsPress: true, supportsFocus: true, supportsSelection: true, supportsPointerClick: true, isProtected: false)
+    let interactive = DesktopCandidateState(isEnabled: true, supportsPress: true, supportsFocus: true, supportsSelection: true, supportsPointerClick: true, isProtected: false)
     let selectableRow = DesktopCandidateState(
-        isEnabled: true, supportsPress: false, supportsFocus: false, supportsSelection: true, isProtected: false
+        isEnabled: true, supportsPress: false, supportsFocus: false, supportsSelection: true, supportsPointerClick: true, isProtected: false
     )
 
     #expect(!protected.isTargetable)
     #expect(!protected.isSelectable)
     #expect(!protected.isSelectionTarget)
+    #expect(!protected.isPointerTarget)
     #expect(!disabled.isTargetable)
     #expect(!disabled.isSelectable)
     #expect(!disabled.isSelectionTarget)
+    #expect(!disabled.isPointerTarget)
     #expect(interactive.isTargetable)
     #expect(interactive.isSelectable)
     #expect(interactive.isSelectionTarget)
+    #expect(interactive.isPointerTarget)
     #expect(selectableRow.isSelectionTarget)
+    #expect(selectableRow.isPointerTarget)
 }
 
 @Test func resolverUsesOneExactTargetableCandidate() {
