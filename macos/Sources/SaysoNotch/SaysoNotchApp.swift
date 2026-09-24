@@ -511,9 +511,14 @@ final class SaysoAppModel: ObservableObject {
         }
         notch.show()
         voiceEditCapture = capture
+        let pinnedApplication = handsFreeDestinationProcessIdentifier
+            .flatMap(NSRunningApplication.init(processIdentifier:))
+        let destinationApplication = handsFreeCycle.isArmed
+            ? pinnedApplication ?? lastExternalApplication
+            : lastExternalApplication
         var sessionSettings = settings
         sessionSettings.dictationProfile = settings.resolvedDictationProfile(
-            forBundleIdentifier: lastExternalApplication?.bundleIdentifier
+            forBundleIdentifier: destinationApplication?.bundleIdentifier
         )
         activeDictationSettings = sessionSettings
         let targetProcessIdentifier = handsFreeCycle.isArmed
@@ -522,6 +527,11 @@ final class SaysoAppModel: ObservableObject {
         dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: targetProcessIdentifier)
             : nil
+        if handsFreeCycle.isArmed, dictationDestination == nil {
+            handsFreeCycle.disarm()
+            showPersistentNotice("Continuous dictation needs the original app and an editable, non-secure field.")
+            return false
+        }
         let session = RecordingSession(
             language: settings.language,
             route: settings.route,
@@ -561,7 +571,7 @@ final class SaysoAppModel: ObservableObject {
             handleTranscriptionTermination(.cancelled)
             return false
         }
-        restoreDictationTargetFocus()
+        if !isContinuousRearm { restoreDictationTargetFocus() }
         let started = await transcriber.start(
                 language: settings.language,
                 route: settings.route,
@@ -2621,7 +2631,7 @@ private struct SaysoSettingsView: View {
                     .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
                 if model.settings.handsFree {
-                    Toggle("Keep listening between phrases", isOn: $model.settings.handsFreeContinuous)
+                    Toggle("Continue after each delivered phrase", isOn: $model.settings.handsFreeContinuous)
                         .disabled(!model.settings.autoInsert)
                     HStack {
                         Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
@@ -2634,23 +2644,24 @@ private struct SaysoSettingsView: View {
                         Text("Maximum \(captureLabel) phrase")
                         Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
                     }
-                    if model.settings.handsFreeContinuous, model.settings.autoInsert {
-                        HStack {
-                            let maximumSessionSeconds = Int(model.settings.handsFreeMaximumSessionDurationSeconds)
-                            let remainingSeconds = maximumSessionSeconds % 60
-                            let sessionLabel = "\(maximumSessionSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
-                            Text("Maximum \(sessionLabel) continuous session")
-                            Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
+                    if model.settings.handsFreeContinuous {
+                        if model.settings.autoInsert {
+                            HStack {
+                                let maximumSessionSeconds = Int(model.settings.handsFreeMaximumSessionDurationSeconds)
+                                let remainingSeconds = maximumSessionSeconds % 60
+                                let sessionLabel = "\(maximumSessionSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
+                                Text("Maximum \(sessionLabel) continuous session")
+                                Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
+                            }
+                            Text("Pins the original app. Ends after this limit or 50 phrases, completing the current phrase safely. Waits up to 8 seconds for the next phrase.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Continuous listening requires Insert final text.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("Pins the original app. Ends after this limit or 50 phrases, completing the current phrase safely.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                    Text(model.settings.autoInsert
-                        ? "Waits up to 8 seconds for the next phrase."
-                        : "Continuous listening requires Insert final text.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
                 Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
