@@ -39,3 +39,41 @@ import Testing
     #expect(resolver.resolve(forBundleIdentifier: "  ") == fallback)
     #expect(resolver.resolve(forBundleIdentifier: "com.apple.notes") == fallback)
 }
+
+@Test func resolvedDictationSettingsAppliesOnlyMatchingAppOverrides() {
+    var settings = SaysoSettings()
+    settings.language = .english
+    settings.route = .local
+    settings.translationEnabled = false
+    settings.outputLanguage = .english
+    settings.cleanupEnabled = false
+    settings.dictationProfileOverrides = [
+        .init(
+            bundleIdentifier: "com.apple.mail",
+            profile: .init(
+                name: "Mail",
+                languageOverride: .hindi,
+                routeOverride: .appleSpeech,
+                translationEnabledOverride: true,
+                outputLanguageOverride: .tamil,
+                cleanupEnabledOverride: true
+            )
+        )
+    ]
+
+    let mail = settings.resolvedDictationSettings(forBundleIdentifier: "com.apple.mail")
+    let notes = settings.resolvedDictationSettings(forBundleIdentifier: "com.apple.notes")
+
+    #expect(mail.language == .hindi)
+    #expect(mail.route == .appleSpeech)
+    #expect(mail.translationEnabled)
+    #expect(mail.outputLanguage == .tamil)
+    #expect(mail.cleanupEnabled)
+    #expect(notes.language == .english)
+    #expect(notes.route == .local)
+    #expect(!notes.translationEnabled)
+    #expect(notes.outputLanguage == .english)
+    #expect(!notes.cleanupEnabled)
+    #expect(settings.language == .english)
+    #expect(settings.route == .local)
+}
