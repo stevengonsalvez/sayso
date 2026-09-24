@@ -187,6 +187,7 @@ final class SaysoAppModel: ObservableObject {
     private var handsFreeDestinationProcessIdentifier: pid_t?
     private var handsFreeDestinationBundleIdentifier: String?
     private var handsFreeDestinationLaunchDate: Date?
+    private var handsFreeDestination: TextOutput.Destination?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
@@ -451,7 +452,13 @@ final class SaysoAppModel: ObservableObject {
     @discardableResult
     private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) -> Bool {
         let isContinuousRearm = rearmHandsFree && handsFreeCycle.isArmed
-        if !isContinuousRearm { handsFreeCycle.disarm() }
+        if !isContinuousRearm {
+            handsFreeCycle.disarm()
+            handsFreeDestinationProcessIdentifier = nil
+            handsFreeDestinationBundleIdentifier = nil
+            handsFreeDestinationLaunchDate = nil
+            handsFreeDestination = nil
+        }
         switch reserveDictationStart() {
         case .reserved:
             let canPinContinuousTarget = isContinuousRearm
@@ -546,13 +553,26 @@ final class SaysoAppModel: ObservableObject {
                 return false
             }
         }
-        dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
-            ? TextOutput.captureDestination(targetProcessIdentifier: targetProcessIdentifier)
-            : nil
-        if handsFreeCycle.isArmed, dictationDestination == nil {
-            handsFreeCycle.disarm()
-            showPersistentNotice("Continuous dictation needs the original app and an editable, non-secure field.")
-            return false
+        if isContinuousRearm {
+            guard let destination = handsFreeDestination,
+                  TextOutput.isFocused(destination) else {
+                handsFreeCycle.disarm()
+                showPersistentNotice("Continuous dictation stopped because the original field is no longer ready.")
+                return false
+            }
+            dictationDestination = destination
+        } else {
+            dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
+                ? TextOutput.captureDestination(targetProcessIdentifier: targetProcessIdentifier)
+                : nil
+            if handsFreeCycle.isArmed {
+                if let destination = dictationDestination {
+                    handsFreeDestination = destination
+                } else {
+                    handsFreeCycle.disarm()
+                    showPersistentNotice("Continuous dictation could not pin this field. Recording one phrase instead.")
+                }
+            }
         }
         let session = RecordingSession(
             language: settings.language,
@@ -594,12 +614,25 @@ final class SaysoAppModel: ObservableObject {
             return false
         }
         if !isContinuousRearm { restoreDictationTargetFocus() }
+        let maximumDuration: Duration
+        if handsFreeCycle.isArmed {
+            guard let remainingSessionDuration = handsFreeCycle.remainingSessionDuration(
+                maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
+            ), remainingSessionDuration > 0 else {
+                handsFreeCycle.disarm()
+                showPersistentNotice("Continuous dictation reached its session limit.")
+                return false
+            }
+            maximumDuration = .seconds(min(settings.handsFreeMaximumDurationSeconds, remainingSessionDuration))
+        } else {
+            maximumDuration = .seconds(settings.handsFreeMaximumDurationSeconds)
+        }
         let started = await transcriber.start(
                 language: settings.language,
                 route: settings.route,
                 handsFree: settings.handsFree,
                 handsFreeSilenceDuration: .seconds(settings.handsFreeSilenceSeconds),
-                handsFreeMaximumDuration: .seconds(settings.handsFreeMaximumDurationSeconds),
+                handsFreeMaximumDuration: maximumDuration,
                 preferredAudioInputUID: settings.preferredAudioInputUID,
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 onPartial: { [weak self] text in
