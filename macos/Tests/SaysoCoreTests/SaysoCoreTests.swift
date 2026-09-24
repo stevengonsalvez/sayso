@@ -193,23 +193,71 @@ import Testing
     }
 }
 
-@Test func routeChangeResetsConsentOnlyForBYOK() {
+@Test func routeSpecificConsentIndependence() {
     var settings = SaysoSettings()
-    settings.cloudConsentGranted = true
+    #expect(settings.hasConsent(for: .local) == true)
+    #expect(settings.hasConsent(for: .appleSpeech) == false)
+    #expect(settings.hasConsent(for: .byok) == false)
 
-    // Switching between non-BYOK routes preserves consent for other cloud features
-    settings.route = .local
-    settings.setRoute(.appleSpeech)
+    settings.cloudConsentGranted = true
+    #expect(settings.hasConsent(for: .appleSpeech) == true)
+    #expect(settings.hasConsent(for: .byok) == false)
+
+    settings.byokConsentGranted = true
+    #expect(settings.hasConsent(for: .byok) == true)
+
+    // Route changes preserve both consent flags independently
+    settings.route = .byok
     #expect(settings.cloudConsentGranted == true)
+    #expect(settings.byokConsentGranted == true)
+    settings.route = .local
+    #expect(settings.cloudConsentGranted == true)
+    #expect(settings.byokConsentGranted == true)
+}
 
-    // Switching to BYOK resets consent
-    settings.setRoute(.byok)
-    #expect(settings.cloudConsentGranted == false)
+@Test func profileModelOverridesApplyToResolvedSettings() {
+    var settings = SaysoSettings()
+    settings.byokTranscriptionModel = "global-transcribe"
+    settings.byokCleanupModel = "global-cleanup"
 
-    // Grant consent for BYOK, switching away resets consent
-    settings.cloudConsentGranted = true
-    settings.setRoute(.local)
-    #expect(settings.cloudConsentGranted == false)
+    let profile = DictationProfile(
+        name: "Coding",
+        transcriptionModelOverride: "whisper-large-v3",
+        cleanupModelOverride: "gpt-4o",
+        cleanupDirectives: ["Keep code snippets raw"]
+    )
+    settings.dictationProfileOverrides = [
+        .init(bundleIdentifier: "com.apple.dt.Xcode", profile: profile)
+    ]
+
+    let resolved = settings.resolvedDictationSettings(forBundleIdentifier: "com.apple.dt.Xcode")
+    #expect(resolved.byokTranscriptionModel == "whisper-large-v3")
+    #expect(resolved.byokCleanupModel == "gpt-4o")
+    #expect(resolved.dictationProfile.cleanupDirectives == ["Keep code snippets raw"])
+
+    // Fallback retains global settings
+    let fallback = settings.resolvedDictationSettings(forBundleIdentifier: "com.apple.Safari")
+    #expect(fallback.byokTranscriptionModel == "global-transcribe")
+    #expect(fallback.byokCleanupModel == "global-cleanup")
+}
+
+@Test func legacyDictationProfileDecodingWithoutModelOverrides() throws {
+    let legacyJSON = """
+    {
+        "id": "test-id",
+        "name": "Legacy",
+        "corrections": [],
+        "normalizesWhitespace": true,
+        "capitalizesSentences": false
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(DictationProfile.self, from: legacyJSON)
+    #expect(decoded.id == "test-id")
+    #expect(decoded.name == "Legacy")
+    #expect(decoded.transcriptionModelOverride == nil)
+    #expect(decoded.cleanupModelOverride == nil)
+    #expect(decoded.cleanupDirectives == [])
 }
 
 @Test @MainActor func byokRouteExemptFromSpeechRecognition() {
