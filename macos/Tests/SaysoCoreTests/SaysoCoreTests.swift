@@ -160,6 +160,12 @@ import Testing
         baseURLString: "https://api.openai.com/v1", transcriptionModel: "whisper-1", hasAPIKey: false
     ))
     #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "https://", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
+        baseURLString: "https:foo", transcriptionModel: "whisper-1", hasAPIKey: true
+    ))
+    #expect(!OnboardingReadiness.isBYOKConfigured(
         baseURLString: "invalid-url", transcriptionModel: "whisper-1", hasAPIKey: true
     ))
 }
