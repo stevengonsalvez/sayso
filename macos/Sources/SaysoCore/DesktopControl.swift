@@ -78,6 +78,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     case `return`
     case escape
     case undo
+    case redo
     case closeWindow
     case goBack
     case goForward
@@ -109,6 +110,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .return: 36
         case .escape: 53
         case .undo: 6
+        case .redo: 6
         case .closeWindow: 13
         case .goBack: 33
         case .goForward: 30
@@ -120,6 +122,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     var modifierFlags: CGEventFlags {
         switch self {
         case .goBack, .goForward, .undo, .closeWindow: .maskCommand
+        case .redo: [.maskCommand, .maskShift]
         case .nextTab: .maskControl
         case .previousTab: [.maskControl, .maskShift]
         default: []
@@ -129,6 +132,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     var commandCharacter: String? {
         switch self {
         case .undo: "z"
+        case .redo: "z"
         case .closeWindow: "w"
         case .goBack: "["
         case .goForward: "]"
@@ -808,6 +812,14 @@ public enum ControlPlanner {
                 requiresConfirmation: true
             )
         }
+        if normalized == "redo" {
+            return .init(
+                action: .key(.redo, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Redo",
+                requiresConfirmation: true
+            )
+        }
         if normalized == "close window" {
             return .init(
                 action: .key(.closeWindow, expectedFingerprint: snapshot.fingerprint),
@@ -945,7 +957,7 @@ public enum ControlPlanner {
                 applications: installedApplications ?? InstalledDesktopApplication.available()
             )
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, undo, close window, go back or forward, next or previous tab, click, focus, or select an exact visible title, scroll, open an https URL, exact installed app, or explicit folder path, switch to an installed app, activate bundle ID, or quit an installed app.")
+        throw SaysoError.invalidAction("Control supports: type, press key, undo or redo, close window, go back or forward, next or previous tab, click, focus, or select an exact visible title, scroll, open an https URL, exact installed app, or explicit folder path, switch to an installed app, activate bundle ID, or quit an installed app.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
