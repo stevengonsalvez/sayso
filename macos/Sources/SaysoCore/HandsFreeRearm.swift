@@ -32,21 +32,30 @@ public struct HandsFreeCycle: Equatable, Sendable {
         deliveredPhraseCount = 0
     }
 
-    public func shouldRearm(handsFreeEnabled: Bool, isDictationMode: Bool) -> Bool {
-        isArmed && handsFreeEnabled && isDictationMode
+    public func shouldRearm(
+        handsFreeEnabled: Bool,
+        isDictationMode: Bool,
+        continuousEnabled: Bool = true
+    ) -> Bool {
+        isArmed && handsFreeEnabled && isDictationMode && continuousEnabled
     }
 
     public mutating func consumeDelivery(
         wasDelivered: Bool,
         handsFreeEnabled: Bool,
         isDictationMode: Bool,
+        continuousEnabled: Bool = true,
         maximumSessionDuration: TimeInterval = 900,
         now: Date = .now
     ) -> Bool {
         deliveredPhraseCount += 1
         let elapsed = now.timeIntervalSince(startedAt ?? now)
         let shouldRearm = wasDelivered
-            && shouldRearm(handsFreeEnabled: handsFreeEnabled, isDictationMode: isDictationMode)
+            && shouldRearm(
+                handsFreeEnabled: handsFreeEnabled,
+                isDictationMode: isDictationMode,
+                continuousEnabled: continuousEnabled
+            )
             && elapsed < maximumSessionDuration
             && deliveredPhraseCount < Self.deliveryLimit
         if !shouldRearm { disarm() }
