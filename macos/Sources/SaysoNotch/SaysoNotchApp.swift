@@ -183,6 +183,7 @@ final class SaysoAppModel: ObservableObject {
     private var activeRecordingSession: RecordingSession?
     private var activeDictationSettings: SaysoSettings?
     private var pendingVoiceMode: SaysoMode?
+    private var handsFreeArmed = false
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
@@ -362,15 +363,17 @@ final class SaysoAppModel: ObservableObject {
 
     func startOrStopDictation() {
         if transcriber.canStop {
+            handsFreeArmed = false
             transcriber.stop()
             return
         }
         if isStartingDictation {
+            handsFreeArmed = false
             dictationStartCancellationRequested = true
             notice = "Cancelling dictation start."
             return
         }
-        requestDictationStart(onboardingTest: false)
+        requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFree)
     }
 
     private func handleTapDictationShortcut() {
@@ -434,9 +437,14 @@ final class SaysoAppModel: ObservableObject {
         onboardingTestTranscriptID = nil
     }
 
-    private func requestDictationStart(onboardingTest: Bool) {
+    private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) {
         switch reserveDictationStart() {
         case .reserved:
+            handsFreeArmed = HandsFreeRearmPolicy.shouldRearm(
+                isArmed: rearmHandsFree,
+                handsFreeEnabled: settings.handsFree,
+                isDictationMode: settings.mode == .dictation
+            )
             Task {
                 _ = await performDictationStart(onboardingTest: onboardingTest)
             }
@@ -815,7 +823,15 @@ final class SaysoAppModel: ObservableObject {
         await sessions.upsert(session)
         transcriptProcessingNotice = nil
         if pendingDelivery.settings.soundCues { NSSound.beep() }
-        if activeRecordingSession == nil { notch.hideAfterDelay() }
+        if HandsFreeRearmPolicy.shouldRearm(
+            isArmed: handsFreeArmed,
+            handsFreeEnabled: settings.handsFree,
+            isDictationMode: settings.mode == .dictation
+        ) {
+            requestDictationStart(onboardingTest: false, rearmHandsFree: true)
+        } else if activeRecordingSession == nil {
+            notch.hideAfterDelay()
+        }
     }
 
     private func finishVoiceEdit(
@@ -903,6 +919,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func failActiveSession(_ message: String) {
+        handsFreeArmed = false
         lastDictationStartError = message
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.fail(message) }
@@ -932,6 +949,13 @@ final class SaysoAppModel: ObservableObject {
             activeDictationSettings = nil
             dictationDestination = nil
             voiceEditCapture = nil
+            if HandsFreeRearmPolicy.shouldRearm(
+                isArmed: handsFreeArmed,
+                handsFreeEnabled: settings.handsFree,
+                isDictationMode: settings.mode == .dictation
+            ) {
+                requestDictationStart(onboardingTest: false, rearmHandsFree: true)
+            }
         case let .failed(message):
             failActiveSession(message)
         }
