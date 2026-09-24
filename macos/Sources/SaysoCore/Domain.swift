@@ -112,16 +112,16 @@ public enum OnboardingReadiness {
         route: ProviderRoute,
         language: DictationLanguage,
         hasLocalModel: Bool,
-        cloudConsentGranted: Bool,
+        routeConsentGranted: Bool,
         byokConfigured: Bool = false
     ) -> Bool {
         switch route {
         case .local:
             language != .automatic && hasLocalModel
         case .appleSpeech:
-            cloudConsentGranted
+            routeConsentGranted
         case .byok:
-            cloudConsentGranted && byokConfigured
+            routeConsentGranted && byokConfigured
         }
     }
 
@@ -323,7 +323,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
-        byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: cloudConsentGranted)
+        byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: false)
         voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
