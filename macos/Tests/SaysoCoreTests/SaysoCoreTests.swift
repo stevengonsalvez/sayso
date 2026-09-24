@@ -260,7 +260,7 @@ import Testing
     #expect(decoded.cleanupDirectives == [])
 }
 
-@Test func legacySettingsDecodingDefaultsByokConsentToFalse() throws {
+@Test func legacySettingsDecodingCarriesCloudConsentToByokWhenMissing() throws {
     let legacyJSON = """
     {
         "cloudConsentGranted": true
@@ -269,7 +269,12 @@ import Testing
 
     let decoded = try JSONDecoder().decode(SaysoSettings.self, from: legacyJSON)
     #expect(decoded.cloudConsentGranted == true)
-    #expect(decoded.byokConsentGranted == false)
+    #expect(decoded.byokConsentGranted == true)
+
+    let emptyJSON = "{}".data(using: .utf8)!
+    let defaultDecoded = try JSONDecoder().decode(SaysoSettings.self, from: emptyJSON)
+    #expect(defaultDecoded.cloudConsentGranted == false)
+    #expect(defaultDecoded.byokConsentGranted == false)
 }
 
 @Test func whitespaceOnlyProfileModelOverrideIsIgnored() {
