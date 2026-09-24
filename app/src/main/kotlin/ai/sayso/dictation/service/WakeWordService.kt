@@ -94,8 +94,10 @@ class WakeWordService : Service() {
         isListening = true
 
         scope.launch(Dispatchers.Default) {
-            val phrase = ai.sayso.dictation.AppGraph.settings.wakeWordPhrase
-            val d = WakeWordDetector(this@WakeWordService, phrase) { keyword ->
+            val settings = ai.sayso.dictation.AppGraph.settings
+            val phrase = settings.wakeWordPhrase
+            val sensitivity = settings.wakeWordSensitivity
+            val d = WakeWordDetector(this@WakeWordService, phrase, sensitivity) { keyword ->
                 Log.i(TAG, "Wake word trigger: $keyword")
                 triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
@@ -162,23 +164,40 @@ class WakeWordService : Service() {
         val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
         val bufferSize = maxOf(minBufferSize, sampleRate * 2)
 
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                channelConfig,
-                audioFormat,
-                bufferSize,
-            )
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Microphone permission missing", e)
-            stopSelf()
-            return
+        val sourcesToTry = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC,
+        )
+
+        var record: AudioRecord? = null
+        for (source in sourcesToTry) {
+            try {
+                val candidate = AudioRecord(
+                    source,
+                    sampleRate,
+                    channelConfig,
+                    audioFormat,
+                    bufferSize,
+                )
+                if (candidate.state == AudioRecord.STATE_INITIALIZED) {
+                    record = candidate
+                    Log.i(TAG, "Initialized AudioRecord with source $source")
+                    break
+                } else {
+                    candidate.release()
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Microphone permission missing", e)
+                stopSelf()
+                return
+            } catch (t: Throwable) {
+                Log.w(TAG, "AudioRecord init failed for source $source: ${t.message}")
+            }
         }
 
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord failed to initialize")
-            record.release()
+        if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
+            Log.e(TAG, "All AudioRecord candidates failed to initialize")
+            record?.release()
             stopSelf()
             return
         }
@@ -193,8 +212,17 @@ class WakeWordService : Service() {
             return
         }
 
-        val shortBuffer = ShortArray(1600) // 100ms chunks at 16kHz
-        val floatBuffer = FloatArray(1600)
+        // 30ms chunks at 16kHz for fast acoustic feature calculation and low latency
+        val chunkSize = 480
+        val shortBuffer = ShortArray(chunkSize)
+        val floatBuffer = FloatArray(chunkSize)
+
+        val sensitivity = ai.sayso.dictation.AppGraph.settings.wakeWordSensitivity
+        val gain = when (sensitivity) {
+            ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_HIGH -> 1.5f
+            ai.sayso.dictation.core.SettingsStore.WAKE_SENSITIVITY_LOW -> 0.9f
+            else -> 1.2f
+        }
 
         while (scope.isActive && isListening) {
             // While DictationService is recording or busy, pause wake-word ingestion to avoid mic contention
@@ -211,7 +239,8 @@ class WakeWordService : Service() {
             val read = record.read(shortBuffer, 0, shortBuffer.size)
             if (read > 0) {
                 for (i in 0 until read) {
-                    floatBuffer[i] = shortBuffer[i] / 32768.0f
+                    val sample = (shortBuffer[i] / 32768.0f) * gain
+                    floatBuffer[i] = sample.coerceIn(-1.0f, 1.0f)
                 }
                 val chunk = if (read == floatBuffer.size) floatBuffer else floatBuffer.copyOf(read)
                 detector?.acceptWaveform(chunk)
@@ -298,6 +327,13 @@ class WakeWordService : Service() {
             if (instance != null) {
                 instance?.updatePhrase(ai.sayso.dictation.AppGraph.settings.wakeWordPhrase)
             } else {
+                start(context)
+            }
+        }
+
+        fun restartWithSettings(context: Context) {
+            if (instance != null) {
+                stop(context)
                 start(context)
             }
         }
