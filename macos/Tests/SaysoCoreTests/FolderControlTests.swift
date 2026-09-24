@@ -3,9 +3,17 @@ import Testing
 @testable import SaysoCore
 
 @Test func folderControlRequiresAnExistingExplicitDirectory() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let directory = root.appendingPathComponent("Folder", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let linkedDirectory = root.appendingPathComponent("LinkedFolder", isDirectory: true)
+    try FileManager.default.createSymbolicLink(at: linkedDirectory, withDestinationURL: directory)
+    let plainFile = root.appendingPathComponent("note.txt")
+    try Data().write(to: plainFile)
+    let appBundle = root.appendingPathComponent("Unsafe.app", isDirectory: true)
+    try FileManager.default.createDirectory(at: appBundle, withIntermediateDirectories: true)
     let snapshot = DesktopSnapshot(
         processIdentifier: 42,
         applicationName: "Finder",
@@ -21,6 +29,19 @@ import Testing
     #expect(ControlPolicy.canAutoRun(step))
     #expect(!ControlPlanner.requiresInstalledApplicationCatalog(for: "open folder \(directory.path)"))
 
+    let linkedStep = try ControlPlanner.plan(command: "open folder \(linkedDirectory.path)", snapshot: snapshot)
+    if case let .openFolder(url) = linkedStep.action {
+        #expect(url.path == directory.path)
+    } else {
+        Issue.record("Expected linked folder action")
+    }
+
+    let homeStep = try ControlPlanner.plan(command: "open folder ~/", snapshot: snapshot)
+    #expect(homeStep.action == .openFolder(url: FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath()))
+
+    #expect(throws: SaysoError.invalidAction("Open folder requires a path.")) { try ControlPlanner.plan(command: "open folder", snapshot: snapshot) }
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open folder Documents", snapshot: snapshot) }
-    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open folder /does/not/exist", snapshot: snapshot) }
+    #expect(throws: SaysoError.invalidAction("No folder exists at '/does/not/exist'.")) { try ControlPlanner.plan(command: "open folder /does/not/exist", snapshot: snapshot) }
+    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "open folder \(plainFile.path)", snapshot: snapshot) }
+    #expect(throws: SaysoError.invalidAction("Open folder does not launch app or package bundles.")) { try ControlPlanner.plan(command: "open folder \(appBundle.path)", snapshot: snapshot) }
 }
