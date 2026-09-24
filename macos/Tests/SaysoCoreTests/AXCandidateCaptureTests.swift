@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import SaysoCore
 
@@ -83,6 +84,21 @@ import Testing
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         hasInteractiveDescendant: true
     ) == .accessibilitySelection)
+}
+
+@Test func pointerRowsRequireVisibleCentre() {
+    let parent = CGRect(x: 0, y: 0, width: 10, height: 10)
+    let visibleRow = CGRect(x: 0, y: 0, width: 10, height: 10)
+    let coveredRow = CGRect(x: 20, y: 20, width: 10, height: 10)
+
+    #expect(AXCandidateCapturePolicy.visibleClip(parent: parent, frame: nil) == parent)
+    #expect(AXCandidateCapturePolicy.visibleClip(parent: nil, frame: visibleRow) == visibleRow)
+    #expect(AXCandidateCapturePolicy.visibleClip(parent: parent, frame: coveredRow)?.isNull == true)
+    #expect(AXCandidateCapturePolicy.isCentreVisible(frame: visibleRow, in: parent))
+    #expect(!AXCandidateCapturePolicy.isCentreVisible(
+        frame: visibleRow,
+        in: CGRect(x: 0, y: 0, width: 4, height: 4)
+    ))
 }
 
 @Test func captureLocatorIsStableForSameBoundedAncestry() {
