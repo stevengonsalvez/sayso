@@ -92,6 +92,25 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
     }
 
+    public func focus(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws {
+        guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
+        let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
+        guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
+            throw SaysoError.staleTarget
+        }
+        let windowTitle = stringAttribute(kAXTitleAttribute as CFString, from: window) ?? ""
+        guard let target = capturedCandidates(
+            in: window,
+            processIdentifier: targetApplication.processIdentifier,
+            windowTitle: windowTitle
+        ).first(where: { $0.candidate.id == candidateID }), target.candidate.state.isSelectable else {
+            throw SaysoError.staleTarget
+        }
+        guard AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success else {
+            throw SaysoError.invalidAction("Visible field rejected focus")
+        }
+    }
+
     private struct CapturedCandidate {
         let candidate: DesktopCandidate
         let element: AXUIElement
