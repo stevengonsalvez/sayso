@@ -140,10 +140,8 @@ public enum OnboardingReadiness {
         transcriptionModel: String,
         hasAPIKey: Bool
     ) -> Bool {
-        let trimmedURL = baseURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard hasAPIKey,
-              let url = URL(string: trimmedURL),
-              ProviderEndpointPolicy.allows(url) else {
+              SaysoSettings.normalizedBaseURL(baseURLString) != nil else {
             return false
         }
         return !transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -227,12 +225,23 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
-    public var normalizedBYOKBaseURL: URL? {
-        let trimmed = byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    public static func normalizedBaseURL(_ raw: String) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), ProviderEndpointPolicy.allows(url) else {
             return nil
         }
         return url
+    }
+
+    public var normalizedBYOKBaseURL: URL? {
+        Self.normalizedBaseURL(byokBaseURL)
+    }
+
+    public mutating func setRoute(_ newRoute: ProviderRoute) {
+        if route != newRoute && (route == .byok || newRoute == .byok) {
+            cloudConsentGranted = false
+        }
+        route = newRoute
     }
     public var cleanupEnabled = false
     public var cloudCleanupEnabled = false
