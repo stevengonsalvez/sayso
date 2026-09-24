@@ -219,12 +219,23 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var soundCues = true
     public var onboardingCompleted = false
     public var cloudConsentGranted = false
+    public var byokConsentGranted = false
     public var voiceEditCloudConsent = false
     public var desktopControlEnabled = false
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
+    public var cleanupEnabled = false
+    public var cloudCleanupEnabled = false
+    public var byokCleanupModel = "gpt-4.1-mini"
+    public var lexicon: [String: String] = [:]
+    public var legacyLexiconMigrated = false
+    public var autoCorrectionsEnabled = false
+    public var autoCorrectionsPromotionThreshold = 3
+    public var dictationProfile: DictationProfile = .default
+    public var dictationProfileOverrides: [DictationProfileBundleOverride] = []
+
     public static func normalizedBaseURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), ProviderEndpointPolicy.allows(url) else {
@@ -237,21 +248,16 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         Self.normalizedBaseURL(byokBaseURL)
     }
 
-    public mutating func setRoute(_ newRoute: ProviderRoute) {
-        if route != newRoute && (route == .byok || newRoute == .byok) {
-            cloudConsentGranted = false
+    public func hasConsent(for route: ProviderRoute) -> Bool {
+        switch route {
+        case .local:
+            return true
+        case .appleSpeech:
+            return cloudConsentGranted
+        case .byok:
+            return byokConsentGranted
         }
-        route = newRoute
     }
-    public var cleanupEnabled = false
-    public var cloudCleanupEnabled = false
-    public var byokCleanupModel = "gpt-4.1-mini"
-    public var lexicon: [String: String] = [:]
-    public var legacyLexiconMigrated = false
-    public var autoCorrectionsEnabled = false
-    public var autoCorrectionsPromotionThreshold = 3
-    public var dictationProfile: DictationProfile = .default
-    public var dictationProfileOverrides: [DictationProfileBundleOverride] = []
 
     public init() {}
 
@@ -263,7 +269,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
-        case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
+        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
@@ -317,6 +323,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         soundCues = decoded(Bool.self, .soundCues, fallback: soundCues)
         onboardingCompleted = decoded(Bool.self, .onboardingCompleted, fallback: onboardingCompleted)
         cloudConsentGranted = decoded(Bool.self, .cloudConsentGranted, fallback: cloudConsentGranted)
+        byokConsentGranted = decoded(Bool.self, .byokConsentGranted, fallback: cloudConsentGranted)
         voiceEditCloudConsent = decoded(Bool.self, .voiceEditCloudConsent, fallback: voiceEditCloudConsent)
         desktopControlEnabled = decoded(Bool.self, .desktopControlEnabled, fallback: desktopControlEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
@@ -360,6 +367,10 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         if let route = profile.routeOverride {
             resolved.route = route
         }
+        if let transcriptionModel = profile.transcriptionModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !transcriptionModel.isEmpty {
+            resolved.byokTranscriptionModel = transcriptionModel
+        }
         if let translationEnabled = profile.translationEnabledOverride {
             resolved.translationEnabled = translationEnabled
         }
@@ -368,6 +379,10 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         }
         if let cleanupEnabled = profile.cleanupEnabledOverride {
             resolved.cleanupEnabled = cleanupEnabled
+        }
+        if let cleanupModel = profile.cleanupModelOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !cleanupModel.isEmpty {
+            resolved.byokCleanupModel = cleanupModel
         }
         return resolved
     }
