@@ -111,6 +111,12 @@ import Testing
         descendantSupportsFocus: false
     ) == .accessibilitySelection)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
+        reachesTarget: true,
+        hitsTargetDirectly: false,
+        descendantSupportsPress: false,
+        descendantSupportsFocus: true
+    ) == .accessibilitySelection)
+    #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: false,
         hitsTargetDirectly: false,
         descendantSupportsPress: false,
