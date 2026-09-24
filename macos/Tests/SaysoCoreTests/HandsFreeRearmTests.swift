@@ -85,6 +85,29 @@ import Testing
     #expect(!deliveryCycle.isArmed)
 }
 
+@Test func handsFreeCycleReportsRemainingSessionDuration() {
+    let startedAt = Date(timeIntervalSinceReferenceDate: 100)
+    var cycle = HandsFreeCycle()
+    cycle.start(
+        rearmRequested: true,
+        handsFreeEnabled: true,
+        isDictationMode: true,
+        now: startedAt
+    )
+
+    #expect(cycle.remainingSessionDuration(
+        maximumSessionDuration: 30,
+        now: startedAt.addingTimeInterval(12)
+    ) == 18)
+    #expect(cycle.remainingSessionDuration(
+        maximumSessionDuration: 30,
+        now: startedAt.addingTimeInterval(31)
+    ) == 0)
+
+    cycle.disarm()
+    #expect(cycle.remainingSessionDuration(maximumSessionDuration: 30, now: startedAt) == nil)
+}
+
 @Test func handsFreeCycleDisarmsWhenDeliveryCannotContinue() {
     var cycle = HandsFreeCycle()
     cycle.start(
