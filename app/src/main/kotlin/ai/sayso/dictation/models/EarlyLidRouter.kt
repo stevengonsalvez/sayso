@@ -145,8 +145,8 @@ object EarlyLidRouter {
         } else null
 
         val confidence = when {
-            overrideLanguage != null -> 1.0f
             audioDetected != DetectedLanguage.UNKNOWN -> 0.95f
+            overrideLanguage != null -> 1.0f
             else -> 0.0f
         }
 
