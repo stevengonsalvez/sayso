@@ -18,19 +18,39 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
     public var corrections: [DictationCorrection]
     public var normalizesWhitespace: Bool
     public var capitalizesSentences: Bool
+    /// Per-session language. `nil` keeps the normal Sayso language setting.
+    public var languageOverride: DictationLanguage?
+    /// Per-session speech route. `nil` keeps the normal Sayso route.
+    public var routeOverride: ProviderRoute?
+    /// Per-session translation switch. `nil` keeps the normal Sayso setting.
+    public var translationEnabledOverride: Bool?
+    /// Per-session translation destination. `nil` keeps the normal Sayso setting.
+    public var outputLanguageOverride: DictationLanguage?
+    /// Per-session transcript cleanup switch. `nil` keeps the normal Sayso setting.
+    public var cleanupEnabledOverride: Bool?
 
     public init(
         id: String = UUID().uuidString,
         name: String,
         corrections: [DictationCorrection] = [],
         normalizesWhitespace: Bool = false,
-        capitalizesSentences: Bool = false
+        capitalizesSentences: Bool = false,
+        languageOverride: DictationLanguage? = nil,
+        routeOverride: ProviderRoute? = nil,
+        translationEnabledOverride: Bool? = nil,
+        outputLanguageOverride: DictationLanguage? = nil,
+        cleanupEnabledOverride: Bool? = nil
     ) {
         self.id = id
         self.name = name
         self.corrections = corrections
         self.normalizesWhitespace = normalizesWhitespace
         self.capitalizesSentences = capitalizesSentences
+        self.languageOverride = languageOverride
+        self.routeOverride = routeOverride
+        self.translationEnabledOverride = translationEnabledOverride
+        self.outputLanguageOverride = outputLanguageOverride
+        self.cleanupEnabledOverride = cleanupEnabledOverride
     }
 
     public static let `default` = DictationProfile(id: "default", name: "Default")
