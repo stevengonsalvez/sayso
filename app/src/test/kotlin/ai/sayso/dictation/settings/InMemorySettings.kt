@@ -21,6 +21,7 @@ class InMemorySettings(
     override var bubbleAlwaysVisible: Boolean = false,
     override var wakeWordEnabled: Boolean = false,
     override var wakeWordPhrase: String = SettingsStore.WAKE_PHRASE_BOTH,
+    override var wakeWordSensitivity: String = SettingsStore.WAKE_SENSITIVITY_DEFAULT,
     override var appContextAwarenessEnabled: Boolean = true,
     override var smartDictationModesEnabled: Boolean = true,
     override var hasCompletedOnboarding: Boolean = false,
