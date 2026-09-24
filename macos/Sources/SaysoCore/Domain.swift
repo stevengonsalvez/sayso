@@ -193,6 +193,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeSilenceSeconds = 1.2
+    public var handsFreeMaximumDurationSeconds = 900.0
     public var hotKeyActivation: DictationHotKeyActivation = .tapToToggle
     public var hotKeyHoldThresholdSeconds = 0.35
     public var preferredAudioInputUID: AudioInputDeviceUID?
@@ -224,7 +225,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
-        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
+        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
@@ -254,6 +255,10 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         handsFreeSilenceSeconds = min(
             max(decoded(Double.self, .handsFreeSilenceSeconds, fallback: handsFreeSilenceSeconds), 0.5),
             5
+        )
+        handsFreeMaximumDurationSeconds = min(
+            max(decoded(Double.self, .handsFreeMaximumDurationSeconds, fallback: handsFreeMaximumDurationSeconds), 5),
+            3_600
         )
         hotKeyActivation = decoded(DictationHotKeyActivation.self, .hotKeyActivation, fallback: hotKeyActivation)
         hotKeyHoldThresholdSeconds = min(
