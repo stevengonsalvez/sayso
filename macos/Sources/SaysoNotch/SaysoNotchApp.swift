@@ -855,8 +855,8 @@ final class SaysoAppModel: ObservableObject {
         guard activeRecordingSession == nil, !isStartingDictation else { return }
         let wasDelivered: Bool
         switch output {
-        case .delivered:
-            wasDelivered = true
+        case let .delivered(method):
+            wasDelivered = !pendingDelivery.settings.autoInsert || method != .clipboard
         case .pasteFailed:
             wasDelivered = false
         }
@@ -864,6 +864,7 @@ final class SaysoAppModel: ObservableObject {
             wasDelivered: wasDelivered,
             handsFreeEnabled: settings.handsFree,
             isDictationMode: settings.mode == .dictation,
+            continuousEnabled: settings.handsFreeContinuous,
             maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
         ) {
             if !requestDictationStart(onboardingTest: false, rearmHandsFree: true) {
@@ -2632,7 +2633,7 @@ private struct SaysoSettingsView: View {
                             Text("Maximum \(sessionLabel) continuous session")
                             Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
                         }
-                        Text("Pins the original text target. Ends after this limit or 50 phrases.")
+                        Text("Pins the original text target. Ends after this limit or 50 phrases, completing the current phrase safely.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
