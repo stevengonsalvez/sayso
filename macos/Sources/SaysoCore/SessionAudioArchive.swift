@@ -69,7 +69,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
         let candidate = url.standardizedFileURL.resolvingSymlinksInPath().path
         return url.isFileURL
             && candidate.hasPrefix(directory + "/")
-            && managedFileExtensions.contains(url.pathExtension.lowercased())
+            && isManagedFilename(url.lastPathComponent)
     }
 
     public static func deleteManagedRecording(
@@ -129,7 +129,7 @@ public final class SessionAudioArchive: @unchecked Sendable {
             .standardizedFileURL.resolvingSymlinksInPath()
         let retained = Set(retainedURLs.map { $0.standardizedFileURL.resolvingSymlinksInPath() })
         let urls = (try? fileManager.contentsOfDirectory(at: recordingDirectory, includingPropertiesForKeys: nil)) ?? []
-        for url in urls where managedFileExtensions.contains(url.pathExtension.lowercased()) {
+        for url in urls where isManagedRecording(url, directory: recordingDirectory, fileManager: fileManager) {
             let standardizedURL = url.standardizedFileURL
             guard !retained.contains(standardizedURL) else { continue }
             if let olderThan {
@@ -193,6 +193,16 @@ public final class SessionAudioArchive: @unchecked Sendable {
     }
 
     public static let managedFileExtensions: Set<String> = ["m4a", "caf", "wav", "mp3", "aif", "aiff", "mp4"]
+
+    private static func isManagedFilename(_ filename: String) -> Bool {
+        let extensionName = URL(fileURLWithPath: filename).pathExtension.lowercased()
+        guard managedFileExtensions.contains(extensionName) else { return false }
+        let stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        for prefix in ["Recording-", "Imported-"] where stem.hasPrefix(prefix) {
+            if UUID(uuidString: String(stem.dropFirst(prefix.count))) != nil { return true }
+        }
+        return false
+    }
 
     private enum ArchiveError: Error {
         case unsupportedArchiveFormat
