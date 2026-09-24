@@ -2699,6 +2699,7 @@ private struct ModelsWorkspace: View {
                 Text("Optional. Used only after explicit cloud consent. API key stays in Keychain.")
                     .font(.caption).foregroundStyle(.secondary)
                 TextField("Base URL", text: $model.settings.byokBaseURL)
+                TextField("Transcription model", text: $model.settings.byokTranscriptionModel)
                 TextField("Translation model", text: $model.settings.byokTranslationModel)
                 TextField("Voice edit model", text: $model.settings.byokRewriteModel)
                 SecureField("API key", text: $apiKey)
@@ -3108,9 +3109,10 @@ private struct CloudProviderSettings: View {
 
     var body: some View {
         Section("BYOK cloud provider") {
-            Text("Required only for selected cloud translation and compatible providers. Stored in Keychain, never UserDefaults.")
+            Text("Used only for selected cloud dictation, translation, cleanup, or voice edit. API key stays in Keychain.")
                 .font(.caption).foregroundStyle(.secondary)
             TextField("Base URL", text: $model.settings.byokBaseURL)
+            TextField("Transcription model", text: $model.settings.byokTranscriptionModel)
             TextField("Translation model", text: $model.settings.byokTranslationModel)
             TextField("Voice edit model", text: $model.settings.byokRewriteModel)
             SecureField("API key", text: $apiKey)
@@ -3177,7 +3179,7 @@ private struct OnboardingWizard: View {
                         Text("On-device keeps recognition local. Download the selected Sayso model before starting, or choose Apple Speech to use Apple’s recognizer.")
                             .foregroundStyle(.secondary)
                         Picker("Speech route", selection: $model.settings.route) {
-                            ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
+                            ForEach(ProviderRoute.dictationRoutes.filter { $0 != .byok }) { Text($0.displayName).tag($0) }
                         }
                         .pickerStyle(.segmented)
                         .onChange(of: model.settings.route) { _, route in
