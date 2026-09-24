@@ -1234,8 +1234,8 @@ public final class AXDesktopController: @unchecked Sendable {
             executionMethod = .accessibilitySelection
             directObservation = .init(
                 snapshot: try? capture(application: targetApplication),
-                action: step.action,
-                effect: selectionChanged ? .observed : .notObserved
+                effect: .observed,
+                result: selectionChanged ? "observed row selection" : "row already selected"
             )
         case let .clickAt(elementID, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -1258,8 +1258,8 @@ public final class AXDesktopController: @unchecked Sendable {
                 executionMethod = .accessibilitySelection
                 directObservation = .init(
                     snapshot: snapshot,
-                    effect: selectionChanged ? .observed : .notObserved,
-                    result: selectionChanged ? "observed accessibility row selection" : "no observed accessibility row selection"
+                    effect: .observed,
+                    result: selectionChanged ? "observed accessibility row selection" : "row already selected"
                 )
             }
         case let .key(key, expectedFingerprint):
