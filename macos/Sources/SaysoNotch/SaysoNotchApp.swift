@@ -185,6 +185,8 @@ final class SaysoAppModel: ObservableObject {
     private var pendingVoiceMode: SaysoMode?
     private var handsFreeCycle = HandsFreeCycle()
     private var handsFreeDestinationProcessIdentifier: pid_t?
+    private var handsFreeDestinationBundleIdentifier: String?
+    private var handsFreeDestinationLaunchDate: Date?
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
@@ -454,7 +456,11 @@ final class SaysoAppModel: ObservableObject {
         case .reserved:
             let canPinContinuousTarget = isContinuousRearm
                 ? handsFreeDestinationProcessIdentifier != nil
+                    && handsFreeDestinationBundleIdentifier != nil
+                    && handsFreeDestinationLaunchDate != nil
                 : lastExternalApplication?.processIdentifier != nil
+                    && lastExternalApplication?.bundleIdentifier != nil
+                    && lastExternalApplication?.launchDate != nil
             handsFreeCycle.start(
                 rearmRequested: rearmHandsFree
                     && settings.handsFreeContinuous
@@ -465,6 +471,8 @@ final class SaysoAppModel: ObservableObject {
             )
             if handsFreeCycle.isArmed, !isContinuousRearm {
                 handsFreeDestinationProcessIdentifier = lastExternalApplication?.processIdentifier
+                handsFreeDestinationBundleIdentifier = lastExternalApplication?.bundleIdentifier
+                handsFreeDestinationLaunchDate = lastExternalApplication?.launchDate
             }
             Task {
                 _ = await performDictationStart(
@@ -524,6 +532,20 @@ final class SaysoAppModel: ObservableObject {
         let targetProcessIdentifier = handsFreeCycle.isArmed
             ? handsFreeDestinationProcessIdentifier ?? lastExternalApplication?.processIdentifier
             : lastExternalApplication?.processIdentifier
+        if isContinuousRearm {
+            guard let targetProcessIdentifier,
+                  let bundleIdentifier = handsFreeDestinationBundleIdentifier,
+                  let launchDate = handsFreeDestinationLaunchDate,
+                  let application = NSRunningApplication(processIdentifier: targetProcessIdentifier),
+                  !application.isTerminated,
+                  application.bundleIdentifier == bundleIdentifier,
+                  application.launchDate == launchDate,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else {
+                handsFreeCycle.disarm()
+                showPersistentNotice("Continuous dictation stopped because the original app is no longer ready.")
+                return false
+            }
+        }
         dictationDestination = !onboardingTest && capture == nil && settings.autoInsert
             ? TextOutput.captureDestination(targetProcessIdentifier: targetProcessIdentifier)
             : nil
@@ -883,6 +905,7 @@ final class SaysoAppModel: ObservableObject {
             handsFreeEnabled: settings.handsFree,
             isDictationMode: settings.mode == .dictation,
             continuousEnabled: settings.handsFreeContinuous,
+            autoInsertEnabled: settings.autoInsert,
             maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
         ) {
             if !requestDictationStart(onboardingTest: false, rearmHandsFree: true) {
