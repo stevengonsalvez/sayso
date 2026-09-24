@@ -407,8 +407,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startOrStopVoiceEdit() {
-        handsFreeCycle.disarm()
         if voiceEditCapture != nil, transcriber.canStop {
+            handsFreeCycle.disarm()
             transcriber.stop()
             return
         }
@@ -433,6 +433,7 @@ final class SaysoAppModel: ObservableObject {
         lastVoiceEditRewrite = nil
         switch reserveDictationStart() {
         case .reserved:
+            handsFreeCycle.disarm()
             voiceEditCapture = capture
             Task { _ = await performDictationStart(voiceEditCapture: capture) }
         case let .rejected(_, message):
@@ -451,8 +452,14 @@ final class SaysoAppModel: ObservableObject {
         if !isContinuousRearm { handsFreeCycle.disarm() }
         switch reserveDictationStart() {
         case .reserved:
+            let canPinContinuousTarget = isContinuousRearm
+                ? handsFreeDestinationProcessIdentifier != nil
+                : lastExternalApplication?.processIdentifier != nil
             handsFreeCycle.start(
-                rearmRequested: rearmHandsFree && settings.handsFreeContinuous,
+                rearmRequested: rearmHandsFree
+                    && settings.handsFreeContinuous
+                    && settings.autoInsert
+                    && canPinContinuousTarget,
                 handsFreeEnabled: settings.handsFree,
                 isDictationMode: settings.mode == .dictation
             )
@@ -652,6 +659,7 @@ final class SaysoAppModel: ObservableObject {
         if let current = lastTranscript {
             switch VoiceEdits.outcome(transcript.text, to: current.displayText) {
             case let .applied(edited):
+                let wasContinuous = handsFreeCycle.isArmed
                 handsFreeCycle.disarm()
                 var updated = current
                 updated.text = edited
@@ -671,7 +679,7 @@ final class SaysoAppModel: ObservableObject {
                 activeRecordingSession = nil
                 dictationDestination = nil
                 discardTranscriptAudio(transcript)
-                notice = "Voice edit applied."
+                notice = wasContinuous ? "Voice edit applied. Continuous dictation stopped." : "Voice edit applied."
                 return
             case .targetNotFound:
                 discardTranscriptAudio(transcript)
@@ -856,7 +864,7 @@ final class SaysoAppModel: ObservableObject {
         let wasDelivered: Bool
         switch output {
         case let .delivered(method):
-            wasDelivered = !pendingDelivery.settings.autoInsert || method != .clipboard
+            wasDelivered = method != .clipboard
         case .pasteFailed:
             wasDelivered = false
         }
@@ -2614,6 +2622,7 @@ private struct SaysoSettingsView: View {
                 Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
                 if model.settings.handsFree {
                     Toggle("Keep listening between phrases", isOn: $model.settings.handsFreeContinuous)
+                        .disabled(!model.settings.autoInsert)
                     HStack {
                         Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
                         Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
@@ -2625,7 +2634,7 @@ private struct SaysoSettingsView: View {
                         Text("Maximum \(captureLabel) phrase")
                         Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
                     }
-                    if model.settings.handsFreeContinuous {
+                    if model.settings.handsFreeContinuous, model.settings.autoInsert {
                         HStack {
                             let maximumSessionSeconds = Int(model.settings.handsFreeMaximumSessionDurationSeconds)
                             let remainingSeconds = maximumSessionSeconds % 60
@@ -2633,10 +2642,15 @@ private struct SaysoSettingsView: View {
                             Text("Maximum \(sessionLabel) continuous session")
                             Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
                         }
-                        Text("Pins the original text target. Ends after this limit or 50 phrases, completing the current phrase safely.")
+                        Text("Pins the original app. Ends after this limit or 50 phrases, completing the current phrase safely.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Text(model.settings.autoInsert
+                        ? "Waits up to 8 seconds for the next phrase."
+                        : "Continuous listening requires Insert final text.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
                 Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
@@ -2829,11 +2843,11 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
-            handsFreeCycle.disarm()
             switch reserveDictationStart() {
             case let .rejected(code, message):
                 return .failure(id: request.id, command: request.command, error: .init(code: code, message: message))
             case .reserved:
+                handsFreeCycle.disarm()
                 break
             }
             Task { [weak self] in
