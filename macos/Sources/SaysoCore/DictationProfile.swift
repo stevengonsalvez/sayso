@@ -22,12 +22,18 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
     public var languageOverride: DictationLanguage?
     /// Per-session speech route. `nil` keeps the normal Sayso route.
     public var routeOverride: ProviderRoute?
+    /// Per-session transcription model override (for BYOK route). `nil` keeps the normal Sayso setting.
+    public var transcriptionModelOverride: String?
     /// Per-session translation switch. `nil` keeps the normal Sayso setting.
     public var translationEnabledOverride: Bool?
     /// Per-session translation destination. `nil` keeps the normal Sayso setting.
     public var outputLanguageOverride: DictationLanguage?
     /// Per-session transcript cleanup switch. `nil` keeps the normal Sayso setting.
     public var cleanupEnabledOverride: Bool?
+    /// Per-session cleanup model override (for BYOK cleanup). `nil` keeps the normal Sayso setting.
+    public var cleanupModelOverride: String?
+    /// Per-session cleanup directives (e.g. custom formatting rules).
+    public var cleanupDirectives: [String]
 
     public init(
         id: String = UUID().uuidString,
@@ -37,9 +43,12 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
         capitalizesSentences: Bool = false,
         languageOverride: DictationLanguage? = nil,
         routeOverride: ProviderRoute? = nil,
+        transcriptionModelOverride: String? = nil,
         translationEnabledOverride: Bool? = nil,
         outputLanguageOverride: DictationLanguage? = nil,
-        cleanupEnabledOverride: Bool? = nil
+        cleanupEnabledOverride: Bool? = nil,
+        cleanupModelOverride: String? = nil,
+        cleanupDirectives: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -48,9 +57,36 @@ public struct DictationProfile: Codable, Equatable, Identifiable, Sendable {
         self.capitalizesSentences = capitalizesSentences
         self.languageOverride = languageOverride
         self.routeOverride = routeOverride
+        self.transcriptionModelOverride = transcriptionModelOverride
         self.translationEnabledOverride = translationEnabledOverride
         self.outputLanguageOverride = outputLanguageOverride
         self.cleanupEnabledOverride = cleanupEnabledOverride
+        self.cleanupModelOverride = cleanupModelOverride
+        self.cleanupDirectives = cleanupDirectives
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, corrections, normalizesWhitespace, capitalizesSentences
+        case languageOverride, routeOverride, transcriptionModelOverride
+        case translationEnabledOverride, outputLanguageOverride
+        case cleanupEnabledOverride, cleanupModelOverride, cleanupDirectives
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        corrections = (try? container.decodeIfPresent([DictationCorrection].self, forKey: .corrections)) ?? []
+        normalizesWhitespace = (try? container.decodeIfPresent(Bool.self, forKey: .normalizesWhitespace)) ?? false
+        capitalizesSentences = (try? container.decodeIfPresent(Bool.self, forKey: .capitalizesSentences)) ?? false
+        languageOverride = try? container.decodeIfPresent(DictationLanguage.self, forKey: .languageOverride)
+        routeOverride = try? container.decodeIfPresent(ProviderRoute.self, forKey: .routeOverride)
+        transcriptionModelOverride = try? container.decodeIfPresent(String.self, forKey: .transcriptionModelOverride)
+        translationEnabledOverride = try? container.decodeIfPresent(Bool.self, forKey: .translationEnabledOverride)
+        outputLanguageOverride = try? container.decodeIfPresent(DictationLanguage.self, forKey: .outputLanguageOverride)
+        cleanupEnabledOverride = try? container.decodeIfPresent(Bool.self, forKey: .cleanupEnabledOverride)
+        cleanupModelOverride = try? container.decodeIfPresent(String.self, forKey: .cleanupModelOverride)
+        cleanupDirectives = (try? container.decodeIfPresent([String].self, forKey: .cleanupDirectives)) ?? []
     }
 
     public static let `default` = DictationProfile(id: "default", name: "Default")
