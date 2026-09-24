@@ -112,7 +112,8 @@ public enum OnboardingReadiness {
         route: ProviderRoute,
         language: DictationLanguage,
         hasLocalModel: Bool,
-        cloudConsentGranted: Bool
+        cloudConsentGranted: Bool,
+        byokConfigured: Bool = false
     ) -> Bool {
         switch route {
         case .local:
@@ -120,7 +121,7 @@ public enum OnboardingReadiness {
         case .appleSpeech:
             cloudConsentGranted
         case .byok:
-            false
+            cloudConsentGranted && byokConfigured
         }
     }
 
@@ -130,6 +131,19 @@ public enum OnboardingReadiness {
         speechRecognitionGranted: Bool
     ) -> Bool {
         microphoneGranted && (route != .appleSpeech || speechRecognitionGranted)
+    }
+
+    public static func isBYOKConfigured(
+        baseURLString: String,
+        transcriptionModel: String,
+        hasAPIKey: Bool
+    ) -> Bool {
+        guard hasAPIKey,
+              let url = URL(string: baseURLString),
+              ProviderEndpointPolicy.allows(url) else {
+            return false
+        }
+        return !transcriptionModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
