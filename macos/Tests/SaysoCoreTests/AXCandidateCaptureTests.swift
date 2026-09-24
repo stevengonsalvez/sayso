@@ -58,6 +58,24 @@ import Testing
     #expect(AXCandidateCapturePolicy.childPaths(from: [], childCount: 4, remainingNodeCapacity: 0).isEmpty)
 }
 
+@Test func directControlsOutrankSelectionOnlyRows() {
+    #expect(AXCandidateCapturePolicy.defersSelectionCandidate(
+        supportsPress: false,
+        supportsFocus: false,
+        supportsSelection: true
+    ))
+    #expect(!AXCandidateCapturePolicy.defersSelectionCandidate(
+        supportsPress: true,
+        supportsFocus: false,
+        supportsSelection: true
+    ))
+    #expect(!AXCandidateCapturePolicy.defersSelectionCandidate(
+        supportsPress: false,
+        supportsFocus: true,
+        supportsSelection: true
+    ))
+}
+
 @Test func captureLocatorIsStableForSameBoundedAncestry() {
     let first = DesktopCandidateID(
         processIdentifier: 12,
