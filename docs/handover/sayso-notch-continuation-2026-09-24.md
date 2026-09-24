@@ -98,7 +98,7 @@ MIT attribution exists in `macos/LICENSES.md`. Any copied or materially adapted 
 
 ## Current verification evidence
 
-All evidence below is from the current source head (`67092c1`).
+All code evidence below is from source head `67092c1`; documentation and verification records updated through current HEAD.
 
 - `swift test`, run in `macos`, passed **201 tests** in 8.4 seconds with zero failures.
 - Package path is `macos/Scripts/package-app.sh`; it builds release, packages the app and verifies its code signature.
@@ -116,7 +116,7 @@ All evidence below is from the current source head (`67092c1`).
 - Real BYOK cloud transcription provider calls require user API keys. Provider integration is verified via protocol unit tests and HTTPS validation; keys stay strictly in Keychain.
 - Automated tests prove component contracts, parsing, safety guards, and integration lifecycles. Real-world acoustic variations depend on hardware microphones.
 
-## Delivered feature parity
+## Delivered parity subset
 
 ### 1. BYOK first-run onboarding delivery
 
@@ -187,7 +187,7 @@ Sayso bridges dictation and desktop control by recognizing spoken mode switches 
 ### 5. Visual notch proof and interaction proof
 
 Physical captures on live macOS display verified and committed in repository under `docs/handover/screenshots/`:
-- **Compact Notch State** (`docs/handover/screenshots/notch-compact-crop.png`): Collapsed HUD (height: 42px) sitting at top center with amber Control pointer glyph. Note: in compact mode, Sayso displays an icon glyph rather than the full wordmark (waveform icon in Dictation mode, or cursor pointer icon in Control mode, per `macos/Sources/SaysoNotch/NotchPanelController.swift:146`). No controls appear in the central area corresponding to the MacBook camera cutout.
+- **Compact Notch State** (`docs/handover/screenshots/notch-compact-crop.png`): Collapsed HUD (height: 42px) sitting at top center with amber Control pointer glyph. Note: in compact mode, Sayso displays an icon glyph rather than the full wordmark (waveform icon in Dictation mode, or cursor pointer icon in Control mode, per `macos/Sources/SaysoNotch/NotchPanelController.swift:146`). There are no visible glyphs under the cutout; the icon sits in the left shoulder.
 - **Expanded Notch State** (`docs/handover/screenshots/notch-expanded-crop.png`): Expanded 210px HUD in Control mode. Top bar shows 6 icon buttons (detach/attach, open window, settings gear, collapse chevron, hide xmark, power quit). Mode picker shows Dictation and Control (Control active in blue). Text area displays "Live words appear here." placeholder and primary button shows "Stop listening".
 - **Detached Floating State** (`docs/handover/screenshots/notch-detached-crop.png`): Floating HUD repositioned on desktop in Control mode displaying live transcribed utterance ("i'm building so jetf is this so it's the sa..."). Main window mode picker is visible in the background behind the floating HUD.
 - **Real Voice Dictation**: Manually observed utterance captured through physical microphone and transcribed live by local FluidAudio engine into the HUD text field.
@@ -261,7 +261,7 @@ Never stage with `git add .` or `git add -A`. Never use unsigned commits. Do not
 ## Continuation protocol
 
 1. Read this file and check `git status --short --branch` before editing.
-2. Verify existing test baseline passes with `swift test` (201 tests across all suites). Start remaining delivery with Open item #1 (Notarization profile) or #2 (Live cloud account verification).
+2. Verify existing test baseline passes with `swift test` (201 tests across all suites). Start next delivery slice with Open item #3 (extended accessibility candidate models, menu-bar items, double-click) which requires no external credentials, or Open item #1/#2 when credentials are provided.
 3. Trace all callers before changing shared settings or session code.
 4. Keep current safety boundaries: secrets stay in Keychain, destructive desktop actions require confirmation gates.
 5. Add behavior-focused tests with any new change.
@@ -275,7 +275,7 @@ The continuation handoff has achieved the following verifiable status:
 - Delivered slices through `67092c1`: BYOK cloud onboarding wizard, per-app profile overrides, directive sync, element bindings, and runner script.
 - All 201 automated tests passing across the test suite (`swift test`).
 - Packaged release binary verified on disk with codesign (`codesign --verify --deep --strict --verbose=2`).
-- Core jev-use desktop control grounded action subset verified (exact controls, pointer rows, navigation keys, redo planner, confirmation gates, and mode switching; extended candidate items tracked in Section 7).
+- Core jev-use desktop control grounded action subset verified (exact controls, pointer rows, navigation keys, redo planner, confirmation gates, and [manual] mode switching; extended candidate items tracked in Section 7).
 - Visual notch HUD verified on macOS display across compact, expanded, and detached presentations with screenshot proof in `docs/handover/screenshots/` (note: outside-click auto-collapse was dropped from initial criteria into open items; HUD collapses via explicit tap or chevron).
 - Live speech transcription into HUD verified manually via local FluidAudio engine.
 - Preserved Keychain-only secret security and confirmation-gated safety boundaries for desktop controls.
@@ -286,6 +286,6 @@ The next owner or agent must verify these gates before extending functionality:
 
 1. Confirm working tree is clean and aligned with `origin/main` (`git status`).
 2. Run `swift test` and confirm all 201 tests pass with zero failures.
-3. Start next delivery slice with Open item #1 (Notarization profile) or #2 (Live cloud provider roundtrip).
+3. Start next delivery slice with Open item #3 (extended candidate models) or Open item #1/#2 when credentials are provided.
 4. Preserve Keychain-only secrets and confirmation gates for destructive actions.
 5. Apply single-concern signed commits (`git commit -S`) and run companion review before push.
