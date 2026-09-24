@@ -332,6 +332,9 @@ import Testing
     )
     #expect(ControlOutcome.effect(for: type, before: before, after: after) == .observed)
     #expect(ControlOutcome.result(for: type, effect: .observed) == "observed text change")
+
+    let select = DesktopAction.select(elementID: "row", expectedFingerprint: before.fingerprint)
+    #expect(ControlOutcome.effect(for: select, before: before, after: before) == .unknown)
 }
 
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
@@ -496,17 +499,20 @@ private func openOutcome(
     let entry = ControlAuditEntry(
         action: .activate(bundleIdentifier: "com.apple.Safari"),
         beforeFingerprint: "before", afterFingerprint: nil,
-        effect: .notObserved, result: "observed target active"
+        effect: .notObserved, executionMethod: .pointerClick, result: "observed target active"
     )
     let encoded = try JSONEncoder().encode(entry)
     #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).effect == .notObserved)
+    #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).executionMethod == .pointerClick)
 
     var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     legacy["effect"] = nil
+    legacy["executionMethod"] = nil
     let decoded = try JSONDecoder().decode(
         ControlAuditEntry.self, from: JSONSerialization.data(withJSONObject: legacy)
     )
     #expect(decoded.effect == .unknown)
+    #expect(decoded.executionMethod == .unspecified)
     #expect(decoded.result == "observed target active")
 }
 
