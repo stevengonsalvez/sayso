@@ -18,4 +18,17 @@ public struct HandsFreeCycle: Equatable, Sendable {
     public func shouldRearm(handsFreeEnabled: Bool, isDictationMode: Bool) -> Bool {
         isArmed && handsFreeEnabled && isDictationMode
     }
+
+    public mutating func consumeDelivery(
+        wasDelivered: Bool,
+        handsFreeEnabled: Bool,
+        isDictationMode: Bool
+    ) -> Bool {
+        let shouldRearm = wasDelivered && shouldRearm(
+            handsFreeEnabled: handsFreeEnabled,
+            isDictationMode: isDictationMode
+        )
+        if !shouldRearm { disarm() }
+        return shouldRearm
+    }
 }
