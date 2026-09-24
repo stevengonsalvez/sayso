@@ -105,6 +105,7 @@ final class SaysoAppModel: ObservableObject {
     private struct PendingDictationDelivery {
         let session: RecordingSession
         let destination: TextOutput.Destination?
+        let liveInsertion: TextOutput.LiveInsertion?
         let settings: SaysoSettings
     }
 
@@ -179,6 +180,7 @@ final class SaysoAppModel: ObservableObject {
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
     private var dictationDestination: TextOutput.Destination?
+    private var liveInsertion: TextOutput.LiveInsertion?
     private var voiceEditCapture: SelectedTextEdit.Capture?
     private var activeRecordingSession: RecordingSession?
     private var activeDictationSettings: SaysoSettings?
@@ -589,6 +591,9 @@ final class SaysoAppModel: ObservableObject {
             destination: dictationDestination?.recordingDestination
         )
         activeRecordingSession = session
+        liveInsertion = !onboardingTest && capture == nil && sessionSettings.livePartialInsertion
+            ? dictationDestination.flatMap(TextOutput.LiveInsertion.init(destination:))
+            : nil
         if onboardingTest {
             onboardingTestSessionID = session.id
             onboardingTestTranscriptID = nil
@@ -648,7 +653,7 @@ final class SaysoAppModel: ObservableObject {
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
                         guard self?.voiceEditCapture == nil else { return }
-                        self?.handleVoiceModeSwitch(text)
+                        self?.handleDictationPartial(text)
                     }
                 },
                 onTermination: { [weak self] termination in
@@ -684,6 +689,12 @@ final class SaysoAppModel: ObservableObject {
                 ?? voiceEditCapture?.targetProcessIdentifier,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier else { return }
         NSRunningApplication(processIdentifier: target)?.activate()
+    }
+
+    private func handleDictationPartial(_ text: String) {
+        handleVoiceModeSwitch(text)
+        guard pendingVoiceMode == nil, settings.mode == .dictation else { return }
+        _ = liveInsertion?.update(text)
     }
 
     private var automationDictationState: String {
@@ -723,6 +734,8 @@ final class SaysoAppModel: ObservableObject {
         }
         guard settings.mode == .dictation else {
             handsFreeCycle.disarm()
+            liveInsertion?.discard()
+            liveInsertion = nil
             discardTranscriptAudio(transcript)
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
@@ -736,6 +749,8 @@ final class SaysoAppModel: ObservableObject {
             case let .applied(edited):
                 let wasContinuous = handsFreeCycle.isArmed
                 handsFreeCycle.disarm()
+                liveInsertion?.discard()
+                liveInsertion = nil
                 var updated = current
                 updated.text = edited
                 updated.translatedText = nil
@@ -881,7 +896,24 @@ final class SaysoAppModel: ObservableObject {
         let historyResult = await history.appendResult(transcript)
         let finalText = transcript.displayText
         let output: TextOutput.DeliveryResult
-        if pendingDelivery.settings.autoInsert {
+        if let liveInsertion = pendingDelivery.liveInsertion {
+            switch liveInsertion.finalize(finalText) {
+            case .applied:
+                output = .delivered(.directInsertion)
+            case .deferred:
+                output = pendingDelivery.settings.autoInsert
+                    ? TextOutput.insertOrCopy(
+                        finalText,
+                        destination: pendingDelivery.destination,
+                        restoreClipboardAfterPaste: pendingDelivery.settings.restoreClipboardAfterPaste
+                    )
+                    : (TextOutput.copy(finalText) ? .delivered(.clipboard) : .pasteFailed(.clipboardUnavailable))
+            case .failed:
+                output = TextOutput.copy(finalText)
+                    ? .delivered(.clipboard)
+                    : .pasteFailed(.clipboardUnavailable)
+            }
+        } else if pendingDelivery.settings.autoInsert {
             output = TextOutput.insertOrCopy(
                 finalText,
                 destination: pendingDelivery.destination,
@@ -1028,11 +1060,13 @@ final class SaysoAppModel: ObservableObject {
         let delivery = PendingDictationDelivery(
             session: session,
             destination: dictationDestination,
+            liveInsertion: liveInsertion,
             settings: activeDictationSettings ?? settings
         )
         activeRecordingSession = nil
         activeDictationSettings = nil
         dictationDestination = nil
+        liveInsertion = nil
         return delivery
     }
 
@@ -1045,6 +1079,8 @@ final class SaysoAppModel: ObservableObject {
 
     private func failActiveSession(_ message: String) {
         handsFreeCycle.disarm()
+        liveInsertion?.discard()
+        liveInsertion = nil
         lastDictationStartError = message
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.fail(message) }
@@ -1056,6 +1092,8 @@ final class SaysoAppModel: ObservableObject {
 
     private func cancelActiveRecordingSession() {
         handsFreeCycle.disarm()
+        liveInsertion?.discard()
+        liveInsertion = nil
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
@@ -1070,6 +1108,8 @@ final class SaysoAppModel: ObservableObject {
         switch termination {
         case .cancelled:
             handsFreeCycle.disarm()
+            liveInsertion?.discard()
+            liveInsertion = nil
             clearOnboardingTest(for: activeRecordingSession)
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
@@ -1274,6 +1314,8 @@ final class SaysoAppModel: ObservableObject {
     private func applyPendingVoiceMode() -> Bool {
         guard let target = pendingVoiceMode else { return false }
         handsFreeCycle.disarm()
+        liveInsertion?.discard()
+        liveInsertion = nil
         pendingVoiceMode = nil
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
@@ -2693,6 +2735,13 @@ private struct SaysoSettingsView: View {
                 }
                 Toggle("Translate final text", isOn: $model.settings.translationEnabled)
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
+                Toggle("Insert partial text live in TextEdit and Notes", isOn: $model.settings.livePartialInsertion)
+                    .disabled(!model.settings.autoInsert)
+                if model.settings.livePartialInsertion {
+                    Text("Live text stays off in browsers, Electron apps and protected fields. Final delivery remains unchanged everywhere else.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("Restore clipboard after paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
                     .disabled(!model.settings.autoInsert)
                 Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
