@@ -536,9 +536,7 @@ final class SaysoAppModel: ObservableObject {
             forBundleIdentifier: destinationApplication?.bundleIdentifier
         )
         activeDictationSettings = sessionSettings
-        let targetProcessIdentifier = handsFreeCycle.isArmed
-            ? handsFreeDestinationProcessIdentifier ?? lastExternalApplication?.processIdentifier
-            : lastExternalApplication?.processIdentifier
+        let targetProcessIdentifier = destinationApplication?.processIdentifier
         if isContinuousRearm {
             guard let targetProcessIdentifier,
                   let bundleIdentifier = handsFreeDestinationBundleIdentifier,
@@ -549,7 +547,9 @@ final class SaysoAppModel: ObservableObject {
                   application.launchDate == launchDate,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else {
                 handsFreeCycle.disarm()
+                activeDictationSettings = nil
                 showPersistentNotice("Continuous dictation stopped because the original app is no longer ready.")
+                notch.hideAfterDelay()
                 return false
             }
         }
@@ -557,7 +557,9 @@ final class SaysoAppModel: ObservableObject {
             guard let destination = handsFreeDestination,
                   TextOutput.isFocused(destination) else {
                 handsFreeCycle.disarm()
+                activeDictationSettings = nil
                 showPersistentNotice("Continuous dictation stopped because the original field is no longer ready.")
+                notch.hideAfterDelay()
                 return false
             }
             dictationDestination = destination
@@ -620,7 +622,9 @@ final class SaysoAppModel: ObservableObject {
                 maximumSessionDuration: settings.handsFreeMaximumSessionDurationSeconds
             ), remainingSessionDuration > 0 else {
                 handsFreeCycle.disarm()
+                failActiveSession("Continuous dictation reached its session limit.")
                 showPersistentNotice("Continuous dictation reached its session limit.")
+                notch.hideAfterDelay()
                 return false
             }
             maximumDuration = .seconds(min(settings.handsFreeMaximumDurationSeconds, remainingSessionDuration))
