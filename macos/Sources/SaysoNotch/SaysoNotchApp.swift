@@ -127,7 +127,13 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    @Published var settings: SaysoSettings
+    @Published var settings: SaysoSettings {
+        didSet {
+            if oldValue.route != settings.route && (oldValue.route == .byok || settings.route == .byok) {
+                settings.cloudConsentGranted = false
+            }
+        }
+    }
     @Published var lastTranscript: Transcript?
     @Published var controlStatus = "Ready"
     @Published var currentSnapshot: DesktopSnapshot?
@@ -194,7 +200,6 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
-    private var routeChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -239,13 +244,6 @@ final class SaysoAppModel: ObservableObject {
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
-        routeChangeObserver = $settings
-            .map(\.route)
-            .removeDuplicates()
-            .dropFirst()
-            .sink { [weak self] _ in
-                self?.settings.cloudConsentGranted = false
-            }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.handleTapDictationShortcut()
         }
