@@ -2760,6 +2760,28 @@ private struct ModelsWorkspace: View {
     }
 }
 
+private struct CleanupDirectivesEditor: View {
+    let title: String
+    @Binding var directives: [String]
+    @State private var text: String = ""
+
+    var body: some View {
+        TextField(title, text: $text)
+            .onAppear {
+                text = directives.joined(separator: ", ")
+            }
+            .onChange(of: text) { newValue in
+                let parsed = newValue
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if parsed != directives {
+                    directives = parsed
+                }
+            }
+    }
+}
+
 private struct SaysoSettingsView: View {
     @ObservedObject var model: SaysoAppModel
     @State private var spoken = ""
@@ -2910,6 +2932,10 @@ private struct SaysoSettingsView: View {
                 TextField("Profile name", text: $model.settings.dictationProfile.name)
                 Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
                 Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
+                CleanupDirectivesEditor(
+                    title: "Cleanup directives (comma-separated)",
+                    directives: $model.settings.dictationProfile.cleanupDirectives
+                )
                 Divider()
                 Text("App profiles use these defaults only for the matching app.")
                     .font(.caption)
@@ -2960,10 +2986,10 @@ private struct SaysoSettingsView: View {
                             get: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride ?? "" },
                             set: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                         ))
-                        TextField("Cleanup directives (comma-separated)", text: Binding(
-                            get: { model.settings.dictationProfileOverrides[index].profile.cleanupDirectives.joined(separator: ", ") },
-                            set: { model.settings.dictationProfileOverrides[index].profile.cleanupDirectives = $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
-                        ))
+                        CleanupDirectivesEditor(
+                            title: "Cleanup directives (comma-separated)",
+                            directives: $model.settings.dictationProfileOverrides[index].profile.cleanupDirectives
+                        )
                         Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
                         Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
                     }
