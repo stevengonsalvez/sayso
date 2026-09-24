@@ -125,12 +125,14 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    func resolvedVirtualKey() throws -> CGKeyCode {
+    func resolvedVirtualKey() async -> CGKeyCode {
         guard let commandCharacter else { return virtualKey }
-        guard let keyCode = Self.currentLayoutKeyCode(producing: commandCharacter) else {
-            throw SaysoError.unavailable("Keyboard layout key '\(commandCharacter)'")
+        return await MainActor.run {
+            Self.resolvedKeyCode(
+                Self.currentLayoutKeyCode(producing: commandCharacter),
+                fallback: virtualKey
+            )
         }
-        return keyCode
     }
 
     static func keyCode(
@@ -143,6 +145,10 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
             if translated(keyCode)?.lowercased() == expected { return keyCode }
         }
         return nil
+    }
+
+    static func resolvedKeyCode(_ translatedKeyCode: CGKeyCode?, fallback: CGKeyCode) -> CGKeyCode {
+        translatedKeyCode ?? fallback
     }
 
     private static func currentLayoutKeyCode(producing character: String) -> CGKeyCode? {
@@ -168,9 +174,9 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
             layout,
             keyCode,
             UInt16(kUCKeyActionDown),
-            0,
+            UInt32((cmdKey >> 8) & 0xFF),
             UInt32(LMGetKbdType()),
-            OptionBits(kUCKeyTranslateNoDeadKeysBit),
+            OptionBits(kUCKeyTranslateNoDeadKeysMask),
             &deadKeyState,
             characters.count,
             &actualLength,
@@ -1154,7 +1160,7 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            let virtualKey = try key.resolvedVirtualKey()
+            let virtualKey = await key.resolvedVirtualKey()
             guard
                   let source = CGEventSource(stateID: .combinedSessionState),
                   let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKey, keyDown: true),
