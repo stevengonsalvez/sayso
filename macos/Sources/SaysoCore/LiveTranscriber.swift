@@ -54,6 +54,23 @@ private final class AudioLevelReporter: Sendable {
     }
 }
 
+struct HandsFreeSpeechGate: Equatable, Sendable {
+    static let requiredSpeechFrames = 3
+
+    private(set) var hasHeardSpeech = false
+    private var consecutiveSpeechFrames = 0
+
+    mutating func observe(level: Float, threshold: Float) {
+        guard !hasHeardSpeech else { return }
+        if level > threshold {
+            consecutiveSpeechFrames += 1
+            hasHeardSpeech = consecutiveSpeechFrames >= Self.requiredSpeechFrames
+        } else {
+            consecutiveSpeechFrames = 0
+        }
+    }
+}
+
 private func audioLevel(in buffer: AVAudioPCMBuffer) -> Float {
     guard let samples = buffer.floatChannelData?[0] else { return 0 }
     var level: Float = 0
@@ -94,6 +111,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     public static let defaultHandsFreeSilenceDuration: Duration = .milliseconds(1_200)
     public static let minimumHandsFreeSilenceDuration: Duration = .milliseconds(500)
     public static let maximumHandsFreeSilenceDuration: Duration = .seconds(5)
+    public static let defaultHandsFreeNoSpeechDuration: Duration = .seconds(8)
     static let handsFreeSpeechThreshold: Float = 0.015
 
     @Published public private(set) var phase: SessionPhase = .idle
@@ -122,9 +140,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var activeLanguage: DictationLanguage = .automatic
     private var activeRoute: ProviderRoute = .appleSpeech
     private var handsFree = false
-    private var hasHeardHandsFreeSpeech = false
+    private var handsFreeSpeechGate = HandsFreeSpeechGate()
     public private(set) var handsFreeSilenceDuration = LiveTranscriber.defaultHandsFreeSilenceDuration
     private var silenceTask: Task<Void, Never>?
+    private var noSpeechTask: Task<Void, Never>?
     private var startGate = TranscriptionRunGate()
     private var appleRecognitionRun = TranscriptionRunGate()
     private var appleFinalizationTask: Task<Void, Never>?
@@ -154,15 +173,6 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             return maximumHandsFreeSilenceDuration
         }
         return duration
-    }
-
-    static func shouldScheduleHandsFreeStop(
-        handsFree: Bool,
-        isListening: Bool,
-        hasHeardSpeech: Bool,
-        inputLevel: Float
-    ) -> Bool {
-        handsFree && isListening && hasHeardSpeech && inputLevel <= handsFreeSpeechThreshold
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
@@ -210,7 +220,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         activeLanguage = language
         activeRoute = route
         self.handsFree = handsFree
-        hasHeardHandsFreeSpeech = false
+        handsFreeSpeechGate = .init()
+        cancelHandsFreeTimers()
         self.handsFreeSilenceDuration = Self.clampedHandsFreeSilenceDuration(handsFreeSilenceDuration)
         error = nil
         partialText = ""
@@ -312,6 +323,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         do {
             audioEngine.prepare()
             try audioEngine.start()
+            scheduleNoSpeechStopIfNeeded()
             return true
         } catch {
             fail(.unavailable("Microphone capture"))
@@ -320,11 +332,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func stop() {
+        cancelHandsFreeTimers()
         if startGate.isPending {
             cancelStartAttempt()
             discardSessionAudio()
-            silenceTask?.cancel()
-            silenceTask = nil
             phase = .idle
             partialText = ""
             terminate(.cancelled)
@@ -346,23 +357,43 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func observeAudio(level: Float) {
         guard handsFree, phase == .listening else { return }
         if level > Self.handsFreeSpeechThreshold {
-            hasHeardHandsFreeSpeech = true
+            handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
+            guard handsFreeSpeechGate.hasHeardSpeech else { return }
             silenceTask?.cancel()
             silenceTask = nil
+            noSpeechTask?.cancel()
+            noSpeechTask = nil
             return
         }
-        guard Self.shouldScheduleHandsFreeStop(
-            handsFree: handsFree,
-            isListening: phase == .listening,
-            hasHeardSpeech: hasHeardHandsFreeSpeech,
-            inputLevel: level
-        ), silenceTask == nil else { return }
+        handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
+        guard handsFreeSpeechGate.hasHeardSpeech, silenceTask == nil else { return }
         let silenceDuration = handsFreeSilenceDuration
         silenceTask = Task { [weak self] in
             try? await Task.sleep(for: silenceDuration)
             guard !Task.isCancelled else { return }
             self?.stop()
         }
+    }
+
+    private func scheduleNoSpeechStopIfNeeded() {
+        guard handsFree else { return }
+        noSpeechTask?.cancel()
+        let duration = max(handsFreeSilenceDuration, Self.defaultHandsFreeNoSpeechDuration)
+        noSpeechTask = Task { [weak self] in
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled,
+                  let self,
+                  self.phase == .listening,
+                  !self.handsFreeSpeechGate.hasHeardSpeech else { return }
+            self.stop()
+        }
+    }
+
+    private func cancelHandsFreeTimers() {
+        silenceTask?.cancel()
+        silenceTask = nil
+        noSpeechTask?.cancel()
+        noSpeechTask = nil
     }
 
     private func receiveAppleRecognition(
@@ -470,6 +501,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
+            scheduleNoSpeechStopIfNeeded()
             return true
         } catch {
             guard isStartCurrent(attempt) else { return false }
@@ -545,6 +577,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
+            scheduleNoSpeechStopIfNeeded()
             return true
         } catch {
             guard isStartCurrent(attempt) else { return false }
@@ -562,8 +595,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard let runID = fluidAudioRunID, let session = fluidAudioSession else { return }
         phase = .processing
         stopAudioEngine()
-        silenceTask?.cancel()
-        silenceTask = nil
+        cancelHandsFreeTimers()
         let pump = fluidAudioPump
         Task { [weak self] in
             let terminal = await pump?.closeAndDrain()
@@ -596,8 +628,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard let runID = sherpaPunjabiRunID, let session = sherpaPunjabiSession else { return }
         phase = .processing
         stopAudioEngine()
-        silenceTask?.cancel()
-        silenceTask = nil
+        cancelHandsFreeTimers()
         let pump = sherpaPunjabiPump
         Task { [weak self] in
             let terminal = await pump?.closeAndDrain()
@@ -717,8 +748,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         stopAudioEngine()
         recognitionRequest?.endAudio()
-        silenceTask?.cancel()
-        silenceTask = nil
+        cancelHandsFreeTimers()
         appleFinalizationTask?.cancel()
         appleFinalizationTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
@@ -743,8 +773,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         stopAudioEngine()
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
-        silenceTask?.cancel()
-        silenceTask = nil
+        cancelHandsFreeTimers()
         appleFinalizationTask?.cancel()
         appleFinalizationTask = nil
         appleRecognitionRun.cancel()
