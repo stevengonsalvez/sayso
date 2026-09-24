@@ -521,10 +521,10 @@ public enum ControlOutcome {
         case .type:
             guard let after else { return .unknown }
             return after.focusedValue != before.focusedValue ? .observed : .notObserved
-        case .press, .focus, .scroll:
+        case .press, .focus, .scroll, .clickAt:
             guard let after else { return .unknown }
             return after.fingerprint != before.fingerprint ? .observed : .notObserved
-        case .select, .clickAt:
+        case .select:
             // The executor reads AXSelected after the action. Selection is intentionally absent from this fingerprint.
             return .unknown
         case .key:
@@ -548,7 +548,7 @@ public enum ControlOutcome {
         case .select:
             return observed ? "observed row selection" : "no observed row selection"
         case .clickAt:
-            return observed ? "observed pointer row selection" : "no observed pointer row selection"
+            return observed ? "observed pointer row action" : "no observed pointer row action"
         case .key:
             return "keyboard event sent, effect not attributable"
         case .open:
@@ -1227,15 +1227,17 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            let activation = try candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
+            let activation = try await candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
             let snapshot = try? capture(application: targetApplication)
             switch activation {
-            case let .pointer(selectionChanged):
+            case .pointerSelectionChanged:
                 directObservation = .init(
                     snapshot: snapshot,
                     action: step.action,
-                    effect: selectionChanged ? .observed : .notObserved
+                    effect: .observed
                 )
+            case .pointerWithoutSelectionEvidence:
+                break
             case let .accessibilitySelection(selectionChanged):
                 directObservation = .init(
                     snapshot: snapshot,
@@ -1383,7 +1385,7 @@ public final class AXDesktopController: @unchecked Sendable {
         openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
-        case .type, .press, .focus, .scroll:
+        case .type, .press, .focus, .scroll, .clickAt:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
@@ -1402,7 +1404,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 effect: ControlOutcome.effect(for: action, before: before, after: observation.snapshot)
             )
 
-        case .select, .clickAt, .key, .openFolder:
+        case .select, .key, .openFolder:
             return .init(snapshot: nil, action: action, effect: .unknown)
 
         case let .open(url):
