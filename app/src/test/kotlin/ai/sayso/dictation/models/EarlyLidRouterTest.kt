@@ -2,6 +2,7 @@ package ai.sayso.dictation.models
 
 import ai.sayso.dictation.core.AudioClip
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -145,28 +146,29 @@ class EarlyLidRouterTest {
     }
 
     @Test
-    fun `classifyAudioSnippet returns English for short or empty input`() {
-        assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(0)))
-        assertEquals(DetectedLanguage.ENGLISH, EarlyLidRouter.classifyAudioSnippet(ByteArray(1000)))
+    fun `isNeuralLidAvailable returns false for null or empty directory`() {
+        assertFalse(EarlyLidRouter.isNeuralLidAvailable(null))
+        val emptyDir = java.io.File(System.getProperty("java.io.tmpdir"), "empty_lid_${System.currentTimeMillis()}").apply { mkdirs() }
+        try {
+            assertFalse(EarlyLidRouter.isNeuralLidAvailable(emptyDir))
+        } finally {
+            emptyDir.deleteRecursively()
+        }
     }
 
     @Test
-    fun `acoustic fallback classifies voiced audio to installed Tamil model`() {
-        // Generate 1 second of 200 Hz tone + 800 Hz harmonic (voiced vowel characteristics)
-        val pcm = ByteArray(32000)
-        for (i in 0 until 16000) {
-            val t = i.toDouble() / 16000.0
-            val v = (Math.sin(2.0 * Math.PI * 200.0 * t) * 10000.0 + Math.sin(2.0 * Math.PI * 800.0 * t) * 6000.0).toInt().toShort()
-            pcm[i * 2] = (v.toInt() and 0xFF).toByte()
-            pcm[i * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
+    fun `isNeuralLidAvailable returns true only when encoder and decoder onnx files are present in whisper dir`() {
+        val testDir = java.io.File(System.getProperty("java.io.tmpdir"), "test_lid_${System.currentTimeMillis()}").apply { mkdirs() }
+        val whisperDir = java.io.File(testDir, "sherpa-onnx-whisper-tiny").apply { mkdirs() }
+        try {
+            assertFalse(EarlyLidRouter.isNeuralLidAvailable(testDir))
+            java.io.File(whisperDir, "tiny-encoder.onnx").createNewFile()
+            assertFalse(EarlyLidRouter.isNeuralLidAvailable(testDir))
+            java.io.File(whisperDir, "tiny-decoder.onnx").createNewFile()
+            assertTrue(EarlyLidRouter.isNeuralLidAvailable(testDir))
+        } finally {
+            testDir.deleteRecursively()
         }
-
-        val result = EarlyLidRouter.classifyAudioSnippet(
-            pcmBytes = pcm,
-            sampleRate = 16000,
-            installedModelIds = setOf(defaultEnglishModel, EarlyLidRouter.MODEL_TAMIL),
-        )
-        assertEquals(DetectedLanguage.TAMIL, result)
     }
 
     @Test
@@ -182,7 +184,8 @@ class EarlyLidRouterTest {
                 modelsDir = emptyDir,
             )
             assertNotNull(decision)
-            assertNotNull(decision.recommendedModelId)
+            assertEquals(defaultEnglishModel, decision.recommendedModelId)
+            assertNull(decision.notice)
         } finally {
             emptyDir.deleteRecursively()
         }
