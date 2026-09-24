@@ -312,6 +312,30 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
             overrides: dictationProfileOverrides
         ).resolve(forBundleIdentifier: bundleIdentifier)
     }
+
+    /// Captures app-specific choices for one dictation session without changing
+    /// the user's stored defaults.
+    public func resolvedDictationSettings(forBundleIdentifier bundleIdentifier: String?) -> Self {
+        let profile = resolvedDictationProfile(forBundleIdentifier: bundleIdentifier)
+        var resolved = self
+        resolved.dictationProfile = profile
+        if let language = profile.languageOverride {
+            resolved.language = language
+        }
+        if let route = profile.routeOverride {
+            resolved.route = route
+        }
+        if let translationEnabled = profile.translationEnabledOverride {
+            resolved.translationEnabled = translationEnabled
+        }
+        if let outputLanguage = profile.outputLanguageOverride, outputLanguage != .automatic {
+            resolved.outputLanguage = outputLanguage
+        }
+        if let cleanupEnabled = profile.cleanupEnabledOverride {
+            resolved.cleanupEnabled = cleanupEnabled
+        }
+        return resolved
+    }
 }
 
 public enum LexiconCorrections {
