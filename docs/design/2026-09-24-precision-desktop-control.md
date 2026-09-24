@@ -53,14 +53,11 @@
                    ambiguous (N matches)?│
                    ├──yes (interactive)─▶ [NotchHUD Badge Overlay (1..N)]
                    │                        │ (NSPanel .nonactivatingPanel)
-                   │                        ▼ (Spoken "badge 2" within 5s / VAD)
-                   │                      [Re-capture AX + verify id, title, bounds]
+                   │                        ▼ (Spoken "badge 2" within 5s / VAD, max 15s)
+                   │                      [Re-capture AX + verify id, title, bounds ±2pt]
                    │                        │ (Re-bind expectedFingerprint)
+                   │                        │ (Join before PreFlightCheck)
                    │                        ▼
-                   │                      [Destructive Gate?]──yes──▶ [NotchHUD Banner]
-                   │                        │ no                       │ user confirms
-                   │                        ▼──────────────────────────┘
-                   │                        │
                    ├──yes (headless)────▶ [Caller returns ambiguous error JSON]
                    │
                    no (1 match)
@@ -82,7 +79,7 @@
                      │               │ Target App  │
                      ▼               └──────┬──────┘
            ┌───────────────────┐            │
-           │ ControlObservation│◀───────────┘ AX diff (8 captures / 875ms poll)
+           │ ControlObservation│◀───────────┘ AX diff (8 captures / 1200ms deadline)
            └─────────┬─────────┘
                      │
                      ▼
@@ -101,15 +98,24 @@
 | Existing Type | Target Layer | Role in Jev Fast-Path | Action |
 |---|---|---|---|
 | ControlPlanner | SaysoCore | Sub-15ms closed-vocab intent parsing alongside LLM fallback | Extended: > hierarchy parsed inside menu without splitting |
-| AXCandidateCapture | SaysoCore | Bounded frontmost-window AX traversal (<25ms) | Extended: off-main background task with 500ms monotonic clock deadline |
+| AXCandidateCapture | SaysoCore | Bounded frontmost-window AX traversal (p50 < 20ms, p95 < 35ms) | Extended: off-main background task with 500ms monotonic clock deadline |
 | DesktopCandidates | SaysoCore | Element representation: stable locator, role, state | Extended: bounds: CGRect? for spatial badge layout |
-| DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y + 4pt) |
+| DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y + 4pt); returns .ambiguous |
 | ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case in all 7 switches; destructive check wins |
 | AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedFingerprint:) and 250ms timeout |
-| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; unverified yields .effectUnknown |
+| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; 1200ms total observe deadline |
 | ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Kept: orchestrator calls fail() immediately on action failure |
 | NotchHUD | SaysoNotch | Visual reticle, badge overlay, and telemetry breakdown | Extended: spatial badge rendering on nonactivating panel using Cocoa coordinates |
-| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: per-entry decode preserving raw data on unknown action cases |
+| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: Phase 1 per-entry decode preserving raw data on unknown action cases |
+
+## Migration Order & Schema Resilience for ControlAuditStore
+
+To prevent audit history wipe on app rollback or version downgrade, schema changes follow a strict two-phase migration order:
+
+| Phase | Scope | Deployment Rule & Disk Invariant |
+|---|---|---|
+| Phase 1: Storage Resilience | Ship per-entry decode in ControlAuditStore | Decodes array entries individually from disk. Unrecognized actions or schema variants are parsed as RawControlAuditEntry (preserving raw [String: AnyCodable] dictionary). On write, raw entries are preserved and re-serialized in original sequence. Raw entries count toward the 500-entry retention cap. Ships in production release before Phase 2. |
+| Phase 2: Action Extension | Ship DesktopAction.menu | Introduces .menu action type. Older builds running Phase 1 code safely preserve .menu entries on downgrade/rollback without failing full-array decode or dropping history on subsequent append. |
 
 ## Data model
 
@@ -120,20 +126,19 @@
 │ title    String            │         │ confidence Double          │
 │ bounds   CGRect?           │         │ reason     String          │
 │ identifier String?         │         │ candidateTitle String?     │
-│ state    CandState         │         │ candidateID CandidateID?   │
-│   isEnabled            Bool│         │ requiresConfirmation Bool  │
-│   isProtected          Bool│         └─────────────┬──────────────┘
-│   supportsPress        Bool│                       │ 1:1
-│   supportsFocus        Bool│                       ▼
-│   supportsSelection    Bool│         ┌─ ExecutionTelemetry ───────┐
-│   supportsPointerClick Bool│         │ stepId     UUID            │
-└────────────────────────────┘         │ planMs     Double          │
-                                       │ captureMs  Double          │
-┌─ DesktopAction.menu ───────┐         │ dispatchMs Double          │
-│ path     [String]          │──▶      │ verifyMs   Double          │
-│ expectedFingerprint String │         │ totalMs    Double          │
-└────────────────────────────┘         │ stepResult StepResult      │
-                                       └────────────────────────────┘
+│ state    CandState         │         │ requiresConfirmation Bool  │
+│   isEnabled            Bool│         └─────────────┬──────────────┘
+│   isProtected          Bool│                       │ 1:1
+│   supportsPress        Bool│                       ▼
+│   supportsFocus        Bool│         ┌─ ExecutionTelemetry ───────┐
+│   supportsSelection    Bool│         │ stepId     UUID            │
+│   supportsPointerClick Bool│         │ planMs     Double          │
+└────────────────────────────┘         │ captureMs  Double          │
+                                       │ dispatchMs Double          │
+┌─ DesktopAction.menu ───────┐         │ verifyMs   Double          │
+│ path     [String]          │──▶      │ totalMs    Double          │
+│ expectedFingerprint String │         │ stepResult StepResult      │
+└────────────────────────────┘         └────────────────────────────┘
 ```
 
 | Entity | Key Fields | Relationships |
@@ -141,7 +146,7 @@
 | DesktopCandidate | id, role, title, bounds, identifier, state | Source for target resolution; bounds drives spatial badge layout |
 | DesktopCandidateID | processIdentifier, windowTitle, role, identifier, ancestry | Base64-encoded structural locator |
 | DesktopCandidateState | isEnabled, isProtected, supportsPress, supportsFocus, supportsSelection, supportsPointerClick | Checked during PreFlightCheck |
-| ControlPlanStep | id, action, confidence, reason, candidateTitle, candidateID, requiresConfirmation | Extended with candidateID; executed by AXDesktopController |
+| ControlPlanStep | id, action, confidence, reason, candidateTitle, requiresConfirmation | Action (.press, .select, .focus, .clickAt) carries elementID; executed by AXDesktopController |
 | DesktopAction.menu | path: [String], expectedFingerprint: String | Traversed via AXMenuBar; protected by expectedFingerprint TOCTOU guard |
 | ExecutionTelemetry | stepId, planMs, captureMs, dispatchMs, verifyMs, totalMs, stepResult | Matches ControlPlanStep.id; decoded optionally in ControlAuditEntry |
 
@@ -150,11 +155,11 @@
 | Phase | Happy-Path Target | Worst-Case Bound | Note |
 |---|---|---|---|
 | Intent Parsing | 8ms | 15ms | In-memory closed-vocabulary pattern match |
-| AX Candidate Capture | 12ms | 750ms | 500ms soft clock check plus single 250ms call overrun |
+| AX Candidate Capture | 20ms (p50) | 750ms | 500ms soft clock check plus single 250ms call overrun |
 | Pre-flight Attribute Check | 2ms | 250ms | Single-element AXUIElementSetMessagingTimeout |
 | Semantic Action Dispatch | 2ms | 10ms | Direct AXUIElementPerformAction |
-| Post-assert Diff | 125ms (first poll tick) | 875ms | 8 captures with 7 intervals of 125ms |
-| Total (Benign Fast-Path) | ~150ms | ~1.9s | ASR streaming audio transcription tracked separately |
+| Post-assert Diff | 15ms (initial check) | 1200ms | Immediate check at 0ms sleep; 1200ms total observe deadline (up to 8 captures, 100ms cap each) |
+| Total (Benign Fast-Path) | ~47ms | ~2.2s | Fast-path p50 target ~47ms; worst-case bounded by deadlines |
 
 ## Interface
 
@@ -166,8 +171,8 @@
 │ Resolution: Full path allowlist      Risk: Benign      │
 │ Pre: Enabled, Unprotected, Timeout 250ms [PASS]        │
 │ Action: AXUIElementPerformAction [DISPATCHED in 2ms]   │
-│ Post: Window Frame Resized [VERIFIED in 125ms]         │
-│ Target Budget: Plan 8ms, Capture 12ms, Exec 130ms      │
+│ Post: Window Frame Resized [VERIFIED in 15ms]          │
+│ Target Budget: Plan 8ms, Capture 20ms, Exec 19ms       │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -192,13 +197,13 @@ Badge Overlay (Ambiguous Candidates Only):
 Fast path (Single unambiguous candidate, canAutoRun == true, semantic AX only):
 
 ```
-[Voice Cmd] ──Plan (8ms)──▶ [AX Capture (12ms)] ──Pre-check (2ms)──▶ [AX Dispatch (2ms)] ──Post-assert (125ms)──▶ [Done (~150ms target)]
+[Voice Cmd] ──Plan (8ms)──▶ [AX Capture (20ms)] ──Pre-check (2ms)──▶ [AX Dispatch (2ms)] ──Post-assert (15ms)──▶ [Done (~47ms target)]
 ```
 
 Ambiguous match path (Multiple targets sharing label; destructive badge requires confirmation):
 
 ```
-[Voice Cmd] ──Resolver (ambiguous)──▶ [Badge Overlay 1..N] ──voice "badge 1"──▶ [Re-capture AX + verify id, title, bounds ±2pt] ──Re-bind fingerprint──▶ [Destructive Gate: "Cancel" requires review] ──▶ [NotchHUD Confirmation Banner] ──user confirms──▶ [Dispatch] ──▶ [Done]
+[Voice Cmd] ──Resolver (ambiguous)──▶ [Badge Overlay 1..N (max 15s)] ──voice "badge 1"──▶ [Re-capture AX + verify id, title, bounds ±2pt] ──Re-bind fingerprint──▶ [PreFlightCheck] ──▶ [Destructive Gate: "Cancel" requires review] ──▶ [NotchHUD Confirmation Banner] ──user confirms──▶ [Dispatch] ──▶ [Done]
 ```
 
 Menu hierarchy path (Unlisted / destructive menu requires confirmation):
@@ -222,7 +227,7 @@ Multi-step chain execution semantics:
 | Guard | Rule | Enforcement Mechanism |
 |---|---|---|
 | Protected Fields | Never synthesize input into secure fields | Excluded by DesktopCandidateState.isProtected |
-| Exact Matching | Single unconfirmed action requires 1 exact match | ControlPlanner throws invalidAction on ambiguity in headless mode |
+| Exact Matching | Single unconfirmed action requires 1 exact match | DesktopCandidateResolver flags ambiguity; headless caller returns ambiguity error JSON; interactive caller shows badge overlay |
 | Interactive Disambiguation | Multiple matches display numbered badges | App controller catches ambiguous resolution and shows overlay |
 | Badge Disambiguation Only | Badge selection disambiguates target, never confirms | Destructive badge targets (e.g. Cancel) still require confirmation banner |
 | Non-Activating Overlay | Badge window must not steal target focus | NSPanel with .nonactivatingPanel style mask preserves active app |
@@ -231,7 +236,7 @@ Multi-step chain execution semantics:
 | Triple Revalidation | UI changes during overlay abort action | Re-capture frontmost AX tree; assert candidateID, title, AND bounds (±2pt) |
 | Fingerprint Re-binding | Re-bound snapshot fingerprint after overlay | Rebuild plan step with fresh expectedFingerprint to prevent TOCTOU rejection |
 | Badge Grammar Prefix | Spoken badge selection requires prefix | "badge <N>" required; bare digits ignored on open mic |
-| Badge VAD Timeout | Overlay dismisses after 5s or VAD silence | 5.0s timer extended on voice activity detection speech onset |
+| Badge VAD Timeout | Overlay dismisses after 5s silence or 15s max | 5.0s timer extended on voice activity detection; hard cap of 15.0s overlay lifetime prevents mic chatter lock |
 | Destructive Actions | Actions in ControlPolicy.destructiveWords require review | ControlPolicy.requiresConfirmation gates execution |
 | Pointer Click Safety | Raw CGEvent mouse clicks always require review | ControlPolicy.requiresConfirmation returns true for .clickAt |
 | Keystroke Safety | Keyboard shortcuts always require review | ControlPolicy.requiresConfirmation returns true for .key |
@@ -239,9 +244,10 @@ Multi-step chain execution semantics:
 | Menu Exhaustive Switches | Explicit .menu branches in all 7 switches; ban default | validatedNextTargetBundleIdentifier, isDestructive, requiresActiveTarget, requiresConfirmation, effect, result, execute |
 | Menu Fingerprint Guard | Menu actions bound to planned window | DesktopAction.menu carries expectedFingerprint to prevent TOCTOU mismatch |
 | Active Menu Target | Menus only target frontmost application | ControlPolicy.requiresActiveTarget returns true for .menu |
+| Menu Inspection Traversal | Opening parent menu for dynamic children allowed without confirmation | Opening menu bar item or submenu for lazy evaluation (menuNeedsUpdate) is non-destructive navigation (no confirmation required). If cancelled or unlocated, controller dismisses menu cleanly via AXCancel or Escape |
 | Bounded AX Timeout | Cross-process AX queries cannot hang UI | AXUIElementSetMessagingTimeout 0.25s per call, 500ms soft clock check |
-| Resilient Audit Storage | Journal schema changes must never wipe history | ControlAuditStore decodes entries individually, preserving raw un-decodable entries |
-| Observation Polling | State diff observation capped at 875ms | 8 captures with 7 intervals of 125ms |
+| Resilient Audit Storage | Journal schema changes must never wipe history | ControlAuditStore decodes entries individually, preserving raw un-decodable entries. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save |
+| Observation Polling | State diff observation capped at 1200ms deadline | Up to 8 captures with 100ms cap each and 125ms intervals; initial check at 0ms before first sleep; overall observe deadline capped at 1200ms |
 | Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive no-effects |
 
 Safe menu allowlist (exact full path match, standard AppKit):
@@ -254,9 +260,9 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 |---|---|---|
 | AX API Timeout | Notch HUD warning banner | Abort action after capture clock deadline, alert in HUD |
 | Stale Target on Badge | Notch HUD alert banner | Abort dispatch when candidateID, title, or bounds (±2pt) mismatch; refresh list |
-| Badge Overlay Timeout | Overlay dismisses silently | Auto-dismiss after 5s VAD timeout, record timeout in audit |
-| Post-assert Timeout | Notch HUD failed assertion | Report unobserved state after 875ms, offer manual retry |
-| Invalid Menu Path | Notch HUD path error | List available items under parent menu (fallback to opening parent for lazy menus) |
+| Badge Overlay Timeout | Overlay dismisses silently | Auto-dismiss after 5s silence or 15s hard cap, record timeout in audit |
+| Post-assert Timeout | Notch HUD failed assertion | Report unobserved state after 1200ms observe deadline, offer manual retry |
+| Invalid Menu Path | Notch HUD path error | List available items under parent menu (non-destructive inspection; dismisses menu on cancel/failure) |
 
 ## Testing strategy
 
