@@ -311,4 +311,14 @@
     <string name="wake_word_phrase_both">\"Hey Sayso\" or \"Sayso\" (Recommended)</string>
     <string name="wake_word_phrase_hey_only">\"Hey Sayso\" only (Strict)</string>
     <string name="wake_word_phrase_sayso_only">\"Sayso\" only (Fast)</string>
+
+    <!-- Wake Word Sensitivity Selection -->
+    <string name="wake_word_sensitivity_label">Wake word sensitivity</string>
+    <string name="wake_word_sensitivity_subtitle">Adjust trigger threshold and mic boost for quiet voice or distant speaking</string>
+    <string name="wake_word_sensitivity_high">High (Desk / Quiet voice)</string>
+    <string name="wake_word_sensitivity_high_desc">Maximum sensitivity with 1.5x mic boost. Best for hands-free desk use.</string>
+    <string name="wake_word_sensitivity_medium">Medium (Recommended)</string>
+    <string name="wake_word_sensitivity_medium_desc">Balanced trigger sensitivity for standard daily use.</string>
+    <string name="wake_word_sensitivity_low">Low (Noisy environments)</string>
+    <string name="wake_word_sensitivity_low_desc">Conservative trigger threshold to prevent accidental triggers in noisy spaces.</string>
 </resources>
