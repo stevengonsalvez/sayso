@@ -495,6 +495,7 @@ final class SaysoAppModel: ObservableObject {
                 language: settings.language,
                 route: settings.route,
                 handsFree: settings.handsFree,
+                handsFreeSilenceDuration: .seconds(settings.handsFreeSilenceSeconds),
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
@@ -2497,7 +2498,13 @@ private struct SaysoSettingsView: View {
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
                 Toggle("Restore clipboard after paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
                     .disabled(!model.settings.autoInsert)
-                Toggle("Hands-free, stop after 1.2 seconds of silence", isOn: $model.settings.handsFree)
+                Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
+                if model.settings.handsFree {
+                    HStack {
+                        Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
+                        Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
+                    }
+                }
                 Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
                 Text("New audio stays on this Mac. Existing History audio remains until deleted.")
                     .font(.caption)
