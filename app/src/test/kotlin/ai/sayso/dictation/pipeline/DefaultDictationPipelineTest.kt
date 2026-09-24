@@ -547,22 +547,14 @@ class DefaultDictationPipelineTest {
     }
 
     @Test
-    fun `auto-routing with parakeet default model routes to installed tamil model on voiced speech`() = runTest {
-        val pcm = ByteArray(32000)
-        for (i in 0 until 16000) {
-            val t = i.toDouble() / 16000.0
-            val v = (Math.sin(2.0 * Math.PI * 200.0 * t) * 10000.0 + Math.sin(2.0 * Math.PI * 800.0 * t) * 6000.0).toInt().toShort()
-            pcm[i * 2] = (v.toInt() and 0xFF).toByte()
-            pcm[i * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
-        }
-        val voicedClip = AudioClip(pcm, 16000)
-
+    fun `auto-routing without neural lid model and no language override safely preserves configured model without guessing`() = runTest {
+        val testClip = AudioClip(ByteArray(32000), 16000)
         val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
         val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
         val localProvider = FakeSttProvider(
             "local",
             needsApiKey = false,
-            result = TranscriptionResult.Success("வணக்கம்"),
+            result = TranscriptionResult.Success("Hello world"),
             models = listOf(tamilModel, englishModel),
         )
 
@@ -575,34 +567,25 @@ class DefaultDictationPipelineTest {
         val result = pipeline(
             settings,
             stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
-        ).run(voicedClip)
+        ).run(testClip)
 
-        assertEquals("வணக்கம்", result.text)
-        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+        assertEquals("Hello world", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, result.entry.sttModelId)
+        assertNull(result.notice)
     }
 
     @Test
-    fun `auto-routing with parakeet default model retains english on english speech even if previous language was ta`() = runTest {
-        // Generate high-frequency audio (e.g. English fricatives / high ZCR > 0.08)
-        val pcm = ByteArray(32000)
-        for (i in 0 until 16000) {
-            val t = i.toDouble() / 16000.0
-            val v = (Math.sin(2.0 * Math.PI * 2500.0 * t) * 10000.0).toInt().toShort()
-            pcm[i * 2] = (v.toInt() and 0xFF).toByte()
-            pcm[i * 2 + 1] = ((v.toInt() shr 8) and 0xFF).toByte()
-        }
-        val englishClip = AudioClip(pcm, 16000)
-
+    fun `auto-routing with indic language preference routes to installed indic model when lid absent`() = runTest {
+        val testClip = AudioClip(ByteArray(32000), 16000)
         val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
         val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
         val localProvider = FakeSttProvider(
             "local",
             needsApiKey = false,
-            result = TranscriptionResult.Success("Hello world"),
+            result = TranscriptionResult.Success("வணக்கம்"),
             models = listOf(tamilModel, englishModel),
         )
 
-        // User had language="ta" from manual mode earlier, but now enabled auto routing
         val settings = InMemorySettings(
             sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT,
             autoLanguageRoutingEnabled = true,
@@ -612,9 +595,38 @@ class DefaultDictationPipelineTest {
         val result = pipeline(
             settings,
             stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
-        ).run(englishClip)
+        ).run(testClip)
+
+        assertEquals("வணக்கம்", result.text)
+        assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, result.entry.sttModelId)
+        assertEquals("Auto-routed to AI4Bharat Tamil", result.notice)
+    }
+
+    @Test
+    fun `auto-routing with indic default and english language preference routes to parakeet model`() = runTest {
+        val testClip = AudioClip(ByteArray(32000), 16000)
+        val tamilModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL, "Tamil")
+        val englishModel = ai.sayso.dictation.core.SttModel(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, "English")
+        val localProvider = FakeSttProvider(
+            "local",
+            needsApiKey = false,
+            result = TranscriptionResult.Success("Hello world"),
+            models = listOf(tamilModel, englishModel),
+        )
+
+        val settings = InMemorySettings(
+            sttModelId = ai.sayso.dictation.models.EarlyLidRouter.MODEL_TAMIL,
+            autoLanguageRoutingEnabled = true,
+            language = "en",
+        )
+
+        val result = pipeline(
+            settings,
+            stt = FakeSttCatalog(listOf(localProvider), localFallbackModelId = englishModel.id),
+        ).run(testClip)
 
         assertEquals("Hello world", result.text)
         assertEquals(ai.sayso.dictation.models.EarlyLidRouter.MODEL_ENGLISH_DEFAULT, result.entry.sttModelId)
+        assertEquals("Auto-routed to Parakeet English", result.notice)
     }
 }
