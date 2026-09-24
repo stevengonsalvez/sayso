@@ -62,8 +62,11 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
     case down
     case left
     case right
+    case space
     case `return`
     case escape
+    case undo
+    case closeWindow
     case goBack
     case goForward
     case nextTab
@@ -76,6 +79,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case "down", "down arrow": .down
         case "left", "left arrow": .left
         case "right", "right arrow": .right
+        case "space", "spacebar": .space
         case "return", "enter": .return
         case "escape", "esc": .escape
         default: nil
@@ -89,8 +93,11 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
         case .down: 125
         case .left: 123
         case .right: 124
+        case .space: 49
         case .return: 36
         case .escape: 53
+        case .undo: 6
+        case .closeWindow: 13
         case .goBack: 33
         case .goForward: 30
         case .nextTab: 48
@@ -100,8 +107,7 @@ public enum DesktopKey: String, Codable, CaseIterable, Sendable {
 
     var modifierFlags: CGEventFlags {
         switch self {
-        case .goBack: .maskCommand
-        case .goForward: .maskCommand
+        case .goBack, .goForward, .undo, .closeWindow: .maskCommand
         case .nextTab: .maskControl
         case .previousTab: [.maskControl, .maskShift]
         default: []
@@ -623,6 +629,20 @@ public enum ControlPlanner {
     ) throws -> ControlPlanStep {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
+        if normalized.hasPrefix("scroll ") {
+            let words = normalized.split(separator: " ")
+            if words.count == 4, (words[3] == "line" || words[3] == "lines") {
+                guard let count = Int(words[2]), (1 ... 100).contains(count), words[1] == "up" || words[1] == "down" else {
+                    throw SaysoError.invalidAction("Scroll counts must be 1 to 100 lines.")
+                }
+                let lines = words[1] == "up" ? count : -count
+                return .init(
+                    action: .scroll(lines: lines, expectedFingerprint: snapshot.fingerprint),
+                    confidence: 0.90,
+                    reason: "Exact scroll command"
+                )
+            }
+        }
         if normalized == "scroll down" || normalized == "scroll down a bit" {
             return .init(action: .scroll(lines: -6, expectedFingerprint: snapshot.fingerprint), confidence: 0.90, reason: "Exact scroll command")
         }
@@ -661,6 +681,22 @@ public enum ControlPlanner {
                 requiresConfirmation: true
             )
         }
+        if normalized == "undo" {
+            return .init(
+                action: .key(.undo, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Undo",
+                requiresConfirmation: true
+            )
+        }
+        if normalized == "close window" {
+            return .init(
+                action: .key(.closeWindow, expectedFingerprint: snapshot.fingerprint),
+                confidence: 0.85,
+                reason: "Close window",
+                requiresConfirmation: true
+            )
+        }
         if normalized.hasPrefix("type ") {
             let text = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
             guard !text.isEmpty else { throw SaysoError.invalidAction("Say what to type after 'type'.") }
@@ -669,7 +705,7 @@ public enum ControlPlanner {
         if normalized.hasPrefix("press ") {
             let keyName = String(trimmed.dropFirst(6))
             guard let key = DesktopKey.parse(keyName) else {
-                throw SaysoError.invalidAction("Press supports: tab, arrows, return, or escape.")
+                throw SaysoError.invalidAction("Press supports: tab, arrows, space, return, or escape.")
             }
             return .init(
                 action: .key(key, expectedFingerprint: snapshot.fingerprint),
@@ -752,7 +788,7 @@ public enum ControlPlanner {
                 applications: installedApplications ?? InstalledDesktopApplication.available()
             )
         }
-        throw SaysoError.invalidAction("Control supports: type, press key, go back or forward, next or previous tab, click or focus an exact visible title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
+        throw SaysoError.invalidAction("Control supports: type, press key, undo, close window, go back or forward, next or previous tab, click or focus an exact visible title, scroll, open an https URL or installed app, switch to an installed app, activate bundle ID, or quit an installed app.")
     }
 
     public static func requiresInstalledApplicationCatalog(for command: String) -> Bool {
