@@ -127,13 +127,7 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    @Published var settings: SaysoSettings {
-        didSet {
-            if oldValue.route != settings.route && (oldValue.route == .byok || settings.route == .byok) {
-                settings.cloudConsentGranted = false
-            }
-        }
-    }
+    @Published var settings: SaysoSettings
     @Published var lastTranscript: Transcript?
     @Published var controlStatus = "Ready"
     @Published var currentSnapshot: DesktopSnapshot?
@@ -285,7 +279,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func save() {
-        if !settings.cloudConsentGranted { settings.cloudCleanupEnabled = false }
+        if !settings.byokConsentGranted { settings.cloudCleanupEnabled = false }
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
@@ -530,7 +524,7 @@ final class SaysoAppModel: ObservableObject {
         guard sessionSettings.route.supportsDictation else {
             return .rejected(.transcriptionFailed, "Your provider supports translation, not transcription.")
         }
-        guard !sessionSettings.route.transmitsData || sessionSettings.cloudConsentGranted else {
+        guard !sessionSettings.route.transmitsData || sessionSettings.hasConsent(for: sessionSettings.route) else {
             return .rejected(.transcriptionFailed, "Confirm the selected cloud data path before recording.")
         }
         if sessionSettings.route == .byok, cloudTranscriptionConfiguration(for: sessionSettings) == nil {
@@ -842,7 +836,7 @@ final class SaysoAppModel: ObservableObject {
         corrected.text = corrections.apply(to: corrected.text).transformedText
         corrected.text = await cleaned(corrected.text, language: corrected.language, settings: currentSettings)
         guard currentSettings.translationEnabled else { return corrected }
-        guard currentSettings.cloudConsentGranted else {
+        guard currentSettings.byokConsentGranted else {
             transcriptProcessingNotice = "Translation needs cloud consent and a selected provider."
             return corrected
         }
@@ -877,16 +871,17 @@ final class SaysoAppModel: ObservableObject {
             capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
         )
         guard currentSettings.cloudCleanupEnabled,
-              currentSettings.cloudConsentGranted,
+              currentSettings.byokConsentGranted,
               let key = secrets.secret(named: "byok-api-key"),
               let baseURL = currentSettings.normalizedBYOKBaseURL,
               !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return local
         }
         do {
+            let directives = currentSettings.dictationProfile.cleanupDirectives
             let cloud = try await OpenAICompatibleTranscriptCleaner(
                 baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
-            ).clean(text, language: language)
+            ).clean(text, language: language, lexiconDirectives: directives)
             var cleaned = TranscriptCleanup.processLocally(
                 cloud,
                 capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
@@ -1220,6 +1215,10 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    func refreshBYOKKeyStatus() {
+        hasBYOKKey = secrets.secret(named: "byok-api-key") != nil
+    }
+
     var isBYOKBaseURLValid: Bool {
         settings.normalizedBYOKBaseURL != nil
     }
@@ -1236,7 +1235,7 @@ final class SaysoAppModel: ObservableObject {
         for currentSettings: SaysoSettings
     ) -> OpenAICompatibleAudioTranscriptionConfiguration? {
         guard currentSettings.route == .byok,
-              currentSettings.cloudConsentGranted,
+              currentSettings.byokConsentGranted,
               let apiKey = secrets.secret(named: "byok-api-key"),
               let baseURL = currentSettings.normalizedBYOKBaseURL else {
             return nil
@@ -2725,6 +2724,7 @@ private struct ModelsWorkspace: View {
                 TextField("Voice edit model", text: $model.settings.byokRewriteModel)
                 SecureField("API key", text: $apiKey)
                 Button("Store key") { if model.saveBYOKKey(apiKey) { apiKey = "" } }
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.isBYOKBaseURLValid)
             }
         }
         .formStyle(.grouped)
@@ -2898,7 +2898,8 @@ private struct SaysoSettingsView: View {
                 }
             }
             Section("Privacy") {
-                Toggle("I understand selected cloud routes transmit data", isOn: $model.settings.cloudConsentGranted)
+                Toggle("I understand Apple Speech transmits voice data", isOn: $model.settings.cloudConsentGranted)
+                Toggle("I understand BYOK routes transmit data to my configured provider", isOn: $model.settings.byokConsentGranted)
                 Toggle("Allow selected text to go to voice-edit provider", isOn: $model.settings.voiceEditCloudConsent)
                 Toggle("Enable desktop control and local automation", isOn: Binding(
                     get: { model.settings.desktopControlEnabled },
@@ -2935,6 +2936,10 @@ private struct SaysoSettingsView: View {
                                 Text(route.displayName).tag(Optional(route))
                             }
                         }
+                        TextField("Transcription model override", text: Binding(
+                            get: { model.settings.dictationProfileOverrides[index].profile.transcriptionModelOverride ?? "" },
+                            set: { model.settings.dictationProfileOverrides[index].profile.transcriptionModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                        ))
                         Picker("Translation", selection: $model.settings.dictationProfileOverrides[index].profile.translationEnabledOverride) {
                             Text("Use global setting").tag(Bool?.none)
                             Text("On").tag(Optional(true))
@@ -2951,6 +2956,10 @@ private struct SaysoSettingsView: View {
                             Text("On").tag(Optional(true))
                             Text("Off").tag(Optional(false))
                         }
+                        TextField("Cleanup model override", text: Binding(
+                            get: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride ?? "" },
+                            set: { model.settings.dictationProfileOverrides[index].profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+                        ))
                         Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
                         Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
                     }
@@ -2965,10 +2974,10 @@ private struct SaysoSettingsView: View {
                     .foregroundStyle(.secondary)
                 if model.settings.cleanupEnabled {
                     Toggle("Use your cloud model for cleanup", isOn: $model.settings.cloudCleanupEnabled)
-                        .disabled(!model.settings.cloudConsentGranted)
+                        .disabled(!model.settings.byokConsentGranted)
                     if model.settings.cloudCleanupEnabled {
                         TextField("Cleanup model", text: $model.settings.byokCleanupModel)
-                        Text("Transcript text leaves this Mac only with cloud consent and your stored BYOK key.")
+                        Text("Transcript text leaves this Mac only with BYOK cloud consent and your stored key.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -3086,7 +3095,7 @@ extension SaysoAppModel {
             guard let path = request.path else {
                 return .failure(id: request.id, command: request.command, error: .init(code: .invalidArgument, message: "transcribe_file requires an audio path."))
             }
-            guard !settings.route.transmitsData || settings.cloudConsentGranted else {
+            guard !settings.route.transmitsData || settings.hasConsent(for: settings.route) else {
                 return .failure(
                     id: request.id,
                     command: request.command,
@@ -3138,6 +3147,7 @@ private struct CloudProviderSettings: View {
             TextField("Voice edit model", text: $model.settings.byokRewriteModel)
             SecureField("API key", text: $apiKey)
             Button("Store key") { if model.saveBYOKKey(apiKey) { apiKey = "" } }
+                .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.isBYOKBaseURLValid)
         }
     }
 }
@@ -3275,7 +3285,7 @@ private struct OnboardingWizard: View {
                         Text("Connect an OpenAI-compatible audio transcription endpoint. Your API key is stored securely in the macOS Keychain and never leaves your Mac except to authenticate requests.")
                             .foregroundStyle(.secondary)
 
-                        Toggle("I understand BYOK transcription transmits voice data to my provider", isOn: $model.settings.cloudConsentGranted)
+                        Toggle("I understand BYOK transcription transmits voice data to my provider", isOn: $model.settings.byokConsentGranted)
 
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Base URL").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -3306,7 +3316,7 @@ private struct OnboardingWizard: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(SaysoPalette.cobalt)
-                                .disabled(byokAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                .disabled(byokAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.isBYOKBaseURLValid)
                             }
                             if model.hasBYOKKey {
                                 Label("API key stored in Keychain.", systemImage: "checkmark.circle.fill")
@@ -3432,6 +3442,7 @@ private struct OnboardingWizard: View {
             model.settings.language = .english
         }
         .onChange(of: model.settings) { _, _ in model.save() }
+        .onAppear { model.refreshBYOKKeyStatus() }
     }
 
     private func complete() {
@@ -3464,7 +3475,7 @@ private struct OnboardingWizard: View {
             route: model.settings.route,
             language: model.settings.language,
             hasLocalModel: model.nativeModelReady(for: model.settings.language),
-            cloudConsentGranted: model.settings.cloudConsentGranted,
+            cloudConsentGranted: model.settings.hasConsent(for: model.settings.route),
             byokConfigured: model.isBYOKConfigured
         )
     }
@@ -3479,7 +3490,7 @@ private struct OnboardingWizard: View {
         case .appleSpeech:
             return "Confirm the Apple Speech data path before continuing."
         case .byok:
-            if !model.settings.cloudConsentGranted {
+            if !model.settings.byokConsentGranted {
                 return "Confirm cloud data transmission before continuing."
             }
             if !model.isBYOKBaseURLValid {
