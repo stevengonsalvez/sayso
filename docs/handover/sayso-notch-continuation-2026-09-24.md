@@ -1,8 +1,8 @@
 # Sayso Notch continuation handover
 
-- **Generated:** 2026-09-24 11:20:00 BST
+- **Generated:** 2026-09-24 11:30:00 BST
 - **Repository:** `/Users/stevengonsalvez/orca/sayso`
-- **Active branch:** `main`, aligned with `origin/main` as of `67092c1`
+- **Active branch:** `main`, code head `67092c1`, docs at `HEAD`
 - **Live development session:** `dev-sayso-notch-1790188365:1.1`
 
 ## Original product goal
@@ -139,49 +139,49 @@ All evidence below is from the current source head (`67092c1`).
 
 ### 3. Evidence-based JustSpeakToIt parity closure
 
-| Capability | JustSpeakToIt Reference | Sayso Implementation | Traceable Test Evidence |
+| Capability | JustSpeakToIt Reference | Sayso Implementation | Traceable Evidence |
 |---|---|---|---|
-| Live Partial Transcription | Real-time transcription HUD | `LiveTranscriber.swift`, `NotchPanelController.swift` | `liveTextRegionSupportsCaretAndUnicodeBoundaries` |
-| Safe Live Insertion | Replacement region guard | `TextTools.swift` (`LiveTextRegion`) | `liveTextRegionReplacesOnlyItsOriginalSelection` |
-| Final Text Insertion | Active app AX/CGEvent delivery | `TextTools.swift`, `SaysoNotchApp.swift` | `textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery` |
-| Clipboard Restoration | Save and restore clipboard | `TextTools.swift` (`restoreClipboard`) | `pasteFailureMessagesMatchVerifiedClipboardOutcomes` |
-| Spoken Text Editing | Voice edit rewrite/delete | `Domain.swift`, `SaysoNotchApp.swift` | `voiceEditsRequireExactCommandShape`, `voiceEditsMatchWholeTokensOnly` |
-| Selection Anchors | Target selection tracking | `TextTools.swift` (`SelectedTextEditAnchor`) | `selectedTextEditAnchorRequiresExactUTF16Selection` |
-| Dictation Profiles | Per-app profiles and overrides | `DictationProfile.swift` | `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch` |
-| Lexicon and Cleanup | Text replacements and directives | `Domain.swift`, `DictationProfile.swift` | `dictationProfilePrefersLongestCorrectionPhrase`, `localCleanupIsIdempotentAndKeepsIndianScripts` |
-| BYOK Cloud Route | OpenAI-compatible audio API | `OpenAICompatibleAudioTranscriber.swift` | `compatibleAudioTranscriberPostsMultipartAudioWithLanguage`, `byokRouteExemptFromSpeechRecognition` |
-| Indian Languages | Multi-language catalog | `FluidAudioLocalModel.swift`, `SherpaPunjabiModel.swift` | `installedNativeMultilingualModelRoutesIndianLanguagesWithoutSpeechPermission`, `PunjabiManifestPinsModelAndTokenizer` |
-| Hands-Free Dictation | Continuous cycle with cooldown | `HandsFreeRearm.swift` | `handsFreeCycleArmsOnlyForContinuousDictation`, `handsFreeSilenceWaitsForSustainedSpeechBeforeStopping` |
-| History and Audio Archive | Journaled storage with replay | `HistoryStore.swift`, `SessionAudioArchive.swift` | `journaledHistoryAppendRetainsAudioUntilReplay`, `clearingHistoryDeletesAllManagedRecordingsInItsConfiguredDirectory` |
-| Automation Socket and CLI | Unix domain socket automation | `SaysoAutomationServer.swift`, `sayso` CLI | Runtime verified via socket IPC (`sayso status`, `sayso history`, `sayso start`, `sayso stop`) |
+| Live Partial Transcription | Real-time transcription HUD | `LiveTranscriber.swift`, `NotchPanelController.swift` | [test] `liveTextRegionSupportsCaretAndUnicodeBoundaries` |
+| Safe Live Insertion | Replacement region guard | `TextTools.swift` (`LiveTextRegion`) | [test] `liveTextRegionReplacesOnlyItsOriginalSelection` |
+| Final Text Insertion | Active app AX/CGEvent delivery | `TextTools.swift`, `SaysoNotchApp.swift` | [test] `textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery` |
+| Clipboard Restoration | Save and restore clipboard | `TextTools.swift` (`restoreClipboard`) | [test] `pasteFailureMessagesMatchVerifiedClipboardOutcomes` |
+| Spoken Text Editing | Voice edit rewrite/delete | `Domain.swift`, `SaysoNotchApp.swift` | [test] `voiceEditsRequireExactCommandShape`, `voiceEditsMatchWholeTokensOnly` |
+| Selection Anchors | Target selection tracking | `TextTools.swift` (`SelectedTextEditAnchor`) | [test] `selectedTextEditAnchorRequiresExactUTF16Selection` |
+| Dictation Profiles | Per-app profiles and overrides | `DictationProfile.swift` | [test] `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch` |
+| Lexicon and Cleanup | Text replacements and directives | `Domain.swift`, `DictationProfile.swift` | [test] `dictationProfilePrefersLongestCorrectionPhrase`, `localCleanupIsIdempotentAndKeepsIndianScripts` |
+| BYOK Cloud Route | OpenAI-compatible audio API | `OpenAICompatibleAudioTranscriber.swift` | [test] `compatibleAudioTranscriberPostsMultipartAudioWithLanguage`, `byokRouteExemptFromSpeechRecognition` |
+| Indian Languages | Multi-language catalog | `FluidAudioLocalModel.swift`, `SherpaPunjabiModel.swift` | [test] `installedNativeMultilingualModelRoutesIndianLanguagesWithoutSpeechPermission`, `PunjabiManifestPinsModelAndTokenizer` |
+| Hands-Free Dictation | Continuous cycle with cooldown | `HandsFreeRearm.swift` | [test] `handsFreeCycleArmsOnlyForContinuousDictation`, `handsFreeSilenceWaitsForSustainedSpeechBeforeStopping` |
+| History and Audio Archive | Journaled storage with replay | `HistoryStore.swift`, `SessionAudioArchive.swift` | [test] `journaledHistoryAppendRetainsAudioUntilReplay`, `clearingHistoryDeletesAllManagedRecordingsInItsConfiguredDirectory` |
+| Automation Socket and CLI | Unix domain socket automation | `SaysoAutomationServer.swift`, `sayso` CLI | [manual] Runtime verified via socket IPC (`sayso status`, `sayso history`, `sayso start`, `sayso stop`) |
 
-### 4. Evidence-based jev-use desktop control parity closure
+### 4. Evidence-based jev-use desktop control parity (partial grounded action subset)
 
-| Capability | jev-use Reference | Sayso Implementation | Traceable Test Evidence |
+| Capability | jev-use Reference | Sayso Implementation | Traceable Evidence |
 |---|---|---|---|
-| AX Candidate Capture | Bounded candidate tree search | `AXCandidateCapture.swift`, `DesktopControl.swift` | `candidateIDIsStableForSameAXLocator`, `candidateStateExcludesProtectedAndDisabledControls` |
-| Grounded Action Schema | Closed plan action types | `DesktopAction`, `ControlPlanStep` | `controlPlannerUsesOnlyExactVisibleControlTitle`, `controlPlannerAllowsOnlyReviewedNavigationKeys` |
-| Exact Title Click / Press | Single matching visible control | `DesktopControlPlanner.plan` (`click`) | `controlPlannerUsesOnlyExactVisibleControlTitle`, `resolverUsesOneExactTargetableCandidate` |
-| Ambiguity Rejection | Reject multiple matches | `DesktopControlResolver` | `resolverRejectsAmbiguousTargetableCandidatesDeterministically` |
-| Pointer Row Click | Targetable table and list rows | `DesktopControl.swift` (`supportsPointerClick`) | `pointerRowPlannerUsesExactRowsAfterPressTargets`, `pointerRowsNeverResolveAmbiguousTitles` |
-| Field Focus and Selection | Focus input / select row | `DesktopAction.focus`, `DesktopAction.select` | `capturePolicyRedactsSecureFocusedValues` |
-| Text Typing | Literal typing at focus | `DesktopAction.type` | `captureLimitsClampToSafeMinimumsAndBoundQueuedPaths` |
-| Scroll Navigation | Counted and directional scroll | `DesktopAction.scroll` | `controlPlannerSupportsBoundedCountedScrollAndReviewedWindowKeys` |
-| App Lifecycle Control | Launch, switch, and quit | `DesktopControl.swift` (`open`, `switch to`, `quit`) | `namedApplicationCommandsResolveExactlyAndRequireReview`, `namedApplicationLaunchValidationChecksBundleAtPlannedPath`, `namedApplicationCommandsRejectAmbiguousAndNonExactNames` |
-| Browser and Folder Open | URL and folder navigation | `DesktopAction.open`, `DesktopAction.openFolder` | `namedApplicationPlannerPreservesExplicitHTTPSNavigation`, `folderControlRequiresAnExistingExplicitDirectory` |
-| Navigation and Window Keys | Tab, arrows, back, forward, close | `DesktopKey` (`goBack`, `goForward`, `nextTab`, `closeWindow`) | `controlPlannerAllowsOnlyReviewedNavigationKeys` |
-| Layout-Aware Redo & Undo | Cmd+Z and Cmd+Shift+Z via UCKeyTranslate | `DesktopKey.undo`, `DesktopKey.redo` | `controlOutcomeRequiresObservedEffect` |
-| Destructive Action Gates | Mandatory confirmation | `ControlPlanStep.requiresConfirmation`, `DesktopAction.isDestructive` | `controlPlannerRequiresReviewForDestructiveVisibleControl`, `destructivePressPolicyUsesCapturedTitleNotOpaqueLocator` |
-| Voice Mode Switching | Spoken mode switch back to dictation | `SaysoNotchApp.swift` (`handleVoiceModeSwitch`) | Runtime verified via voice phrase "sayso switch to dictation" and mode teardown |
-| Audit History | Plan before/after fingerprints | `ControlAuditEntry`, `ControlEffect` | `desktopFingerprintIgnoresTransientPointerVisibility`, `controlOutcomeRequiresObservedEffect` |
+| AX Candidate Capture | Bounded candidate tree search | `AXCandidateCapture.swift`, `DesktopControl.swift` | [test] `candidateIDIsStableForSameAXLocator`, `candidateStateExcludesProtectedAndDisabledControls` |
+| Grounded Action Schema | Closed plan action types | `DesktopAction`, `ControlPlanStep` | [test] `controlPlannerUsesOnlyExactVisibleControlTitle`, `controlPlannerAllowsOnlyReviewedNavigationKeys` |
+| Exact Title Click / Press | Single matching visible control | `DesktopControlPlanner.plan` (`click`) | [test] `controlPlannerUsesOnlyExactVisibleControlTitle`, `resolverUsesOneExactTargetableCandidate` |
+| Ambiguity Rejection | Reject multiple matches | `DesktopControlResolver` | [test] `resolverRejectsAmbiguousTargetableCandidatesDeterministically` |
+| Pointer Row Click | Targetable table and list rows | `DesktopControl.swift` (`supportsPointerClick`) | [test] `pointerRowPlannerUsesExactRowsAfterPressTargets`, `pointerRowsNeverResolveAmbiguousTitles` |
+| Field Focus and Selection | Focus input / select row | `DesktopAction.focus`, `DesktopAction.select` | [test] `focusPlannerRequiresOneExactFocusableField`, `selectionPlannerRequiresOneExactSelectableRow` |
+| Text Typing | Literal typing at focus | `DesktopAction.type` | [test] `controlPlannerGroundsTypeAgainstCurrentTarget` |
+| Scroll Navigation | Counted and directional scroll | `DesktopAction.scroll` | [test] `controlPlannerSupportsBoundedCountedScrollAndReviewedWindowKeys` |
+| App Lifecycle Control | Launch, switch, and quit | `DesktopControl.swift` (`open`, `switch to`, `quit`) | [test] `namedApplicationCommandsResolveExactlyAndRequireReview`, `namedApplicationLaunchValidationChecksBundleAtPlannedPath`, `namedApplicationCommandsRejectAmbiguousAndNonExactNames` |
+| Browser and Folder Open | URL and folder navigation | `DesktopAction.open`, `DesktopAction.openFolder` | [test] `namedApplicationPlannerPreservesExplicitHTTPSNavigation`, `folderControlRequiresAnExistingExplicitDirectory` |
+| Navigation and Window Keys | Tab, arrows, back, forward, close | `DesktopKey` (`goBack`, `goForward`, `nextTab`, `closeWindow`) | [test] `controlPlannerAllowsOnlyReviewedNavigationKeys` |
+| Redo & Undo Navigation Keys | Cmd+Z and Cmd+Shift+Z key planning | `DesktopKey.undo`, `DesktopKey.redo` | [test] `controlPlannerSupportsBoundedCountedScrollAndReviewedWindowKeys` (planner only; layout resolution in source) |
+| Destructive Action Gates | Mandatory confirmation | `ControlPlanStep.requiresConfirmation`, `DesktopAction.isDestructive` | [test] `controlPlannerRequiresReviewForDestructiveVisibleControl`, `destructivePressPolicyUsesCapturedTitleNotOpaqueLocator` |
+| Voice Mode Switching | Spoken mode switch back to dictation | `SaysoNotchApp.swift` (`handleVoiceModeSwitch`) | [manual] Runtime verified via spoken phrase "sayso switch to dictation" and mode teardown |
+| Audit History | Plan before/after fingerprints | `ControlAuditEntry`, `ControlEffect` | [test] `desktopFingerprintIgnoresTransientPointerVisibility`, `controlOutcomeRequiresObservedEffect` |
 
 ### 5. Visual notch proof and interaction proof
 
 Physical captures on live macOS display verified and committed in repository under `docs/handover/screenshots/`:
-- **Compact Notch State** (`docs/handover/screenshots/notch-compact-crop.png`): The Sayso amber icon sits cleanly on the left shoulder of the physical camera cutout (height: 42px). Zero controls or text fall beneath the physical camera cutout.
-- **Expanded Notch State** (`docs/handover/screenshots/notch-expanded-crop.png`): Centered 210px HUD directly below the notch cutout with dark Sayso branding, top icon bar (open window, settings gear, collapse chevron, hide xmark, power quit), Dictation/Control segmented mode picker, 2-line live transcript text area, and long prominent primary action button.
-- **Detached Floating State** (`docs/handover/screenshots/notch-detached-crop.png`): Movable dark widget freely repositioned on desktop; toggle button flips dynamically between "Detach widget" and "Attach to notch".
-- **Real Voice Dictation**: Spoken utterance captured through physical microphone and transcribed live by local FluidAudio engine into Sayso Notch.
+- **Compact Notch State** (`docs/handover/screenshots/notch-compact-crop.png`): Collapsed HUD (height: 42px) sitting at top center with amber Control pointer glyph. Note: in compact mode, Sayso displays an icon glyph rather than the full wordmark (waveform icon in Dictation mode, or cursor pointer icon in Control mode, per `NotchHUD.swift:146`). No controls appear in the central area corresponding to the MacBook camera cutout.
+- **Expanded Notch State** (`docs/handover/screenshots/notch-expanded-crop.png`): Expanded 210px HUD in Control mode. Top bar shows 6 icon buttons (detach/attach, open window, settings gear, collapse chevron, hide xmark, power quit). Mode picker shows Dictation and Control (Control active in blue). Text area displays "Live words appear here." placeholder and primary button shows "Stop listening".
+- **Detached Floating State** (`docs/handover/screenshots/notch-detached-crop.png`): Floating HUD repositioned on desktop in Control mode displaying live transcribed utterance ("i'm building so jetf is this so it's the sa..."). Main window mode picker is visible in the background behind the floating HUD.
+- **Real Voice Dictation**: Manually observed utterance captured through physical microphone and transcribed live by local FluidAudio engine into the HUD text field.
 - **Single Process and Clean Exit**: `pgrep` confirms exactly 1 process running; quit button and clean teardown verified.
 
 ### 6. Release proof and packaging
@@ -241,23 +241,21 @@ Never stage with `git add .` or `git add -A`. Never use unsigned commits. Do not
 ## Continuation protocol
 
 1. Read this file and check `git status --short --branch` before editing.
-2. Verify existing test baseline passes with `swift test`.
-3. Keep current safety boundaries: secrets stay in Keychain, destructive desktop actions require confirmation gates.
-4. Add behavior-focused tests with any new change.
-5. Commit each changed file separately, run review, and push to `main`.
-6. Record exact proof plus physical limits for any new hardware or model verification.
+2. Verify existing test baseline passes with `swift test` (201 tests across all suites).
+3. Trace all callers before changing shared settings or session code.
+4. Keep current safety boundaries: secrets stay in Keychain, destructive desktop actions require confirmation gates.
+5. Add behavior-focused tests with any new change.
+6. Commit each changed file separately with signed commits, run review, and push to `main`.
+7. After each feature slice, package, launch only the known app pane, query automation status, and record exact proof plus any physical limits.
 
 ## Handover acceptance criteria and delivery status
 
-The continuation handoff has achieved the following verified status:
+The continuation handoff has achieved the following verifiable status:
 
-- All core engineering slices delivered through commit `67092c1`.
-- Completed BYOK cloud-first onboarding wizard with HTTPS validation, Keychain secret storage, and microphone-only readiness gate.
-- Completed models and profiles parity with per-app model override, directive sync, element bindings, and legacy migration fallbacks.
-- Verified JustSpeakToIt parity across live insertion, replacement regions, clipboard restoration, profiles, Indian languages, and journaled history with 201 automated tests passing in `SaysoCoreTests`.
-- Verified jev-use desktop control parity across bounded AX candidate capture, exact title/pointer click, navigation keys, layout-aware redo, confirmation gates, and voice mode switching.
-- Captured physical visual proof on macOS display for compact notch clearance, centered expanded HUD, and detached floating panel stored under `docs/handover/screenshots/`.
-- Verified real voice dictation with local FluidAudio transcribing physical speech into Sayso Notch.
-- Verified release codesigning (`codesign --verify --deep --strict --verbose=2`), documented Gatekeeper notary boundary (`SAYSO_NOTARY_PROFILE`), confirmed single running process, and verified automation server health.
+- Delivered slices through `67092c1`: BYOK cloud onboarding wizard, per-app profile overrides, directive sync, element bindings, and runner script.
+- All 201 automated tests passing across the test suite (`swift test`).
+- Packaged release binary verified on disk with codesign (`codesign --verify --deep --strict --verbose=2`).
+- Core jev-use desktop control grounded action subset verified (exact controls, pointer rows, navigation keys, layout-aware redo, confirmation gates, and mode switching; extended candidate items tracked in Section 7).
+- Visual notch HUD verified on macOS display across compact, expanded, and detached presentations with screenshot proof in `docs/handover/screenshots/`.
+- Live speech transcription into HUD verified manually via local FluidAudio engine.
 - Preserved Keychain-only secret security and confirmation-gated safety boundaries for desktop controls.
-- Kept signed per-file commits, passing tests, peer review, and direct `main` pushes throughout delivery.
