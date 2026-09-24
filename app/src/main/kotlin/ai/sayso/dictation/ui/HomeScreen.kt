@@ -120,6 +120,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
     var wakeWordPhrase by remember { mutableStateOf(settings.wakeWordPhrase) }
+    var wakeWordSensitivity by remember { mutableStateOf(settings.wakeWordSensitivity) }
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
     var installedIndicModels by remember { mutableStateOf(emptySet<String>()) }
@@ -159,12 +160,13 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         currentSttModelId = settings.sttModelId
         indicTransliteration = settings.transliterateIndicToLatin
         wakeWordPhrase = settings.wakeWordPhrase
+        wakeWordSensitivity = settings.wakeWordSensitivity
         resumeTick++
         onPauseOrDispose { }
     }
 
     // Reading directory and settings off main thread
-    LaunchedEffect(resumeTick, downloads.busy, settings.sttModelId, settings.language, settings.transliterateIndicToLatin) {
+    LaunchedEffect(resumeTick, downloads.busy, settings.sttModelId, settings.language, settings.transliterateIndicToLatin, settings.wakeWordSensitivity) {
         val (stt, cleanup, readyStt) = withContext(Dispatchers.IO) {
             Triple(
                 sttSummary(),
@@ -193,6 +195,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         currentLanguage = settings.language
         currentSttModelId = settings.sttModelId
         indicTransliteration = settings.transliterateIndicToLatin
+        wakeWordSensitivity = settings.wakeWordSensitivity
     }
 
     val ready = micGranted && serviceOn && isSttReady
@@ -439,6 +442,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         HandsFreeControlsCard(
             wakeWord = wakeWord,
             wakeWordPhrase = wakeWordPhrase,
+            wakeWordSensitivity = wakeWordSensitivity,
             bubbleAlwaysVisible = bubbleAlwaysVisible,
             autoLanguageRouting = autoLanguageRouting,
             isLidInstalled = LocalModelCatalog.LID_MODEL_DIR in installedModelDirNames,
@@ -462,6 +466,11 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 wakeWordPhrase = phrase
                 AppGraph.settings.wakeWordPhrase = phrase
                 WakeWordService.updatePhrase(phrase)
+            },
+            onWakeWordSensitivityChange = { sens ->
+                wakeWordSensitivity = sens
+                AppGraph.settings.wakeWordSensitivity = sens
+                WakeWordService.restartWithSettings(context)
             },
             onBubbleAlwaysVisibleChange = { enabled ->
                 bubbleAlwaysVisible = enabled
@@ -1467,12 +1476,14 @@ private fun LanguageQuickSwitcherCard(
 private fun HandsFreeControlsCard(
     wakeWord: Boolean,
     wakeWordPhrase: String,
+    wakeWordSensitivity: String,
     bubbleAlwaysVisible: Boolean,
     autoLanguageRouting: Boolean,
     isLidInstalled: Boolean,
     installedIndicCount: Int,
     onWakeWordChange: (Boolean) -> Unit,
     onWakeWordPhraseChange: (String) -> Unit,
+    onWakeWordSensitivityChange: (String) -> Unit,
     onBubbleAlwaysVisibleChange: (Boolean) -> Unit,
     onAutoLanguageRoutingChange: (Boolean) -> Unit,
     onOpenLanguageDownload: () -> Unit,
@@ -1530,6 +1541,14 @@ private fun HandsFreeControlsCard(
                     WakeWordPhraseSelector(
                         selectedPhrase = wakeWordPhrase,
                         onSelectPhrase = onWakeWordPhraseChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+
+                    WakeWordSensitivitySelector(
+                        selectedSensitivity = wakeWordSensitivity,
+                        onSelectSensitivity = onWakeWordSensitivityChange,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 4.dp),
@@ -2307,6 +2326,13 @@ private val SETTINGS_INDEX = listOf(
         title = "Change Wake Word",
         description = "Choose trigger phrase: \"Hey Sayso\" or \"Sayso\", strict, or fast",
         keywords = "change wake word trigger phrase hey sayso only strict fast keyword option",
+        screen = Screen.Transcription,
+        badge = "Hands-Free",
+    ),
+    SettingSearchItem(
+        title = "Wake Word Sensitivity",
+        description = "Adjust detection sensitivity (High, Medium, Low) for quiet or noisy environments",
+        keywords = "wake word sensitivity high medium low trigger quiet noisy distance gain",
         screen = Screen.Transcription,
         badge = "Hands-Free",
     ),
