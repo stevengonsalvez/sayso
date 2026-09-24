@@ -19,6 +19,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 class WakeWordDetector(
     private val context: Context,
     @Volatile var wakeWordPhrase: String = SettingsStore.WAKE_PHRASE_BOTH,
+    val sensitivity: String = SettingsStore.WAKE_SENSITIVITY_DEFAULT,
     private val onWakeWordDetected: (String) -> Unit,
 ) {
     private var spotter: KeywordSpotter? = null
@@ -39,13 +40,18 @@ class WakeWordDetector(
                 numThreads = 1,
                 modelType = "zipformer2",
             )
+            val (score, threshold, paths) = when (sensitivity) {
+                SettingsStore.WAKE_SENSITIVITY_HIGH -> Triple(3.0f, 0.08f, 16)
+                SettingsStore.WAKE_SENSITIVITY_LOW -> Triple(2.2f, 0.16f, 8)
+                else -> Triple(2.8f, 0.10f, 12)
+            }
             val config = KeywordSpotterConfig(
                 featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                 modelConfig = modelConfig,
-                maxActivePaths = 8,
+                maxActivePaths = paths,
                 keywordsFile = "kws/keywords.txt",
-                keywordsScore = 2.0f,
-                keywordsThreshold = 0.15f,
+                keywordsScore = score,
+                keywordsThreshold = threshold,
                 numTrailingBlanks = 1,
             )
             val s = KeywordSpotter(context.assets, config)
