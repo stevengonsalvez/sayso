@@ -49,6 +49,21 @@ public enum AXCandidateCapturePolicy {
         return hasInteractiveDescendant ? .accessibilitySelection : .pointer
     }
 
+    static func visibleClip(parent: CGRect?, frame: CGRect?) -> CGRect? {
+        switch (parent, frame) {
+        case let (.some(parent), .some(frame)):
+            parent.intersection(frame)
+        case let (.some(parent), .none):
+            parent
+        case let (.none, frame):
+            frame
+        }
+    }
+
+    static func isCentreVisible(frame: CGRect, in visibleClip: CGRect?) -> Bool {
+        visibleClip?.contains(CGPoint(x: frame.midX, y: frame.midY)) ?? false
+    }
+
     static func childPaths(
         from ancestry: [Int],
         childCount: Int,
@@ -249,15 +264,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
             index += 1
             visited += 1
             let nodeFrame = frame(of: node.element)
-            let visibleClip: CGRect?
-            switch (node.visibleClip, nodeFrame) {
-            case let (.some(clip), .some(frame)):
-                visibleClip = clip.intersection(frame)
-            case let (.some(clip), .none):
-                visibleClip = clip
-            case let (.none, frame):
-                visibleClip = frame
-            }
+            let visibleClip = AXCandidateCapturePolicy.visibleClip(parent: node.visibleClip, frame: nodeFrame)
 
             let role = stringAttribute(kAXRoleAttribute as CFString, from: node.element) ?? ""
             let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: node.element) ?? ""
@@ -270,8 +277,8 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let supportsFocus = attributeIsSettable(kAXFocusedAttribute as CFString, on: node.element)
             let supportsSelection = [kAXRowRole as String, kAXCellRole as String].contains(role)
                 && attributeIsSettable(kAXSelectedAttribute as CFString, on: node.element)
-            let hasClickableFrame = supportsSelection && nodeFrame.map { frame in
-                visibleClip?.contains(CGPoint(x: frame.midX, y: frame.midY)) ?? true
+            let hasClickableFrame = supportsSelection && nodeFrame.map {
+                AXCandidateCapturePolicy.isCentreVisible(frame: $0, in: visibleClip)
             } == true
             let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: node.element, defaultValue: true)
 
