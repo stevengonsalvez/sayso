@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SaysoCore
 
@@ -76,4 +77,27 @@ import Testing
     #expect(!notes.cleanupEnabled)
     #expect(settings.language == .english)
     #expect(settings.route == .local)
+}
+
+@Test func dictationProfileDecodesExistingProfilesWithoutRuntimeOverrides() throws {
+    let profile = try JSONDecoder().decode(
+        DictationProfile.self,
+        from: Data(
+            """
+            {
+              "id": "legacy",
+              "name": "Legacy",
+              "corrections": [],
+              "normalizesWhitespace": true,
+              "capitalizesSentences": false
+            }
+            """.utf8
+        )
+    )
+
+    #expect(profile.languageOverride == nil)
+    #expect(profile.routeOverride == nil)
+    #expect(profile.translationEnabledOverride == nil)
+    #expect(profile.outputLanguageOverride == nil)
+    #expect(profile.cleanupEnabledOverride == nil)
 }
