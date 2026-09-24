@@ -95,32 +95,27 @@ import Testing
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: true,
         hitsTargetDirectly: true,
-        descendantSupportsPress: false,
-        descendantSupportsFocus: false
+        hasInteractiveDescendant: false
     ) == .pointer)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: true,
         hitsTargetDirectly: false,
-        descendantSupportsPress: false,
-        descendantSupportsFocus: false
+        hasInteractiveDescendant: false
     ) == .pointer)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: true,
         hitsTargetDirectly: false,
-        descendantSupportsPress: true,
-        descendantSupportsFocus: false
+        hasInteractiveDescendant: true
     ) == .accessibilitySelection)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: true,
         hitsTargetDirectly: false,
-        descendantSupportsPress: false,
-        descendantSupportsFocus: true
+        hasInteractiveDescendant: true
     ) == .accessibilitySelection)
     #expect(AXCandidateCapturePolicy.pointerHitDecision(
         reachesTarget: false,
         hitsTargetDirectly: false,
-        descendantSupportsPress: false,
-        descendantSupportsFocus: false
+        hasInteractiveDescendant: false
     ) == .covered)
 }
 
