@@ -373,6 +373,12 @@ final class SaysoAppModel: ObservableObject {
             notice = "Cancelling dictation start."
             return
         }
+        if handsFreeArmed {
+            handsFreeArmed = false
+            notice = "Continuous hands-free dictation stopped."
+            notch.hideAfterDelay()
+            return
+        }
         requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFree)
     }
 
@@ -400,6 +406,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startOrStopVoiceEdit() {
+        handsFreeArmed = false
         if voiceEditCapture != nil, transcriber.canStop {
             transcriber.stop()
             return
@@ -438,6 +445,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func requestDictationStart(onboardingTest: Bool, rearmHandsFree: Bool = false) {
+        handsFreeArmed = false
         switch reserveDictationStart() {
         case .reserved:
             handsFreeArmed = HandsFreeRearmPolicy.shouldRearm(
@@ -949,13 +957,6 @@ final class SaysoAppModel: ObservableObject {
             activeDictationSettings = nil
             dictationDestination = nil
             voiceEditCapture = nil
-            if HandsFreeRearmPolicy.shouldRearm(
-                isArmed: handsFreeArmed,
-                handsFreeEnabled: settings.handsFree,
-                isDictationMode: settings.mode == .dictation
-            ) {
-                requestDictationStart(onboardingTest: false, rearmHandsFree: true)
-            }
         case let .failed(message):
             failActiveSession(message)
         }
@@ -2778,6 +2779,7 @@ extension SaysoAppModel {
                 )
             )
         case .startDictation:
+            handsFreeArmed = false
             switch reserveDictationStart() {
             case let .rejected(code, message):
                 return .failure(id: request.id, command: request.command, error: .init(code: code, message: message))
