@@ -430,8 +430,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         guard secrets.secret(named: "byok-api-key") != nil,
-              let baseURL = URL(string: settings.byokBaseURL),
-              ProviderEndpointPolicy.allows(baseURL) else {
+              settings.normalizedBYOKBaseURL != nil else {
             showPersistentNotice("Configure a compatible BYOK provider before voice edit.")
             return
         }
@@ -842,7 +841,7 @@ final class SaysoAppModel: ObservableObject {
             return corrected
         }
         guard let key = secrets.secret(named: "byok-api-key"),
-              let baseURL = URL(string: currentSettings.byokBaseURL) else {
+              let baseURL = currentSettings.normalizedBYOKBaseURL else {
             transcriptProcessingNotice = "Configure BYOK translation in Settings."
             return corrected
         }
@@ -874,8 +873,7 @@ final class SaysoAppModel: ObservableObject {
         guard currentSettings.cloudCleanupEnabled,
               currentSettings.cloudConsentGranted,
               let key = secrets.secret(named: "byok-api-key"),
-              let baseURL = URL(string: currentSettings.byokBaseURL),
-              ProviderEndpointPolicy.allows(baseURL),
+              let baseURL = currentSettings.normalizedBYOKBaseURL,
               !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return local
         }
@@ -1019,8 +1017,7 @@ final class SaysoAppModel: ObservableObject {
         }
         guard settings.voiceEditCloudConsent,
               let key = secrets.secret(named: "byok-api-key"),
-              let baseURL = URL(string: settings.byokBaseURL),
-              ProviderEndpointPolicy.allows(baseURL) else {
+              let baseURL = settings.normalizedBYOKBaseURL else {
             await failVoiceEdit(session, message: "Voice edit provider or consent changed before rewrite.")
             return
         }
@@ -1202,8 +1199,7 @@ final class SaysoAppModel: ObservableObject {
     func saveBYOKKey(_ key: String) -> Bool {
         let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKey.isEmpty else { return false }
-        let trimmedURL = settings.byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let baseURL = URL(string: trimmedURL), ProviderEndpointPolicy.allows(baseURL) else {
+        guard settings.normalizedBYOKBaseURL != nil else {
             showPersistentNotice("BYOK provider must use HTTPS, except localhost HTTP.")
             return false
         }
@@ -1219,9 +1215,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     var isBYOKBaseURLValid: Bool {
-        let trimmedURL = settings.byokBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let baseURL = URL(string: trimmedURL) else { return false }
-        return ProviderEndpointPolicy.allows(baseURL)
+        settings.normalizedBYOKBaseURL != nil
     }
 
     var isBYOKConfigured: Bool {
@@ -1238,8 +1232,7 @@ final class SaysoAppModel: ObservableObject {
         guard currentSettings.route == .byok,
               currentSettings.cloudConsentGranted,
               let apiKey = secrets.secret(named: "byok-api-key"),
-              let baseURL = URL(string: currentSettings.byokBaseURL),
-              ProviderEndpointPolicy.allows(baseURL) else {
+              let baseURL = currentSettings.normalizedBYOKBaseURL else {
             return nil
         }
         let model = currentSettings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3307,7 +3300,7 @@ private struct OnboardingWizard: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(SaysoPalette.cobalt)
-                                .disabled(byokAPIKey.isEmpty)
+                                .disabled(byokAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
                             if model.hasBYOKKey {
                                 Label("API key stored in Keychain.", systemImage: "checkmark.circle.fill")
@@ -3503,7 +3496,8 @@ private struct OnboardingWizard: View {
         OnboardingReadiness.hasRequiredPermissions(
             route: model.settings.route,
             microphoneGranted: model.permissions.states[.microphone] == .granted,
-            speechRecognitionGranted: model.permissions.states[.speechRecognition] == .granted
+            speechRecognitionGranted: model.permissions.states[.speechRecognition] == .granted,
+            requiresSpeechRecognition: requiresSpeechRecognition
         )
     }
 
