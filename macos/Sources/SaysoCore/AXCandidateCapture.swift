@@ -62,6 +62,11 @@ public enum AXCandidateCapturePolicy {
     }
 }
 
+public enum PointerRowActivation: Sendable {
+    case pointer(selectionChanged: Bool)
+    case accessibilitySelection(selectionChanged: Bool)
+}
+
 public final class AXCandidateCapture: @unchecked Sendable {
     public let limits: AXCandidateCaptureLimits
 
@@ -153,7 +158,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
     }
 
     /// Clicks only an exact, still-visible row whose centre resolves back to that row.
-    public func click(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws -> Bool {
+    public func click(candidateID: DesktopCandidateID, application targetApplication: NSRunningApplication) throws -> PointerRowActivation {
         guard AXIsProcessTrusted() else { throw SaysoError.permissionDenied("Accessibility") }
         let application = AXUIElementCreateApplication(targetApplication.processIdentifier)
         guard let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application) else {
@@ -169,29 +174,29 @@ public final class AXCandidateCapture: @unchecked Sendable {
             throw SaysoError.staleTarget
         }
 
-        let hit = try hitTest(target: target.element, in: application, at: centre)
+        let systemWide = AXUIElementCreateSystemWide()
+        let hit = try hitTest(target: target.element, in: systemWide, at: centre)
         guard hit.matchesTarget else {
             throw SaysoError.invalidAction("Visible row is covered")
         }
         guard hit.hitsTargetDirectly else {
-            return try select(candidateID: candidateID, application: targetApplication)
-        }
-
-        var topElement: AXUIElement?
-        var owner: pid_t = 0
-        guard AXUIElementCopyElementAtPosition(
-            AXUIElementCreateSystemWide(), Float(centre.x), Float(centre.y), &topElement
-        ) == .success,
-        let topElement,
-        AXUIElementGetPid(topElement, &owner) == .success,
-        owner == targetApplication.processIdentifier else {
-            throw SaysoError.invalidAction("Another window covers the visible row")
+            return .accessibilitySelection(
+                selectionChanged: try select(candidateID: candidateID, application: targetApplication)
+            )
         }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
-        try postPointerClick(at: centre)
-        usleep(150_000)
-        return !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
+        let originalPointer = try postPointerClick(at: centre, target: target.element, systemWide: systemWide)
+        defer {
+            if let originalPointer { CGWarpMouseCursorPosition(originalPointer) }
+        }
+        for _ in 0..<5 {
+            usleep(50_000)
+            if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
+                return .pointer(selectionChanged: true)
+            }
+        }
+        return .pointer(selectionChanged: false)
     }
 
     private struct CapturedCandidate {
@@ -345,9 +350,9 @@ public final class AXCandidateCapture: @unchecked Sendable {
         return CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
     }
 
-    private func hitTest(target: AXUIElement, in application: AXUIElement, at point: CGPoint) throws -> (matchesTarget: Bool, hitsTargetDirectly: Bool) {
+    private func hitTest(target: AXUIElement, in root: AXUIElement, at point: CGPoint) throws -> (matchesTarget: Bool, hitsTargetDirectly: Bool) {
         var element: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(application, Float(point.x), Float(point.y), &element) == .success,
+        guard AXUIElementCopyElementAtPosition(root, Float(point.x), Float(point.y), &element) == .success,
               let deepest = element else {
             throw SaysoError.invalidAction("Visible row no longer accepts clicks")
         }
@@ -362,12 +367,13 @@ public final class AXCandidateCapture: @unchecked Sendable {
         return (false, false)
     }
 
-    private func postPointerClick(at point: CGPoint) throws {
-        let originalPointer = CGEvent(source: nil)?.location
-        defer {
-            if let originalPointer { CGWarpMouseCursorPosition(originalPointer) }
+    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) throws -> CGPoint? {
+        let finalHit = try hitTest(target: target, in: systemWide, at: point)
+        guard finalHit.matchesTarget, finalHit.hitsTargetDirectly else {
+            throw SaysoError.invalidAction("Visible row changed before click")
         }
-        for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+        let originalPointer = CGEvent(source: nil)?.location
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(
                 mouseEventSource: nil,
                 mouseType: type,
@@ -377,8 +383,10 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 throw SaysoError.unavailable("Pointer event")
             }
             event.flags = []
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
             event.post(tap: .cghidEventTap)
         }
+        return originalPointer
     }
 
     private func pointAttribute(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {
