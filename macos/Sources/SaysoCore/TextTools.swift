@@ -185,8 +185,8 @@ public enum TextOutput {
         }
 
         public func discard() {
-            guard hasWritten else { return }
-            _ = replace(with: "")
+            guard hasWritten, let originalSelection = region.originalSelection else { return }
+            if replace(with: originalSelection) { region.restore() }
         }
 
         @discardableResult
@@ -196,7 +196,7 @@ public enum TextOutput {
                   let current = TextOutput.value(in: destination),
                   region.matches(current),
                   let expected = region.value(afterReplacingWith: text),
-                  TextOutput.setSelectedRange(region.rangeForInsertedText(), in: destination),
+                  TextOutput.setSelectedRange(region.replacementRange, in: destination),
                   AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
                 isUsable = false
                 return false
@@ -514,6 +514,7 @@ public struct LiveTextRegion: Equatable, Sendable {
     public let baseline: String
     public let selection: TextUTF16Range
     public private(set) var insertedText = ""
+    private var hasReplacedSelection = false
 
     public init?(baseline: String, selection: TextUTF16Range) {
         guard Self.nsRange(in: baseline, at: selection) != nil else { return nil }
@@ -521,7 +522,14 @@ public struct LiveTextRegion: Equatable, Sendable {
         self.selection = selection
     }
 
-    public var expectedValue: String? { replacing(with: insertedText, in: baseline) }
+    public var expectedValue: String? {
+        hasReplacedSelection ? replacingBaseline(with: insertedText) : baseline
+    }
+
+    public var originalSelection: String? {
+        guard let range = Self.nsRange(in: baseline, at: selection) else { return nil }
+        return (baseline as NSString).substring(with: range)
+    }
 
     public func matches(_ currentValue: String) -> Bool {
         currentValue == expectedValue
@@ -529,23 +537,29 @@ public struct LiveTextRegion: Equatable, Sendable {
 
     public mutating func replace(with text: String) {
         insertedText = text
+        hasReplacedSelection = true
+    }
+
+    public mutating func restore() {
+        insertedText = ""
+        hasReplacedSelection = false
     }
 
     public func rangeForInsertedText() -> TextUTF16Range {
         .init(location: selection.location, length: insertedText.utf16.count)
     }
 
+    public var replacementRange: TextUTF16Range {
+        hasReplacedSelection ? rangeForInsertedText() : selection
+    }
+
     public func value(afterReplacingWith text: String) -> String? {
-        replacing(with: text, in: baseline)
+        replacingBaseline(with: text)
     }
 
-    private func replacing(with text: String, in value: String) -> String? {
-        guard let range = Self.nsRange(in: value, at: rangeForCurrentText(in: value)) else { return nil }
-        return (value as NSString).replacingCharacters(in: range, with: text)
-    }
-
-    private func rangeForCurrentText(in value: String) -> TextUTF16Range {
-        value == baseline ? selection : rangeForInsertedText()
+    private func replacingBaseline(with text: String) -> String? {
+        guard let range = Self.nsRange(in: baseline, at: selection) else { return nil }
+        return (baseline as NSString).replacingCharacters(in: range, with: text)
     }
 
     private static func nsRange(in value: String, at range: TextUTF16Range) -> NSRange? {
