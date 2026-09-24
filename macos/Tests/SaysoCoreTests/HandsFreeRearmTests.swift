@@ -115,6 +115,24 @@ import Testing
     #expect(!cycle.isArmed)
 }
 
+@Test func handsFreeCycleStopsWhenContinuousModeTurnsOff() {
+    var cycle = HandsFreeCycle()
+    cycle.start(
+        rearmRequested: true,
+        handsFreeEnabled: true,
+        isDictationMode: true
+    )
+
+    let rearmed = cycle.consumeDelivery(
+        wasDelivered: true,
+        handsFreeEnabled: true,
+        isDictationMode: true,
+        continuousEnabled: false
+    )
+    #expect(!rearmed)
+    #expect(!cycle.isArmed)
+}
+
 @Test func handsFreeCycleArmsOnlyForContinuousDictation() {
     var cycle = HandsFreeCycle()
     cycle.start(
