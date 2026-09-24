@@ -105,6 +105,16 @@ private func makePumpTap(
     }
 }
 
+private func makeArchiveTap(
+    archive: SessionAudioArchive,
+    levelReporter: AudioLevelReporter
+) -> (AVAudioPCMBuffer, AVAudioTime) -> Void {
+    { [levelReporter] buffer, _ in
+        archive.append(buffer)
+        levelReporter.report(audioLevel(in: buffer))
+    }
+}
+
 @MainActor
 public final class LiveTranscriber: NSObject, ObservableObject {
     /// Hands-free dictation ends after this much continuous quiet audio.
@@ -137,6 +147,11 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var sherpaPunjabiPump: FluidAudioBufferPump?
     private var sherpaPunjabiRunID: UUID?
     private var usesSherpaPunjabi = false
+    private var cloudTranscriptionConfiguration: OpenAICompatibleAudioTranscriptionConfiguration?
+    private var cloudTranscriptionRunID: UUID?
+    private var cloudAudioURL: URL?
+    private var retainsCloudAudio = false
+    private var usesCloudTranscription = false
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
     private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
@@ -191,6 +206,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func requiresSpeechRecognition(language: DictationLanguage, route: ProviderRoute) -> Bool {
+        if route == .byok { return false }
         if FileTranscriber.prefersSherpaPunjabi(language: language, route: route, localModelReady: sherpaPunjabiModels.state.isInstalled) {
             return false
         }
@@ -212,6 +228,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         handsFreeMaximumDuration: Duration = LiveTranscriber.defaultHandsFreeMaximumDuration,
         preferredAudioInputUID: AudioInputDeviceUID? = nil,
         saveAudio: Bool = false,
+        cloudTranscription: OpenAICompatibleAudioTranscriptionConfiguration? = nil,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
@@ -244,6 +261,22 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         partialText = ""
         discardSessionAudio()
         phase = .requestingPermission
+
+        if route == .byok {
+            guard let cloudTranscription else {
+                fail(.unavailable("Configure your cloud transcription provider before dictating."))
+                return false
+            }
+            guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
+            return await startCloudTranscription(
+                language: language,
+                route: route,
+                configuration: cloudTranscription,
+                preferredAudioInputUID: preferredAudioInputUID,
+                saveAudio: saveAudio,
+                attempt: attempt
+            )
+        }
 
         if route == .local, language == .punjabi {
             guard sherpaPunjabiModels.state.isInstalled else {
@@ -356,6 +389,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             phase = .idle
             partialText = ""
             terminate(.cancelled)
+            return
+        }
+        if usesCloudTranscription {
+            stopCloudTranscription()
             return
         }
         if usesFluidAudio {
@@ -620,6 +657,128 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
     }
 
+    private func startCloudTranscription(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        configuration: OpenAICompatibleAudioTranscriptionConfiguration,
+        preferredAudioInputUID: AudioInputDeviceUID?,
+        saveAudio: Bool,
+        attempt: UUID
+    ) async -> Bool {
+        await prepareAudioInput(preferredAudioInputUID)
+        guard isStartCurrent(attempt) else {
+            stopAudioEngine()
+            return false
+        }
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        do {
+            try prepareSessionAudio(enabled: true, inputFormat: format)
+            guard let archive = sessionAudioArchive else {
+                fail(.unavailable("Audio capture"))
+                return false
+            }
+            let runID = UUID()
+            cloudTranscriptionConfiguration = configuration
+            cloudTranscriptionRunID = runID
+            retainsCloudAudio = saveAudio
+            usesCloudTranscription = true
+            let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
+            input.installTap(
+                onBus: 0,
+                bufferSize: 1_024,
+                format: format,
+                block: makeArchiveTap(archive: archive, levelReporter: levelReporter)
+            )
+            audioEngine.prepare()
+            try audioEngine.start()
+            phase = .listening
+            scheduleHandsFreeStopsIfNeeded()
+            return true
+        } catch {
+            guard isStartCurrent(attempt) else { return false }
+            stopAudioEngine()
+            discardSessionAudio()
+            clearCloudTranscriptionRun()
+            fail(.unavailable("Cloud audio capture could not start: \(error.localizedDescription)"))
+            return false
+        }
+    }
+
+    private func stopCloudTranscription() {
+        guard usesCloudTranscription, phase == .listening,
+              let runID = cloudTranscriptionRunID,
+              let configuration = cloudTranscriptionConfiguration else { return }
+        phase = .processing
+        stopAudioEngine()
+        cancelHandsFreeTimers()
+        let audioFileURL = sessionAudioArchive?.finish()
+        sessionAudioArchive = nil
+        guard let audioFileURL else {
+            clearCloudTranscriptionRun()
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
+        cloudAudioURL = audioFileURL
+        let language = activeLanguage
+        Task { [weak self] in
+            do {
+                let text = try await OpenAICompatibleAudioTranscriber(configuration: configuration)
+                    .transcribe(fileURL: audioFileURL, language: language)
+                self?.finishCloudTranscription(runID: runID, text: text, audioFileURL: audioFileURL)
+            } catch {
+                self?.failCloudTranscription(runID: runID, audioFileURL: audioFileURL, error: error)
+            }
+        }
+    }
+
+    private func finishCloudTranscription(runID: UUID, text: String, audioFileURL: URL) {
+        guard cloudTranscriptionRunID == runID else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            return
+        }
+        let keepAudio = retainsCloudAudio
+        clearCloudTranscriptionRun()
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
+        if !keepAudio { SessionAudioArchive.deleteManagedRecording(audioFileURL) }
+        let transcript = Transcript(
+            text: text,
+            language: activeLanguage,
+            route: activeRoute,
+            isFinal: true,
+            audioFileURL: keepAudio ? audioFileURL : nil
+        )
+        phase = .idle
+        onFinal?(transcript)
+        onFinal = nil
+        onPartial = nil
+        onTermination = nil
+    }
+
+    private func failCloudTranscription(runID: UUID, audioFileURL: URL, error: Error) {
+        guard cloudTranscriptionRunID == runID else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            return
+        }
+        SessionAudioArchive.deleteManagedRecording(audioFileURL)
+        clearCloudTranscriptionRun()
+        fail(.unavailable("Cloud transcription failed: \(error.localizedDescription)"))
+    }
+
+    private func clearCloudTranscriptionRun() {
+        cloudTranscriptionConfiguration = nil
+        cloudTranscriptionRunID = nil
+        cloudAudioURL = nil
+        retainsCloudAudio = false
+        usesCloudTranscription = false
+    }
+
     private func stopFluidAudio() {
         guard usesFluidAudio, (phase == .listening || audioEngine.isRunning) else { return }
         guard let runID = fluidAudioRunID, let session = fluidAudioSession else { return }
@@ -841,6 +1000,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         cancelStartAttempt()
         stopAppleAudioCapture()
         discardSessionAudio()
+        if let cloudAudioURL {
+            SessionAudioArchive.deleteManagedRecording(cloudAudioURL)
+        }
+        clearCloudTranscriptionRun()
         self.error = error
         phase = .failed
         terminate(.failed(error.localizedDescription))
