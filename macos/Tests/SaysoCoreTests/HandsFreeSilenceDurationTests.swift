@@ -22,23 +22,22 @@ import Testing
     )
 }
 
-@Test @MainActor func handsFreeSilenceWaitsForSpeechBeforeStopping() {
-    #expect(!LiveTranscriber.shouldScheduleHandsFreeStop(
-        handsFree: true,
-        isListening: true,
-        hasHeardSpeech: false,
-        inputLevel: 0
-    ))
-    #expect(!LiveTranscriber.shouldScheduleHandsFreeStop(
-        handsFree: true,
-        isListening: true,
-        hasHeardSpeech: true,
-        inputLevel: LiveTranscriber.handsFreeSpeechThreshold + 0.001
-    ))
-    #expect(LiveTranscriber.shouldScheduleHandsFreeStop(
-        handsFree: true,
-        isListening: true,
-        hasHeardSpeech: true,
-        inputLevel: 0
-    ))
+@Test @MainActor func handsFreeSilenceWaitsForSustainedSpeechBeforeStopping() {
+    var gate = HandsFreeSpeechGate()
+    for _ in 0..<(HandsFreeSpeechGate.requiredSpeechFrames - 1) {
+        gate.observe(level: LiveTranscriber.handsFreeSpeechThreshold + 0.001, threshold: LiveTranscriber.handsFreeSpeechThreshold)
+    }
+    #expect(!gate.hasHeardSpeech)
+
+    gate.observe(level: LiveTranscriber.handsFreeSpeechThreshold + 0.001, threshold: LiveTranscriber.handsFreeSpeechThreshold)
+    #expect(gate.hasHeardSpeech)
+
+    var interruptedGate = HandsFreeSpeechGate()
+    interruptedGate.observe(level: LiveTranscriber.handsFreeSpeechThreshold + 0.001, threshold: LiveTranscriber.handsFreeSpeechThreshold)
+    interruptedGate.observe(level: 0, threshold: LiveTranscriber.handsFreeSpeechThreshold)
+    for _ in 0..<HandsFreeSpeechGate.requiredSpeechFrames {
+        interruptedGate.observe(level: LiveTranscriber.handsFreeSpeechThreshold + 0.001, threshold: LiveTranscriber.handsFreeSpeechThreshold)
+    }
+    #expect(interruptedGate.hasHeardSpeech)
+    #expect(LiveTranscriber.defaultHandsFreeNoSpeechDuration == .seconds(8))
 }
