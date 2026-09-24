@@ -72,7 +72,7 @@ public struct HistoryInsights: Equatable, Sendable {
 
     public static func make(from entries: [Transcript], calendar: Calendar = .current) -> HistoryInsights {
         let days = Set(entries.map { calendar.startOfDay(for: $0.createdAt) })
-        return .init(entries: entries.count, words: entries.reduce(0) { $0 + $1.text.split(whereSeparator: \.isWhitespace).count }, activeDays: days.count)
+        return .init(entries: entries.count, words: entries.reduce(0) { $0 + $1.displayText.split(whereSeparator: \.isWhitespace).count }, activeDays: days.count)
     }
 }
 
