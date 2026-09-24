@@ -55,12 +55,11 @@ public enum AXCandidateCapturePolicy {
     public static func pointerHitDecision(
         reachesTarget: Bool,
         hitsTargetDirectly: Bool,
-        descendantSupportsPress: Bool,
-        descendantSupportsFocus: Bool
+        hasInteractiveDescendant: Bool
     ) -> PointerRowHitDecision {
         guard reachesTarget else { return .covered }
         guard !hitsTargetDirectly else { return .pointer }
-        return descendantSupportsPress || descendantSupportsFocus ? .accessibilitySelection : .pointer
+        return hasInteractiveDescendant ? .accessibilitySelection : .pointer
     }
 
     static func childPaths(
@@ -414,8 +413,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                 return AXCandidateCapturePolicy.pointerHitDecision(
                     reachesTarget: true,
                     hitsTargetDirectly: false,
-                    descendantSupportsPress: hasInteractiveDescendant,
-                    descendantSupportsFocus: false
+                    hasInteractiveDescendant: hasInteractiveDescendant
                 )
             }
             ancestor = parent
