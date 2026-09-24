@@ -100,28 +100,28 @@ import Testing
 
 @Test func onboardingReadinessRequiresSelectedEngineAndPermissions() {
     #expect(!OnboardingReadiness.engineIsReady(
-        route: .local, language: .automatic, hasLocalModel: true, cloudConsentGranted: false
+        route: .local, language: .automatic, hasLocalModel: true, routeConsentGranted: false
     ))
     #expect(OnboardingReadiness.engineIsReady(
-        route: .local, language: .english, hasLocalModel: true, cloudConsentGranted: false
+        route: .local, language: .english, hasLocalModel: true, routeConsentGranted: false
     ))
     #expect(!OnboardingReadiness.engineIsReady(
-        route: .appleSpeech, language: .english, hasLocalModel: false, cloudConsentGranted: false
+        route: .appleSpeech, language: .english, hasLocalModel: false, routeConsentGranted: false
     ))
     #expect(OnboardingReadiness.engineIsReady(
-        route: .appleSpeech, language: .english, hasLocalModel: false, cloudConsentGranted: true
+        route: .appleSpeech, language: .english, hasLocalModel: false, routeConsentGranted: true
     ))
     #expect(!OnboardingReadiness.engineIsReady(
-        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: false, byokConfigured: false
+        route: .byok, language: .english, hasLocalModel: false, routeConsentGranted: false, byokConfigured: false
     ))
     #expect(!OnboardingReadiness.engineIsReady(
-        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: true, byokConfigured: false
+        route: .byok, language: .english, hasLocalModel: false, routeConsentGranted: true, byokConfigured: false
     ))
     #expect(!OnboardingReadiness.engineIsReady(
-        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: false, byokConfigured: true
+        route: .byok, language: .english, hasLocalModel: false, routeConsentGranted: false, byokConfigured: true
     ))
     #expect(OnboardingReadiness.engineIsReady(
-        route: .byok, language: .english, hasLocalModel: false, cloudConsentGranted: true, byokConfigured: true
+        route: .byok, language: .english, hasLocalModel: false, routeConsentGranted: true, byokConfigured: true
     ))
     #expect(OnboardingReadiness.hasRequiredPermissions(
         route: .local, microphoneGranted: true, speechRecognitionGranted: false
@@ -258,6 +258,37 @@ import Testing
     #expect(decoded.transcriptionModelOverride == nil)
     #expect(decoded.cleanupModelOverride == nil)
     #expect(decoded.cleanupDirectives == [])
+}
+
+@Test func legacySettingsDecodingDefaultsByokConsentToFalse() throws {
+    let legacyJSON = """
+    {
+        "cloudConsentGranted": true
+    }
+    """.data(using: .utf8)!
+
+    let decoded = try JSONDecoder().decode(SaysoSettings.self, from: legacyJSON)
+    #expect(decoded.cloudConsentGranted == true)
+    #expect(decoded.byokConsentGranted == false)
+}
+
+@Test func whitespaceOnlyProfileModelOverrideIsIgnored() {
+    var settings = SaysoSettings()
+    settings.byokTranscriptionModel = "global-transcribe"
+    settings.byokCleanupModel = "global-cleanup"
+
+    let profile = DictationProfile(
+        name: "Whitespace",
+        transcriptionModelOverride: "   \n  ",
+        cleanupModelOverride: " \t "
+    )
+    settings.dictationProfileOverrides = [
+        .init(bundleIdentifier: "com.apple.dt.Xcode", profile: profile)
+    ]
+
+    let resolved = settings.resolvedDictationSettings(forBundleIdentifier: "com.apple.dt.Xcode")
+    #expect(resolved.byokTranscriptionModel == "global-transcribe")
+    #expect(resolved.byokCleanupModel == "global-cleanup")
 }
 
 @Test @MainActor func byokRouteExemptFromSpeechRecognition() {
