@@ -602,6 +602,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let capture = voiceEditCapture {
+            handsFreeArmed = false
             voiceEditCapture = nil
             guard let delivery = takeActiveDictationDelivery() else {
                 discardTranscriptAudio(transcript)
@@ -613,6 +614,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let testID = onboardingTestSessionID, activeRecordingSession?.id == testID {
+            handsFreeArmed = false
             guard let delivery = takeActiveDictationDelivery() else {
                 discardTranscriptAudio(transcript)
                 return
@@ -622,6 +624,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         guard settings.mode == .dictation else {
+            handsFreeArmed = false
             discardTranscriptAudio(transcript)
             updateActiveSession { $0.completeControlCommand(transcript.text) }
             activeRecordingSession = nil
@@ -631,6 +634,7 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         if let current = lastTranscript {
+            handsFreeArmed = false
             switch VoiceEdits.outcome(transcript.text, to: current.displayText) {
             case let .applied(edited):
                 var updated = current
@@ -663,6 +667,7 @@ final class SaysoAppModel: ObservableObject {
             }
         }
         guard let delivery = takeActiveDictationDelivery() else {
+            handsFreeArmed = false
             Task { await deliverUnboundTranscript(transcript) }
             return
         }
@@ -938,6 +943,7 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func cancelActiveRecordingSession() {
+        handsFreeArmed = false
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
         activeRecordingSession = nil
@@ -951,12 +957,14 @@ final class SaysoAppModel: ObservableObject {
         pendingVoiceMode = nil
         switch termination {
         case .cancelled:
+            handsFreeArmed = false
             clearOnboardingTest(for: activeRecordingSession)
             updateActiveSession { $0.transition(to: .cancelled) }
             activeRecordingSession = nil
             activeDictationSettings = nil
             dictationDestination = nil
             voiceEditCapture = nil
+            notch.hideAfterDelay()
         case let .failed(message):
             failActiveSession(message)
         }
@@ -1153,6 +1161,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func applyPendingVoiceMode() -> Bool {
         guard let target = pendingVoiceMode else { return false }
+        handsFreeArmed = false
         pendingVoiceMode = nil
         clearOnboardingTest(for: activeRecordingSession)
         updateActiveSession { $0.transition(to: .cancelled) }
