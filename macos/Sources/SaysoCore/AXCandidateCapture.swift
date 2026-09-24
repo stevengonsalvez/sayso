@@ -208,7 +208,10 @@ public final class AXCandidateCapture: @unchecked Sendable {
 
         let originalPointer = CGEvent(source: nil)?.location
         defer {
-            if let originalPointer, CGEvent(source: nil)?.location == centre {
+            if let originalPointer,
+               let currentPointer = CGEvent(source: nil)?.location,
+               abs(currentPointer.x - centre.x) <= 1,
+               abs(currentPointer.y - centre.y) <= 1 {
                 CGWarpMouseCursorPosition(originalPointer)
             }
         }
@@ -226,20 +229,15 @@ public final class AXCandidateCapture: @unchecked Sendable {
         }
 
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
-        switch try await postPointerClick(at: centre, target: target.element, systemWide: systemWide) {
-        case .covered:
-            throw SaysoError.invalidAction("Visible row changed before click")
-        case .accessibilitySelection:
+        if !(try await postPointerClick(at: centre, target: target.element, systemWide: systemWide)) {
             return .accessibilitySelection(
                 selectionChanged: try select(candidateID: candidateID, application: targetApplication)
             )
-        case .pointer:
-            break
         }
         guard !wasSelected else { return .pointerWithoutSelectionEvidence }
         for _ in 0..<5 {
             try? await Task.sleep(for: .milliseconds(50))
-            if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
+            if boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
                 return .pointerSelectionChanged
             }
         }
@@ -435,12 +433,12 @@ public final class AXCandidateCapture: @unchecked Sendable {
         event.post(tap: .cghidEventTap)
     }
 
-    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) async throws -> PointerRowHitDecision {
+    private func postPointerClick(at point: CGPoint, target: AXUIElement, systemWide: AXUIElement) async throws -> Bool {
         switch try hitDecision(target: target, in: systemWide, at: point) {
         case .covered:
             throw SaysoError.invalidAction("Visible row changed before click")
         case .accessibilitySelection:
-            return .accessibilitySelection
+            return false
         case .pointer:
             break
         }
@@ -464,7 +462,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         mouseDown.post(tap: .cghidEventTap)
         try? await Task.sleep(for: .milliseconds(15))
         mouseUp.post(tap: .cghidEventTap)
-        return .pointer
+        return true
     }
 
     private func pointAttribute(_ attribute: CFString, from element: AXUIElement) -> CGPoint? {
