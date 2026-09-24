@@ -441,6 +441,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             wakeWordPhrase = wakeWordPhrase,
             bubbleAlwaysVisible = bubbleAlwaysVisible,
             autoLanguageRouting = autoLanguageRouting,
+            isLidInstalled = LocalModelCatalog.LID_MODEL_DIR in installedModelDirNames,
             installedIndicCount = installedIndicModels.size,
             onWakeWordChange = { enabled ->
                 if (enabled) {
@@ -470,7 +471,8 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
             onAutoLanguageRoutingChange = { enabled ->
                 autoLanguageRouting = enabled
                 AppGraph.settings.autoLanguageRoutingEnabled = enabled
-                if (enabled && installedIndicModels.isEmpty()) {
+                val lidMissing = LocalModelCatalog.LID_MODEL_DIR !in installedModelDirNames
+                if (enabled && (lidMissing || installedIndicModels.isEmpty())) {
                     showLanguageDownloadDialog = true
                 }
             },
@@ -1467,6 +1469,7 @@ private fun HandsFreeControlsCard(
     wakeWordPhrase: String,
     bubbleAlwaysVisible: Boolean,
     autoLanguageRouting: Boolean,
+    isLidInstalled: Boolean,
     installedIndicCount: Int,
     onWakeWordChange: (Boolean) -> Unit,
     onWakeWordPhraseChange: (String) -> Unit,
@@ -1537,13 +1540,53 @@ private fun HandsFreeControlsCard(
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 SwitchRow(
-                    title = "Automatic language routing (Experimental)",
-                    subtitle = "Attempts to classify first 1.5s via Whisper Tiny LID. 1-tap switcher above is recommended for reliable Tamil/Indic routing.",
+                    title = "Automatic language routing",
+                    subtitle = "Uses Whisper Tiny neural LID (111 MB) to detect language. Routes Tamil/Hindi to AI4Bharat and English to Parakeet.",
                     checked = autoLanguageRouting,
                     onCheckedChange = onAutoLanguageRoutingChange,
                 )
                 if (autoLanguageRouting) {
-                    if (installedIndicCount == 0) {
+                    if (!isLidInstalled) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clickable(onClick = onOpenLanguageDownload),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "⚠️",
+                                    fontSize = 14.sp,
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Neural LID model missing (111 MB)",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = "Whisper Tiny is needed to detect Tamil/Indic vs English. Tap to download.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download models",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    } else if (installedIndicCount == 0) {
                         Surface(
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
@@ -1570,7 +1613,7 @@ private fun HandsFreeControlsCard(
                                         color = MaterialTheme.colorScheme.onErrorContainer,
                                     )
                                     Text(
-                                        text = "Tap to select and download languages for auto-routing",
+                                        text = "Tap to download AI4Bharat Tamil, Hindi, or Malayalam for auto-routing.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f),
                                     )
@@ -1598,13 +1641,13 @@ private fun HandsFreeControlsCard(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text(
-                                    text = "✓",
+                                    text = "●",
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontSize = 14.sp,
                                 )
                                 Text(
-                                    text = "Active for $installedIndicCount Indic language(s) + English. Tap to manage.",
+                                    text = "Neural LID Active: Tamil/Indic speech routes directly to AI4Bharat, and English routes to Parakeet. Tap to manage.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f),
@@ -1682,7 +1725,7 @@ private fun LanguageRoutingDownloadDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Select models to download for automatic routing. Whisper Multilingual Tiny classifies your speech in real-time to switch seamlessly between English and Indic models.",
+                    text = "Select models to download for automatic routing. Whisper Tiny (111 MB) acts as on-device Neural Language Detector (LID) to classify speech and route Tamil, Hindi, or Malayalam to AI4Bharat, and English to Parakeet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
