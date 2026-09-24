@@ -221,6 +221,7 @@ final class SaysoAppModel: ObservableObject {
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
         dictationHotKey = Self.loadDictationHotKey()
+        hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
         notch = NotchPanelController()
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -229,10 +230,16 @@ final class SaysoAppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
-            self?.startOrStopDictation()
+            self?.handleTapDictationShortcut()
         }
         hotKeyEngine.register(gesture: .doubleTap) { [weak self] in
             self?.startOrStopVoiceEdit()
+        }
+        hotKeyEngine.register(gesture: .holdStart) { [weak self] in
+            self?.startHoldDictation()
+        }
+        hotKeyEngine.register(gesture: .holdEnd) { [weak self] in
+            self?.stopHoldDictation()
         }
         hotKeyEngine.start(for: dictationHotKey)
         reopenObserver = DistributedNotificationCenter.default().addObserver(
@@ -266,6 +273,7 @@ final class SaysoAppModel: ObservableObject {
         if !settings.cloudConsentGranted { settings.cloudCleanupEnabled = false }
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
+        hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
         settingsStore.save(settings)
     }
 
@@ -363,6 +371,24 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         requestDictationStart(onboardingTest: false)
+    }
+
+    private func handleTapDictationShortcut() {
+        guard settings.hotKeyActivation.usesTapToggle else { return }
+        startOrStopDictation()
+    }
+
+    private func startHoldDictation() {
+        guard settings.hotKeyActivation.usesPressAndHold,
+              !transcriber.canStop,
+              !isStartingDictation else { return }
+        requestDictationStart(onboardingTest: false)
+    }
+
+    private func stopHoldDictation() {
+        guard settings.hotKeyActivation.usesPressAndHold,
+              transcriber.canStop || isStartingDictation else { return }
+        startOrStopDictation()
     }
 
     func startOnboardingTest() {
@@ -2572,6 +2598,17 @@ private struct SaysoSettingsView: View {
                     get: { model.dictationHotKey },
                     set: { model.setDictationHotKey($0) }
                 ))
+                Picker("Activation", selection: $model.settings.hotKeyActivation) {
+                    ForEach(DictationHotKeyActivation.allCases) { activation in
+                        Text(activation.displayName).tag(activation)
+                    }
+                }
+                if model.settings.hotKeyActivation.usesPressAndHold {
+                    HStack {
+                        Text("Hold for (model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
+                        Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
+                    }
+                }
                 Text("Default: ⌥ Space. Double-tap it with selected text to voice edit.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2903,6 +2940,17 @@ private struct OnboardingWizard: View {
                             get: { model.dictationHotKey },
                             set: { model.setDictationHotKey($0) }
                         ))
+                        Picker("Activation", selection: $model.settings.hotKeyActivation) {
+                            ForEach(DictationHotKeyActivation.allCases) { activation in
+                                Text(activation.displayName).tag(activation)
+                            }
+                        }
+                        if model.settings.hotKeyActivation.usesPressAndHold {
+                            HStack {
+                                Text("Hold for (model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
+                                Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
+                            }
+                        }
                         Text("Default: ⌥ Space. You can change this later in Settings.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
