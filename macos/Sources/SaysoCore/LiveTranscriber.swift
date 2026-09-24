@@ -99,7 +99,9 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     @Published public private(set) var partialText = ""
     @Published public private(set) var error: SaysoError?
 
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
+    private let audioInputLeaseCoordinator: AudioInputDeviceLeaseCoordinator
+    private var audioInputLease: AudioInputDeviceLease?
     private let fluidAudioModels: FluidAudioLocalModelManager
     private let sherpaPunjabiModels: SherpaPunjabiModelManager
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -132,10 +134,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     public init(
         fluidAudioModels: FluidAudioLocalModelManager = .init(),
-        sherpaPunjabiModels: SherpaPunjabiModelManager = .init()
+        sherpaPunjabiModels: SherpaPunjabiModelManager = .init(),
+        audioInputLeaseCoordinator: AudioInputDeviceLeaseCoordinator = .init()
     ) {
         self.fluidAudioModels = fluidAudioModels
         self.sherpaPunjabiModels = sherpaPunjabiModels
+        self.audioInputLeaseCoordinator = audioInputLeaseCoordinator
         super.init()
     }
 
@@ -169,6 +173,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         route: ProviderRoute,
         handsFree: Bool = false,
         handsFreeSilenceDuration: Duration = LiveTranscriber.defaultHandsFreeSilenceDuration,
+        preferredAudioInputUID: AudioInputDeviceUID? = nil,
         saveAudio: Bool = false,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
@@ -206,7 +211,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                 return false
             }
             guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
-            return await startSherpaPunjabi(language: language, route: route, saveAudio: saveAudio, attempt: attempt)
+            return await startSherpaPunjabi(
+                language: language,
+                route: route,
+                preferredAudioInputUID: preferredAudioInputUID,
+                saveAudio: saveAudio,
+                attempt: attempt
+            )
         }
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             fail(.unavailable("On-device recognition is unavailable for \(language.displayName)"))
@@ -214,7 +225,13 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         if shouldUseFluidAudio(language: language, route: route) {
             guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
-            return await startFluidAudio(language: language, route: route, saveAudio: saveAudio, attempt: attempt)
+            return await startFluidAudio(
+                language: language,
+                route: route,
+                preferredAudioInputUID: preferredAudioInputUID,
+                saveAudio: saveAudio,
+                attempt: attempt
+            )
         }
         guard SpeechCapabilities.supports(language) else {
             fail(.unavailable("Speech locale \(language.displayName)"))
@@ -245,6 +262,12 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         request.taskHint = .dictation
         request.requiresOnDeviceRecognition = route == .local
         recognitionRequest = request
+
+        await prepareAudioInput(preferredAudioInputUID)
+        guard isStartCurrent(attempt) else {
+            stopAudioEngine()
+            return false
+        }
 
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -363,6 +386,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func startFluidAudio(
         language: DictationLanguage,
         route: ProviderRoute,
+        preferredAudioInputUID: AudioInputDeviceUID?,
         saveAudio: Bool,
         attempt: UUID
     ) async -> Bool {
@@ -395,6 +419,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                 }
             }
             fluidAudioPump = pump
+
+            await prepareAudioInput(preferredAudioInputUID)
+            guard isStartCurrent(attempt) else {
+                stopAudioEngine()
+                await session.reset()
+                clearFluidAudioRun()
+                return false
+            }
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
@@ -437,6 +469,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func startSherpaPunjabi(
         language: DictationLanguage,
         route: ProviderRoute,
+        preferredAudioInputUID: AudioInputDeviceUID?,
         saveAudio: Bool,
         attempt: UUID
     ) async -> Bool {
@@ -461,6 +494,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                 }
             }
             sherpaPunjabiPump = pump
+
+            await prepareAudioInput(preferredAudioInputUID)
+            guard isStartCurrent(attempt) else {
+                stopAudioEngine()
+                await session.reset()
+                clearSherpaPunjabiRun()
+                return false
+            }
 
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
@@ -614,6 +655,23 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private func stopAudioEngine() {
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
+        releaseAudioInput()
+    }
+
+    private func prepareAudioInput(_ preferredDeviceUID: AudioInputDeviceUID?) async {
+        if let audioInputLease {
+            await audioInputLeaseCoordinator.release(audioInputLease)
+        }
+        audioInputLease = await audioInputLeaseCoordinator.acquire(preferredDeviceUID: preferredDeviceUID)
+        audioEngine = AVAudioEngine()
+    }
+
+    private func releaseAudioInput() {
+        guard let audioInputLease else { return }
+        self.audioInputLease = nil
+        Task { [audioInputLeaseCoordinator] in
+            await audioInputLeaseCoordinator.release(audioInputLease)
+        }
     }
 
     private func prepareSessionAudio(enabled: Bool, inputFormat: AVAudioFormat) throws {
