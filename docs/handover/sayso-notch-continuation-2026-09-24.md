@@ -1,8 +1,8 @@
 # Sayso Notch continuation handover
 
-- **Generated:** 2026-09-24 11:30:00 BST
+- **Generated:** 2026-09-24 11:35:00 BST
 - **Repository:** `/Users/stevengonsalvez/orca/sayso`
-- **Active branch:** `main`, code head `67092c1`
+- **Active branch:** `main`, clean working tree ahead of `origin/main`
 - **Live development session:** `dev-sayso-notch-1790188365:1.1`
 
 ## Original product goal
@@ -108,7 +108,7 @@ All evidence below is from the current source head (`67092c1`).
 - CLI commands `sayso status`, `sayso history`, `sayso start`, and `sayso stop` verified against active socket.
 - `pgrep -fl 'SaysoNotch|Sayso Notch'` confirms exactly one running process.
 - Live microphone dictation physically verified: real spoken utterance captured by local FluidAudio engine and transcribed live into Sayso Notch.
-- Visual state verified via `orca computer` and `screencapture` across compact, expanded, and detached floating presentations.
+- Visual state verified via `orca computer` and `screencapture` across compact, expanded, and detached presentations.
 
 ### Verification limits
 
@@ -144,12 +144,12 @@ All evidence below is from the current source head (`67092c1`).
 | Live Partial Transcription | Real-time transcription HUD | `LiveTranscriber.swift`, `NotchPanelController.swift` | [manual] Live audio stream decoded by local FluidAudio engine and rendered in HUD partial text area |
 | Safe Live Insertion | Replacement region guard | `TextTools.swift` (`LiveTextRegion`) | [test] `liveTextRegionReplacesOnlyItsOriginalSelection` |
 | Final Text Insertion | Active app AX/CGEvent delivery | `TextTools.swift`, `SaysoNotchApp.swift` | [test] `textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery` |
-| Clipboard Restoration | Save and restore clipboard | `TextTools.swift` (`restoreClipboardAfterPaste` parameter) | [test] `pasteFailureMessagesMatchVerifiedClipboardOutcomes` |
+| Clipboard Restoration | Save and restore clipboard | `TextTools.swift` (`restoreClipboardAfterPaste` parameter) | [test] `pasteFailureMessagesMatchVerifiedClipboardOutcomes` (paste outcome strings only; clipboard restore logic in source) |
 | Spoken Text Editing | Voice edit rewrite/delete | `Domain.swift`, `SaysoNotchApp.swift` | [test] `voiceEditsRequireExactCommandShape`, `voiceEditsMatchWholeTokensOnly` |
 | Selection Anchors | Target selection tracking | `TextTools.swift` (`SelectedTextEditAnchor`) | [test] `selectedTextEditAnchorRequiresExactUTF16Selection` |
 | Dictation Profiles | Per-app profiles and overrides | `DictationProfile.swift` | [test] `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch` |
-| Application Profile Switching | Foreground app profile resolution | `DictationProfile.swift` | [test] `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch`, `dictationProfileResolverUsesExactBundleOverride` |
-| Push-to-Talk and Tap Toggle | Configurable hotkey activation | `SaysoNotchApp.swift` (`HotKeyEngine` upstream call site) | [test] `hotKeyActivationSettingsPersistAndClampSafely`, `hotKeyActivationModesExposeOnlyTheirConfiguredGestures` |
+| Application Profile Switching | Foreground app profile resolution | `DictationProfile.swift` | [test] `dictationProfileResolverNormalizesBundleIDAndUsesFirstMatch`, `dictationProfileResolverUsesExactBundleOverride` (resolver only; foreground app change in source) |
+| Push-to-Talk and Tap Toggle | Configurable hotkey activation | `SaysoNotchApp.swift` (`HotKeyEngine` upstream call site) | [test] `hotKeyActivationSettingsPersistAndClampSafely`, `hotKeyActivationModesExposeOnlyTheirConfiguredGestures` (settings only; event tap in source) |
 | Lexicon and Cleanup | Text replacements and directives | `Domain.swift`, `DictationProfile.swift` | [test] `dictationProfilePrefersLongestCorrectionPhrase`, `localCleanupIsIdempotentAndKeepsIndianScripts` |
 | BYOK Cloud Route | OpenAI-compatible audio API | `OpenAICompatibleAudioTranscriber.swift` | [test] `compatibleAudioTranscriberPostsMultipartAudioWithLanguage`, `byokRouteExemptFromSpeechRecognition` |
 | Indian Languages | Multi-language catalog | `FluidAudioLocalModel.swift`, `SherpaPunjabiModel.swift` | [test] `installedNativeMultilingualModelRoutesIndianLanguagesWithoutSpeechPermission`, `PunjabiManifestPinsModelAndTokenizer` |
@@ -193,8 +193,8 @@ Physical captures on live macOS display verified and committed in repository und
 - **Real Voice Dictation**: Manually observed utterance captured through physical microphone and transcribed live by local FluidAudio engine into the HUD text field.
 - **Single Process and Clean Exit**: `pgrep` confirms exactly 1 process running; quit button and clean teardown verified.
 - **HUD Interaction Proof**:
-  - Collapse toggle: Tapped HUD body or chevron up button collapses expanded panel to compact 42px notch height (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`).
-  - Start does not dismiss: Clicking "Start dictation" toggles live recording without closing the HUD (`macos/Sources/SaysoNotch/NotchPanelController.swift:195-207`).
+  - Collapse toggle: Tapped HUD body or chevron up button collapses expanded panel to compact 42px notch height (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`). Panel also auto-collapses approximately 2 seconds after transcription delivery or error notices via `hideAfterDelay()` (`NotchPanelController.swift:66-75`).
+  - Start does not dismiss: [manual] Clicking "Start dictation" was observed to toggle live recording without dismissing the HUD.
   - Detach toggles presentation: Clicking detach button alternates between `.notch` (attached beside camera) and `.floating` (desktop-positioned overlay).
   - Open Settings and Open Sayso: Clicking open settings (`macos/Sources/SaysoNotch/NotchPanelController.swift:177`) or open app brings forward the full multi-section settings workspace.
 - **Orca Computer-Use E2E Verification**:
@@ -214,10 +214,10 @@ Physical captures on live macOS display verified and committed in repository und
 ### 7. Open items and follow-up work
 
 1. **Notarization Profile**: A local Apple Development signed app is not a notarized release. `spctl` rejects the package until an authorized notarization profile is provided via `SAYSO_NOTARY_PROFILE`.
-2. **Live Cloud Account Provider Verification**: Provider contract, protocol serialization, and HTTPS endpoint checks are verified via unit tests; end-to-end cloud roundtrip requires user API credentials stored in Keychain.
+2. **Live Cloud Account Provider Verification**: No live cloud transcription provider call has been executed against an upstream API. Provider contract, protocol serialization, and HTTPS endpoint checks are verified via unit tests; real end-to-end cloud roundtrip requires user API credentials stored in Keychain.
 3. **Advanced Accessibility Candidate Models**: Grounded control covers exact titles, pointer rows, scrolling, navigation keys, app launching, URLs, folders, undo, and redo. Extended candidate coverage (menu-bar items, double-click, window geometry arrangement, Finder selection semantics) remains open for subsequent iteration.
 4. **Multi-Device Screenshot Baseline**: Notch geometry was physically verified on the local 16-inch MacBook Pro display; baselines across different MacBook notch dimensions and external monitors remain to be captured as hardware becomes available.
-5. **Outside-Click Auto-Collapse (Dropped from initial criteria)**: Earlier criteria suggested outside-click HUD collapse. In current design, collapse is explicit via tap toggle or chevron button (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`). Outside-click collapse via NSEvent global/local monitor was not implemented and remains an open UX enhancement.
+5. **Outside-Click Auto-Collapse (Dropped from initial criteria)**: Earlier criteria suggested outside-click HUD collapse. In current design, collapse occurs explicitly via tap toggle or chevron button (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`), or automatically via the 2-second timer `hideAfterDelay()` (`NotchPanelController.swift:66-75`). Outside-click collapse via NSEvent global/local click monitor is not implemented and remains an open UX enhancement.
 
 ## Build, test and launch runbook
 
@@ -279,3 +279,13 @@ The continuation handoff has achieved the following verifiable status:
 - Visual notch HUD verified on macOS display across compact, expanded, and detached presentations with screenshot proof in `docs/handover/screenshots/` (note: outside-click auto-collapse was dropped from initial criteria into open items; HUD collapses via explicit tap or chevron).
 - Live speech transcription into HUD verified manually via local FluidAudio engine.
 - Preserved Keychain-only secret security and confirmation-gated safety boundaries for desktop controls.
+
+### Successor gate checklist
+
+The next owner or agent must verify these gates before extending functionality:
+
+1. Confirm working tree is clean and aligned with `origin/main` (`git status`).
+2. Run `swift test` and confirm all 201 tests pass with zero failures.
+3. Start next delivery slice with Open item #1 (Notarization profile) or #2 (Live cloud provider roundtrip).
+4. Preserve Keychain-only secrets and confirmation gates for destructive actions.
+5. Apply single-concern signed commits (`git commit -S`) and run companion review before push.
