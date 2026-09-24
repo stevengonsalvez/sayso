@@ -1284,7 +1284,8 @@ final class SaysoAppModel: ObservableObject {
             name: application.localizedName ?? bundleIdentifier,
             corrections: defaultProfile.corrections,
             normalizesWhitespace: defaultProfile.normalizesWhitespace,
-            capitalizesSentences: defaultProfile.capitalizesSentences
+            capitalizesSentences: defaultProfile.capitalizesSentences,
+            cleanupDirectives: defaultProfile.cleanupDirectives
         )
         settings.dictationProfileOverrides.append(.init(bundleIdentifier: bundleIdentifier, profile: profile))
         save()
