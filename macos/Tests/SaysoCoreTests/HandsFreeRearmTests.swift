@@ -133,6 +133,24 @@ import Testing
     #expect(!cycle.isArmed)
 }
 
+@Test func handsFreeCycleStopsWhenInsertionTurnsOff() {
+    var cycle = HandsFreeCycle()
+    cycle.start(
+        rearmRequested: true,
+        handsFreeEnabled: true,
+        isDictationMode: true
+    )
+
+    let rearmed = cycle.consumeDelivery(
+        wasDelivered: true,
+        handsFreeEnabled: true,
+        isDictationMode: true,
+        autoInsertEnabled: false
+    )
+    #expect(!rearmed)
+    #expect(!cycle.isArmed)
+}
+
 @Test func handsFreeCycleArmsOnlyForContinuousDictation() {
     var cycle = HandsFreeCycle()
     cycle.start(
