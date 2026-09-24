@@ -1267,8 +1267,8 @@ public final class AXDesktopController: @unchecked Sendable {
                 executionMethod = .accessibilitySelection
                 directObservation = .init(
                     snapshot: snapshot,
-                    action: step.action,
-                    effect: selectionChanged ? .observed : .alreadySatisfied
+                    effect: selectionChanged ? .observed : .alreadySatisfied,
+                    result: selectionChanged ? "observed accessibility row selection" : "row already selected"
                 )
             }
         case let .key(key, expectedFingerprint):
