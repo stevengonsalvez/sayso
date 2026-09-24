@@ -53,6 +53,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     }
 
     public var fingerprint: String {
+        // Capability flags bind a plan to the visible interaction method, not just its title.
         let visibleControls = elements.map {
             [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description]
                 .joined(separator: "\u{1F}")
@@ -478,11 +479,13 @@ public enum ControlPolicy {
     }
 
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
-        if case .press = step.action {
+        switch step.action {
+        case .press, .select:
             guard let candidateTitle = step.candidateTitle else { return true }
             return step.requiresConfirmation || isDestructiveControlTitle(candidateTitle)
+        default:
+            return step.requiresConfirmation || step.action.isDestructive
         }
-        return step.requiresConfirmation || step.action.isDestructive
     }
 
     public static func isDestructiveControlTitle(_ title: String) -> Bool {
@@ -861,7 +864,8 @@ public enum ControlPlanner {
             return .init(
                 action: .select(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
                 confidence: 0.85,
-                reason: "Exact visible row"
+                reason: "Exact visible row",
+                candidateTitle: element.title
             )
         }
         if normalized.hasPrefix("focus ") {
@@ -1096,7 +1100,7 @@ public final class AXDesktopController: @unchecked Sendable {
         var openTargetBundleIdentifier: String?
         var openTargetWasFrontmost = false
         var openBeforeURL: URL?
-        var selectionConfirmed = false
+        var selectionChanged: Bool?
 
         switch step.action {
         case let .type(text, expectedFingerprint):
@@ -1188,8 +1192,7 @@ public final class AXDesktopController: @unchecked Sendable {
             guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
                 throw SaysoError.staleTarget
             }
-            try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
-            selectionConfirmed = true
+            selectionChanged = try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
         case let .key(key, expectedFingerprint):
             let virtualKey = await key.resolvedVirtualKey()
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -1209,8 +1212,12 @@ public final class AXDesktopController: @unchecked Sendable {
         }
 
         let observation: ActionObservation
-        if selectionConfirmed {
-            observation = .init(snapshot: nil, action: step.action, effect: .observed)
+        if let selectionChanged {
+            observation = .init(
+                snapshot: try? capture(application: targetApplication),
+                action: step.action,
+                effect: selectionChanged ? .observed : .notObserved
+            )
         } else {
             observation = try await observeEffect(
                 for: step.action,
