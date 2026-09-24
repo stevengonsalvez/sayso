@@ -2882,6 +2882,34 @@ private struct SaysoSettingsView: View {
                             }
                         }
                         TextField("App profile name", text: $model.settings.dictationProfileOverrides[index].profile.name)
+                        Picker("Spoken language", selection: $model.settings.dictationProfileOverrides[index].profile.languageOverride) {
+                            Text("Use global setting").tag(DictationLanguage?.none)
+                            ForEach(DictationLanguage.allCases) { language in
+                                Text(language.displayName).tag(Optional(language))
+                            }
+                        }
+                        Picker("Speech route", selection: $model.settings.dictationProfileOverrides[index].profile.routeOverride) {
+                            Text("Use global setting").tag(ProviderRoute?.none)
+                            ForEach(ProviderRoute.dictationRoutes) { route in
+                                Text(route.displayName).tag(Optional(route))
+                            }
+                        }
+                        Picker("Translation", selection: $model.settings.dictationProfileOverrides[index].profile.translationEnabledOverride) {
+                            Text("Use global setting").tag(Bool?.none)
+                            Text("On").tag(Optional(true))
+                            Text("Off").tag(Optional(false))
+                        }
+                        Picker("Translation output", selection: $model.settings.dictationProfileOverrides[index].profile.outputLanguageOverride) {
+                            Text("Use global setting").tag(DictationLanguage?.none)
+                            ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { language in
+                                Text(language.displayName).tag(Optional(language))
+                            }
+                        }
+                        Picker("Transcript cleanup", selection: $model.settings.dictationProfileOverrides[index].profile.cleanupEnabledOverride) {
+                            Text("Use global setting").tag(Bool?.none)
+                            Text("On").tag(Optional(true))
+                            Text("Off").tag(Optional(false))
+                        }
                         Toggle("Normalize whitespace for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.normalizesWhitespace)
                         Toggle("Capitalize sentences for this app", isOn: $model.settings.dictationProfileOverrides[index].profile.capitalizesSentences)
                     }
