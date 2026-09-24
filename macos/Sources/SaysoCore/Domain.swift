@@ -19,6 +19,25 @@ public enum OverlayPresentation: String, Codable, CaseIterable, Identifiable, Se
     }
 }
 
+public enum DictationHotKeyActivation: String, Codable, CaseIterable, Identifiable, Sendable {
+    case tapToToggle
+    case pressAndHold
+    case both
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .tapToToggle: "Tap to toggle"
+        case .pressAndHold: "Press and hold"
+        case .both: "Tap and hold"
+        }
+    }
+
+    public var usesTapToggle: Bool { self != .pressAndHold }
+    public var usesPressAndHold: Bool { self != .tapToToggle }
+}
+
 public enum SessionPhase: String, Codable, Sendable {
     case idle
     case requestingPermission
@@ -174,6 +193,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeSilenceSeconds = 1.2
+    public var hotKeyActivation: DictationHotKeyActivation = .tapToToggle
+    public var hotKeyHoldThresholdSeconds = 0.35
     public var preferredAudioInputUID: AudioInputDeviceUID?
     public var saveSessionAudio = false
     public var soundCues = true
@@ -203,7 +224,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
-        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
+        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeSilenceSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
@@ -233,6 +254,11 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         handsFreeSilenceSeconds = min(
             max(decoded(Double.self, .handsFreeSilenceSeconds, fallback: handsFreeSilenceSeconds), 0.5),
             5
+        )
+        hotKeyActivation = decoded(DictationHotKeyActivation.self, .hotKeyActivation, fallback: hotKeyActivation)
+        hotKeyHoldThresholdSeconds = min(
+            max(decoded(Double.self, .hotKeyHoldThresholdSeconds, fallback: hotKeyHoldThresholdSeconds), 0.2),
+            1
         )
         preferredAudioInputUID = decoded(
             AudioInputDeviceUID?.self,
