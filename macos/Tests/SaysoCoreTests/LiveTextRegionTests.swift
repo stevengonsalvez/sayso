@@ -7,13 +7,18 @@ import Testing
         selection: .init(location: 6, length: 5)
     ))
 
-    #expect(region.expectedValue == "Hello !")
+    #expect(region.expectedValue == "Hello world!")
+    #expect(region.matches("Hello world!"))
     region.replace(with: "Stevie")
     #expect(region.expectedValue == "Hello Stevie!")
     #expect(region.matches("Hello Stevie!"))
     #expect(!region.matches("Hello Stevie! edited"))
     #expect(region.rangeForInsertedText() == .init(location: 6, length: 6))
+    #expect(region.replacementRange == .init(location: 6, length: 6))
     #expect(region.value(afterReplacingWith: "Sayso") == "Hello Sayso!")
+    region.restore()
+    #expect(region.expectedValue == "Hello world!")
+    #expect(region.replacementRange == .init(location: 6, length: 5))
 }
 
 @Test func liveTextRegionSupportsCaretAndUnicodeBoundaries() throws {
