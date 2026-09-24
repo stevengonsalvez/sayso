@@ -107,6 +107,7 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
     var bubbleAlwaysVisible by remember { mutableStateOf(settings.bubbleAlwaysVisible) }
     var wakeWord by remember { mutableStateOf(settings.wakeWordEnabled) }
     var wakeWordPhrase by remember { mutableStateOf(settings.wakeWordPhrase) }
+    var wakeWordSensitivity by remember { mutableStateOf(settings.wakeWordSensitivity) }
     var autoStopSilence by remember { mutableStateOf(settings.autoStopSilenceEnabled) }
     var silenceTimeout by remember { mutableFloatStateOf(settings.silenceTimeoutSeconds) }
     var autoLanguageRouting by remember { mutableStateOf(settings.autoLanguageRoutingEnabled) }
@@ -178,7 +179,18 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            WakeWordSensitivitySelector(
+                selectedSensitivity = wakeWordSensitivity,
+                onSelectSensitivity = { sens ->
+                    wakeWordSensitivity = sens
+                    settings.wakeWordSensitivity = sens
+                    WakeWordService.restartWithSettings(context)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
             )
         }
         SwitchRow(
@@ -773,6 +785,96 @@ fun WakeWordPhraseSelector(
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WakeWordSensitivitySelector(
+    selectedSensitivity: String,
+    onSelectSensitivity: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        modifier = modifier,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.wake_word_sensitivity_label),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = stringResource(R.string.wake_word_sensitivity_subtitle),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            val options = listOf(
+                Triple(
+                    SettingsStore.WAKE_SENSITIVITY_HIGH,
+                    stringResource(R.string.wake_word_sensitivity_high),
+                    stringResource(R.string.wake_word_sensitivity_high_desc),
+                ),
+                Triple(
+                    SettingsStore.WAKE_SENSITIVITY_DEFAULT,
+                    stringResource(R.string.wake_word_sensitivity_medium),
+                    stringResource(R.string.wake_word_sensitivity_medium_desc),
+                ),
+                Triple(
+                    SettingsStore.WAKE_SENSITIVITY_LOW,
+                    stringResource(R.string.wake_word_sensitivity_low),
+                    stringResource(R.string.wake_word_sensitivity_low_desc),
+                ),
+            )
+
+            for ((key, title, desc) in options) {
+                val isSelected = selectedSensitivity == key
+                Surface(
+                    onClick = { onSelectSensitivity(key) },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        if (isSelected) 1.5.dp else 1.dp,
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (isSelected) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked,
+                            contentDescription = null,
+                            tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .padding(top = 2.dp),
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = desc,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
