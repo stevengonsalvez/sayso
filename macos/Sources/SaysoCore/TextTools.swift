@@ -231,6 +231,10 @@ public enum TextOutput {
         return copyAttribute(kAXValueAttribute as CFString, from: destination.field) as? String
     }
 
+    public static func isFocused(_ destination: Destination) -> Bool {
+        destination.isSafeDeliveryTarget && !isProtected(destination.field)
+    }
+
     private static func clipboardFallback(for text: String) -> DeliveryResult {
         copy(text) ? .delivered(.clipboard) : .pasteFailed(.clipboardUnavailable)
     }
