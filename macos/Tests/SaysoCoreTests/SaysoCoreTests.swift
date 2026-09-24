@@ -16,6 +16,16 @@ import Testing
     #expect(ProviderRoute.byok.supportsDictation)
 }
 
+@Test @MainActor func genericFileTranscriptionRejectsUnconfiguredBYOK() async {
+    await #expect(throws: SaysoError.self) {
+        try await FileTranscriber.transcribe(
+            fileURL: URL(fileURLWithPath: "/tmp/missing-sayso-audio.m4a"),
+            language: .english,
+            route: .byok
+        )
+    }
+}
+
 @Test func settingsMigrationDefaultsMissingDictationProfile() throws {
     let legacy = Data("{\"mode\":\"control\",\"language\":\"en-GB\"}".utf8)
     let settings = try JSONDecoder().decode(SaysoSettings.self, from: legacy)
