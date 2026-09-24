@@ -636,5 +636,5 @@ private func openOutcome(
 @Test func controlPlannerRequiresExactBundleIdentifier() throws {
     let snapshot = DesktopSnapshot(processIdentifier: 42, applicationName: "Editor", windowTitle: "Draft", focusedRole: "AXTextField", focusedValue: "", isProtected: false)
     #expect(try ControlPlanner.plan(command: "activate com.apple.Safari", snapshot: snapshot).action == .activate(bundleIdentifier: "com.apple.Safari"))
-    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "quit Safari", snapshot: snapshot) }
+    #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "activate Safari", snapshot: snapshot) }
 }
