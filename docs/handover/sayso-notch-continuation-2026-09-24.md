@@ -1,8 +1,8 @@
 # Sayso Notch continuation handover
 
-- **Generated:** 2026-09-24 11:35:00 BST
+- **Generated:** 2026-09-24 11:45:00 BST
 - **Repository:** `/Users/stevengonsalvez/orca/sayso`
-- **Active branch:** `main`, clean working tree ahead of `origin/main`
+- **Active branch:** `main`, clean working tree aligned with `origin/main`
 - **Live development session:** `dev-sayso-notch-1790188365:1.1`
 
 ## Original product goal
@@ -163,8 +163,8 @@ All code evidence below is from source head `67092c1`; documentation and verific
 |---|---|---|---|
 | AX Candidate Capture | Bounded candidate tree search | `AXCandidateCapture.swift`, `DesktopControl.swift` | [test] `candidateIDIsStableForSameAXLocator`, `candidateStateExcludesProtectedAndDisabledControls` |
 | Grounded Action Schema | Closed plan action types | `DesktopAction`, `ControlPlanStep` | [test] `controlPlannerUsesOnlyExactVisibleControlTitle`, `controlPlannerAllowsOnlyReviewedNavigationKeys` |
-| Exact Title Click / Press | Single matching visible control | `DesktopControlPlanner.plan` (`click`) | [test] `controlPlannerUsesOnlyExactVisibleControlTitle`, `resolverUsesOneExactTargetableCandidate` |
-| Ambiguity Rejection | Reject multiple matches | `DesktopControlResolver` | [test] `resolverRejectsAmbiguousTargetableCandidatesDeterministically` |
+| Exact Title Click / Press | Single matching visible control | `ControlPlanner.plan` (`click`) | [test] `controlPlannerUsesOnlyExactVisibleControlTitle`, `resolverUsesOneExactTargetableCandidate` |
+| Ambiguity Rejection | Reject multiple matches | `DesktopCandidateResolver` | [test] `resolverRejectsAmbiguousTargetableCandidatesDeterministically` |
 | Pointer Row Click | Targetable table and list rows | `DesktopControl.swift` (`supportsPointerClick`) | [test] `pointerRowPlannerUsesExactRowsAfterPressTargets`, `pointerRowsNeverResolveAmbiguousTitles` |
 | Field Focus and Selection | Focus input / select row | `DesktopAction.focus`, `DesktopAction.select` | [test] `focusPlannerRequiresOneExactFocusableField`, `selectionPlannerRequiresOneExactSelectableRow` |
 | Text Typing | Literal typing at focus | `DesktopAction.type` | [test] `controlPlannerGroundsTypeAgainstCurrentTarget` |
@@ -218,6 +218,7 @@ Physical captures on live macOS display verified and committed in repository und
 3. **Advanced Accessibility Candidate Models**: Grounded control covers exact titles, pointer rows, scrolling, navigation keys, app launching, URLs, folders, undo, and redo. Extended candidate coverage (menu-bar items, double-click, window geometry arrangement, Finder selection semantics) remains open for subsequent iteration.
 4. **Multi-Device Screenshot Baseline**: Notch geometry was physically verified on the local 16-inch MacBook Pro display; baselines across different MacBook notch dimensions and external monitors remain to be captured as hardware becomes available.
 5. **Outside-Click Auto-Collapse (Dropped from initial criteria)**: Earlier criteria suggested outside-click HUD collapse. In current design, collapse occurs explicitly via tap toggle or chevron button (`macos/Sources/SaysoNotch/NotchPanelController.swift:77`), or automatically via the 2-second timer `hideAfterDelay()` (`NotchPanelController.swift:66-75`). Outside-click collapse via NSEvent global/local click monitor is not implemented and remains an open UX enhancement.
+6. **Spoken Mode Switch Exact Matching**: `handleVoiceModeSwitch` (`SaysoNotchApp.swift:1348-1362`) matches spoken commands by substring check (`command.contains("sayso switch to dictation")`). Unlike voice-edit commands which enforce whole-token shape, automated unit test coverage and stricter command parsing for spoken mode switches remain open.
 
 ## Build, test and launch runbook
 
