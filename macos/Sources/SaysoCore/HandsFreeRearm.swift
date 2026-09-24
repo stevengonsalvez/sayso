@@ -45,12 +45,14 @@ public struct HandsFreeCycle: Equatable, Sendable {
         handsFreeEnabled: Bool,
         isDictationMode: Bool,
         continuousEnabled: Bool = true,
+        autoInsertEnabled: Bool = true,
         maximumSessionDuration: TimeInterval = 900,
         now: Date = .now
     ) -> Bool {
+        guard isArmed else { return false }
         deliveredPhraseCount += 1
         let elapsed = now.timeIntervalSince(startedAt ?? now)
-        let shouldRearm = wasDelivered
+        let shouldRearm = wasDelivered && autoInsertEnabled
             && shouldRearm(
                 handsFreeEnabled: handsFreeEnabled,
                 isDictationMode: isDictationMode,
