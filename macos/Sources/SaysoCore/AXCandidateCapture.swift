@@ -45,20 +45,7 @@ public enum AXCandidateCapturePolicy {
         supportsSelection && !supportsPress && !supportsFocus
     }
 
-    public static func supportsPointerClick(
-        supportsSelection: Bool,
-        hasClickableFrame: Bool
-    ) -> Bool {
-        supportsSelection && hasClickableFrame
-    }
-
-    public static func pointerHitDecision(
-        reachesTarget: Bool,
-        hitsTargetDirectly: Bool,
-        hasInteractiveDescendant: Bool
-    ) -> PointerRowHitDecision {
-        guard reachesTarget else { return .covered }
-        guard !hitsTargetDirectly else { return .pointer }
+    public static func pointerHitDecision(hasInteractiveDescendant: Bool) -> PointerRowHitDecision {
         return hasInteractiveDescendant ? .accessibilitySelection : .pointer
     }
 
@@ -224,7 +211,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
         let wasSelected = boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false)
         try postPointerClick(at: centre, target: target.element, systemWide: systemWide)
         for _ in 0..<5 {
-            try await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: .milliseconds(50))
             if !wasSelected && boolAttribute(kAXSelectedAttribute as CFString, from: target.element, defaultValue: false) {
                 return .pointerSelectionChanged
             }
@@ -286,10 +273,6 @@ public final class AXCandidateCapture: @unchecked Sendable {
             let hasClickableFrame = supportsSelection && nodeFrame.map { frame in
                 visibleClip?.contains(CGPoint(x: frame.midX, y: frame.midY)) ?? true
             } == true
-            let supportsPointerClick = AXCandidateCapturePolicy.supportsPointerClick(
-                supportsSelection: supportsSelection,
-                hasClickableFrame: hasClickableFrame
-            )
             let isEnabled = boolAttribute(kAXEnabledAttribute as CFString, from: node.element, defaultValue: true)
 
             if AXCandidateCapturePolicy.includesCandidate(
@@ -317,7 +300,7 @@ public final class AXCandidateCapture: @unchecked Sendable {
                         supportsPress: supportsPress,
                         supportsFocus: supportsFocus,
                         supportsSelection: supportsSelection,
-                        supportsPointerClick: supportsPointerClick,
+                        supportsPointerClick: hasClickableFrame,
                         isProtected: false
                     )
                 )
@@ -412,8 +395,6 @@ public final class AXCandidateCapture: @unchecked Sendable {
             guard let parent = copyElement(kAXParentAttribute as CFString, from: ancestor) else { break }
             if CFEqual(parent, target) {
                 return AXCandidateCapturePolicy.pointerHitDecision(
-                    reachesTarget: true,
-                    hitsTargetDirectly: false,
                     hasInteractiveDescendant: hasInteractiveDescendant
                 )
             }
