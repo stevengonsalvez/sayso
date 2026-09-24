@@ -190,6 +190,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var speechVoiceIdentifier: String?
     public var speechRate: Double = 0.5
     public var autoInsert = true
+    public var livePartialInsertion = false
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeContinuous = false
@@ -227,7 +228,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
-        case autoInsert, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
+        case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
@@ -252,6 +253,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         speechVoiceIdentifier = (try? values.decodeIfPresent(String.self, forKey: .speechVoiceIdentifier)) ?? speechVoiceIdentifier
         speechRate = min(max(decoded(Double.self, .speechRate, fallback: speechRate), 0.2), 0.6)
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
+        livePartialInsertion = decoded(Bool.self, .livePartialInsertion, fallback: livePartialInsertion)
         restoreClipboardAfterPaste = decoded(Bool.self, .restoreClipboardAfterPaste, fallback: restoreClipboardAfterPaste)
         handsFree = decoded(Bool.self, .handsFree, fallback: handsFree)
         handsFreeContinuous = decoded(Bool.self, .handsFreeContinuous, fallback: handsFreeContinuous)
