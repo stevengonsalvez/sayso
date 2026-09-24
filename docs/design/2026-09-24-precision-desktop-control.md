@@ -55,24 +55,28 @@
                    │                        │ (NSPanel .nonactivatingPanel)
                    │                        │ (Dictation suppressed; audio scoped to badge)
                    │                        ▼ (Spoken "badge 2" within 5s / VAD, max 15s)
-                   │                      [Atomic AX Re-capture + verify id, title, bounds ±2pt]
-                   │                        │ (Re-bind expectedFingerprint in same capture)
-                   │                        │ (Join before PreFlightCheck)
+                   │                      [Revalidation Capture: verify id & title]
+                   │                        │ (Assert pid and windowTitle match before re-bind)
+                   │                        │ (Re-bind expectedFingerprint for execute)
                    │                        ▼
                    ├──yes (headless)────▶ [Caller returns ambiguous error JSON]
                    │
                    no (1 match)
                    ▼────────────────────────┘
-           ┌───────────────────┐ Pre-flight check (budget <4ms, timeout 500ms)
-           │ PreFlightCheck    │ (isEnabled, !isProtected, 250ms per-call timeout)
-           └─────────┬─────────┘
-                     │ pass
-                     ▼
            ┌───────────────────┐ ControlPolicy check
-           │ Destructive Gate? │──yes──▶ [NotchHUD Confirmation Banner]
-           └─────────┬─────────┘           │ user confirms
+           │ Confirmation Gate │──yes──▶ [NotchHUD Confirmation Banner]
+           │ (isDestructive?)  │           │ user confirms ("confirm" / "cancel")
+           └─────────┬─────────┘           │ (Dictation suppressed; audio scoped to banner)
                      │ no (canAutoRun)     ▼
                      ▼─────────────────────┘
+           ┌──────────────────────────────────────────────┐
+           │ execute() Fresh Capture & Verification       │
+           │ • Capture(s) with active target activation   │
+           │ • Pre-flight check: isEnabled, !isProtected  │
+           │ • Fingerprint comparison TOCTOU guard        │
+           └──────────────────────┬───────────────────────┘
+                                  │ pass
+                                  ▼
            ┌───────────────────┐ Semantic AX Action (budget <4ms, timeout 250ms)
            │AXDesktopController│────────────┐ (press, select, focus, menu;
            └─────────┬─────────┘            │  .clickAt pointer and .key always confirm)
@@ -80,7 +84,7 @@
                      │               │ Target App  │
                      ▼               └──────┬──────┘
            ┌───────────────────┐            │
-           │ ControlObservation│◀───────────┘ AX diff (8 captures / 1200ms deadline)
+           │ ControlObservation│◀───────────┘ AX diff (1200ms hard deadline)
            └─────────┬─────────┘
                      │
                      ▼
@@ -101,19 +105,19 @@
 | ControlPlanner | SaysoCore | Sub-15ms closed-vocab intent parsing alongside LLM fallback | Extended: > hierarchy parsed inside menu without splitting |
 | AXCandidateCapture | SaysoCore | Bounded frontmost-window AX traversal (p50 < 20ms, p95 < 35ms) | Extended: off-main background task with 500ms monotonic clock deadline |
 | DesktopCandidates | SaysoCore | Element representation: stable locator, role, state | Extended: bounds: CGRect? on DesktopCandidate and DesktopElement; bounds excluded from fingerprint hash |
-| DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y + 4pt); returns .ambiguous |
+| DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y ±4pt threshold); returns .ambiguous |
 | ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case across switches; compiler eliminates default: fallbacks; destructive check wins |
-| AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedFingerprint:) and 250ms timeout; maps AX timeouts to .effectUnknown |
-| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; 1200ms total observe deadline |
-| ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Kept: orchestrator calls fail() immediately on action failure; effectUnknown preserves no-effect budget |
-| NotchHUD | SaysoNotch | Visual reticle, badge overlay, and telemetry breakdown | Extended: spatial badge rendering on nonactivating panel using Cocoa coordinates |
-| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: Phase 1 per-entry decode preserving raw Data on unknown action cases; corrupt journal backup |
+| AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedFingerprint:) and 250ms timeout; maps AX timeouts to .effectUnknown; pre-flight runs inside execute() |
+| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; 1200ms hard deadline ceiling |
+| ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Extended: halts fail-closed on 2 consecutive unknown effects; effectUnknown preserves no-effect budget |
+| NotchHUD | SaysoNotch | Visual reticle, badge overlay, and telemetry breakdown | Extended: spatial badge rendering on nonactivating panel; spoken confirm/cancel banner |
+| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: Phase 1 per-entry decode via JSONSerialization preserving raw Data on unknown cases; corrupt backup |
 
 ## Migration Order & Schema Resilience for ControlAuditStore
 
 | Phase | Scope | Deployment Rule & Disk Invariant |
 |---|---|---|
-| Phase 1: Storage Resilience | Ship per-entry decode in ControlAuditStore | Decodes array entries individually from disk. Unrecognized actions or schema variants are parsed as RawControlAuditEntry (preserving raw JSON Data). ExecutionTelemetry enums use RawRepresentable with unknown fallbacks. On write, raw entries are preserved and re-serialized in original sequence. Raw entries count toward the 500-entry retention cap. On decode failure, writes timestamped backup control-audit.json.corrupt-<timestamp> before fallback. Minimum downgrade floor: Phase 1 release is the compatibility floor. Ships in production release before Phase 2. |
+| Phase 1: Storage Resilience | Ship per-entry decode in ControlAuditStore | Decodes array entries individually from disk via JSONSerialization. Unrecognized actions or schema variants are parsed as RawControlAuditEntry (preserving raw JSON Data). ExecutionTelemetry enums use RawRepresentable with unknown fallbacks. On write, raw entries are preserved and re-serialized in original sequence. Raw entries count toward the 500-entry retention cap. On decode failure, writes timestamped backup control-audit.json.corrupt-<timestamp> before fallback. Minimum downgrade floor: Phase 1 release is the compatibility floor; rollback past Phase 1 is unsupported because pre-Phase-1 builds overwrite journal with empty array on decode failure. Ships in production release before Phase 2. |
 | Phase 2: Action Extension | Ship DesktopAction.menu | Introduces .menu action type. Older builds running Phase 1 code safely preserve .menu entries on downgrade/rollback without failing full-array decode or dropping history on subsequent append. |
 
 ## Data model
@@ -203,21 +207,21 @@ Fast path (Single unambiguous candidate, canAutoRun == true, semantic AX only):
 Ambiguous match path (Multiple targets sharing label; destructive badge requires confirmation):
 
 ```
-[Voice Cmd] ──Resolver (ambiguous)──▶ [Badge Overlay 1..N (max 15s)] ──voice "badge 1"──▶ [Atomic AX Re-capture + verify id, title, bounds ±2pt + re-bind fingerprint] ──▶ [PreFlightCheck] ──▶ [Destructive Gate: "Cancel" requires review] ──▶ [NotchHUD Confirmation Banner] ──user confirms──▶ [Dispatch] ──▶ [Done]
+[Voice Cmd] ──Resolver (ambiguous)──▶ [Badge Overlay 1..N (max 15s)] ──voice "badge 1"──▶ [Revalidation Capture: verify id & title] ──Assert pid & windowTitle match──▶ [Re-bind expectedFingerprint] ──▶ [Confirmation Gate: "Cancel" requires review] ──▶ [NotchHUD Confirmation Banner] ──user confirms ("confirm" / "cancel")──▶ [execute() Fresh Capture + PreFlightCheck isEnabled] ──▶ [Dispatch] ──▶ [Done]
 ```
 
 Menu hierarchy path (Unlisted / destructive menu requires confirmation):
 
 ```
-["menu File > Save"] ──Non-destructive AXMenuBar Traversal (depth ≤3)──▶ [Locate Leaf AXMenuItem] ──Pre-check isEnabled──▶ [NotchHUD Confirmation Banner] ──user confirms──▶ [AXPress Leaf] ──▶ [Post-assert] ──▶ [Done]
+["menu File > Save"] ──Non-destructive AXMenuBar Traversal (depth ≤3)──▶ [Locate Leaf AXMenuItem] ──▶ [Confirmation Gate (unlisted/destructive)] ──▶ [NotchHUD Confirmation Banner] ──user confirms ("confirm" / "cancel")──▶ [execute() Fresh Capture + PreFlightCheck isEnabled] ──▶ [AXPress Leaf] ──▶ [Post-assert] ──▶ [Done]
 ```
 
 Multi-step chain execution semantics:
 
 | Outcome Step Result | Mapped From | Handling in Multi-Step Chains |
 |---|---|---|
-| .effectObserved | ControlEffect.observed, .alreadySatisfied | State change verified. Reset consecutiveNoEffectCount to 0. Proceed to step k+1 |
-| .effectUnknown | ControlEffect.unknown, AX timeout/cannotComplete | Allowed menu/key without diff, or AX messaging timeout. Tolerated; consecutiveNoEffectCount remains unchanged. Proceed, verify target on fresh snapshot |
+| .effectObserved | ControlEffect.observed, .alreadySatisfied | State change verified. Reset consecutiveNoEffectCount and consecutiveUnknownCount to 0. Proceed to step k+1 |
+| .effectUnknown | ControlEffect.unknown, AX timeout/cannotComplete | Allowed menu/key without diff, or AX timeout. Increment consecutiveUnknownCount. Proceed if counter < maxConsecutiveUnknown (2); halt chain if counter == 2. consecutiveNoEffectCount remains unchanged |
 | .noEffectObserved | ControlEffect.notObserved | Increment consecutiveNoEffectCount by 1. Proceed if counter < maxConsecutiveNoEffect (2); halt chain if counter == 2 |
 | .actionFailed | Hard OS/AX error | Hard structural failure (invalidUIElement, apiDisabled). Halt chain immediately via session.fail() |
 | Budget Cap | Session counter | Session halts immediately if total actions reach maxActions (default 12) |
@@ -234,22 +238,25 @@ Multi-step chain execution semantics:
 | Badge Dictation Suppression | Suppress dictation text insertion during badge overlay | While badge overlay NSPanel is active, speech recognition text insertion into target app is suppressed; audio stream is scoped exclusively to badge grammar ("badge <N>" or "cancel") |
 | Spatial Badge Ordering | Badges ordered by anchored row-buckets then X | Grouped by anchor Y (±4pt threshold), then sorted by bounds.origin.x |
 | Coordinate Conversion | Top-left AX bounds converted to Cocoa screen | cocoaY = NSScreen.screens[0].frame.maxY - axY - axHeight |
-| Single Atomic Revalidation | Revalidation, re-bind, and dispatch share single capture | Spoken badge selection triggers one atomic frontmost AX capture used jointly for candidate revalidation (id, title, bounds ±2pt), snapshot fingerprint re-binding, and dispatch; zero intermediate captures prevents TOCTOU drift |
+| Badge Candidate Revalidation | Re-asserts candidateID & title match on frontmost window | Candidate revalidation verifies candidateID and title against frontmost window; asserts processIdentifier and windowTitle match before re-binding expectedFingerprint. Absolute screen bounds are not pinned to ±2pt so window move/resize does not trigger false rejection |
+| Pre-flight Verification Timing | Pre-flight checks and fingerprint guard run after confirmation | PreFlightCheck (isEnabled, !isProtected) and expectedFingerprint comparison execute inside execute() immediately prior to action dispatch, ensuring checks remain fresh even after long confirmation pauses |
 | Fingerprint Bounds Exclusion | Snapshot fingerprint invariant | bounds: CGRect? on DesktopCandidate and DesktopElement are excluded from window snapshot fingerprint hash, ensuring window move or resize does not trigger false TOCTOU mismatch |
 | Badge Grammar Prefix | Spoken badge selection requires prefix | "badge <N>" required; bare digits ignored on open mic |
 | Badge VAD Timeout | Overlay dismisses after 5s silence or 15s max | 5.0s timer extended on voice activity detection; hard cap of 15.0s overlay lifetime prevents mic chatter lock |
+| Confirmation Banner Grammar | Spoken confirmation vocabulary with dictation suppression | Spoken "confirm", "approve", or "yes" confirms; "cancel", "deny", or "no" aborts. Dictation insertion into target app is suppressed while banner is active |
 | Destructive Actions | Actions in ControlPolicy.destructiveWords require review | ControlPolicy.requiresConfirmation gates execution |
-| Pointer Click Safety | Raw CGEvent mouse clicks always require review | ControlPolicy.requiresConfirmation returns true for .clickAt |
-| Keystroke Safety | Keyboard shortcuts always require review | ControlPolicy.requiresConfirmation returns true for .key |
+| Pointer Click Safety | Raw CGEvent mouse clicks always require review | Kept: DesktopAction.isDestructive returns true for .clickAt (:386-388) |
+| Keystroke Safety | Keyboard shortcuts always require review | Kept: DesktopAction.isDestructive returns true for .key (:386-388) |
 | Fail-Closed Menu Policy | Explicit .menu case; allowlist check must be non-destructive | safeMenuAllowlist.contains(path) && !isDestructiveControlTitle(leaf) |
 | Menu Exhaustive Switches | Enumerate all DesktopAction cases via compiler | Eliminate default: fallbacks across all action switches (including isDestructive, requiresConfirmation, requiresActiveTarget, validatedNextTargetBundleIdentifier, execute); compiler enforces explicit handling |
 | Menu Fingerprint Guard | Menu actions bound to planned window | DesktopAction.menu carries expectedFingerprint to prevent TOCTOU mismatch |
 | Active Menu Target | Menus only target frontmost application | ControlPolicy.requiresActiveTarget returns true for .menu |
 | Menu Inspection Traversal | Opening parent menu for dynamic children allowed without confirmation | Opening menu bar item or submenu for lazy evaluation (menuNeedsUpdate) is non-destructive navigation (no confirmation required; max depth 3). If cancelled, timed out, or unlocated, controller dismisses menu cleanly via AXCancel or Escape |
 | AX Timeout Mapping | Timeouts map to .effectUnknown; only hard errors fail | AXUIElementPerformAction timeouts or kAXErrorCannotComplete (common on modal-opening controls) map to .effectUnknown and proceed to observation. Only hard structural errors (kAXErrorInvalidUIElement, kAXErrorAPIDisabled, kAXErrorActionUnsupported) map to .actionFailed and halt session |
+| Consecutive Unknown Effect Cap | Unresponsive target application guard | Multi-step chains halt immediately if 2 consecutive actions yield .effectUnknown (e.g. repeated AX timeouts or kAXErrorCannotComplete), preventing session stall |
 | Bounded AX Timeout | Cross-process AX queries cannot hang UI | AXUIElementSetMessagingTimeout 0.25s per call, 500ms soft clock check |
 | Resilient Audit Storage | Journal schema changes must never wipe history | ControlAuditStore decodes entries individually, preserving raw un-decodable entries as raw Data. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. On decode failure, writes timestamped backup |
-| Observation Polling | State diff observation capped at 1200ms deadline | Up to 8 captures with 100ms cap each and 125ms intervals; initial check at 0ms before first sleep; overall observe deadline capped at 1200ms |
+| Observation Polling | State diff observation capped at 1200ms hard deadline | Polling terminates as soon as 1200ms hard ceiling elapses regardless of attempt count (up to 8 captures with 100ms cap and 125ms intervals); initial check at 0ms sleep |
 | Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive no-effects |
 
 Safe menu allowlist (exact full path match, standard AppKit):
@@ -276,14 +283,16 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Unit | Menu expectedFingerprint verification | Window switch before menu dispatch aborts execution |
 | Unit | Destructive badge confirmation gate | Picking destructive badge "Cancel" prompts confirmation banner |
 | Unit | Immediate chain failure on .actionFailed | Action failure at AX level halts multi-step chain immediately |
-| Unit | Badge triple-revalidation race prevention | Stale candidate ID, title mismatch, or bounds shift (>2pt) aborts dispatch |
-| Unit | Single atomic badge revalidation and re-bind | Candidate revalidation and expectedFingerprint re-binding execute from same capture |
+| Unit | Badge revalidation and drift check | Stale candidate ID or title mismatch aborts dispatch; PID/windowTitle mismatch prevents re-binding |
+| Unit | Pre-flight timing verification | PreFlightCheck validates isEnabled and !isProtected inside execute() after approval |
 | Unit | Badge dictation suppression | Target application dictation insertion suppressed during badge overlay |
-| Unit | Spatial row-bucket badge ordering | Badges 1..N order by anchored row (Y + 4pt), then X |
+| Unit | Confirmation banner spoken grammar | Spoken confirm/cancel recognized; dictation suppressed during confirmation banner |
+| Unit | Consecutive unknown effect cap | 2 consecutive .effectUnknown outcomes halt multi-step chain fail-closed |
+| Unit | Spatial row-bucket badge ordering | Badges 1..N order by anchored row (Y ±4pt threshold), then X |
 | Unit | Resilient audit journal decoding | Corrupt or unknown action entries preserved without wiping 500-entry journal |
 | Integration | Badge overlay coordinate mapping | AX top-left to Cocoa primary screen bottom-left conversion across screens |
 | Integration | AXMenuBar hierarchy traversal | Native macOS menu bar resolution with lazy-menu fallback (depth ≤3) |
-| Benchmark | Fast-path execution latency | Target p95 < 45ms, p50 < 30ms for direct single-element semantic dispatch and immediate verification on standard AppKit target. Component capture p50 < 20ms, p95 < 35ms on Apple Silicon M-series |
+| Benchmark | Fast-path execution latency | Target p50 < 75ms, p95 < 125ms for full execution (intent parse + active target capture + pre-flight + semantic dispatch + immediate verification on standard AppKit target). Component capture p50 < 20ms, p95 < 35ms on Apple Silicon M-series |
 | E2E | Computer-use automated validation | Tab navigation, state inspection, and audio transcribe round-trip |
 
 ## Out of scope
