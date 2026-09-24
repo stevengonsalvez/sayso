@@ -22,6 +22,21 @@ import Testing
     )
 }
 
+@Test @MainActor func handsFreeMaximumDurationDefaultsAndClampsToSafeRange() {
+    let transcriber = LiveTranscriber()
+
+    #expect(transcriber.handsFreeMaximumDuration == .seconds(900))
+    #expect(
+        LiveTranscriber.clampedHandsFreeMaximumDuration(.seconds(1))
+            == LiveTranscriber.minimumHandsFreeMaximumDuration
+    )
+    #expect(
+        LiveTranscriber.clampedHandsFreeMaximumDuration(.seconds(3_601))
+            == LiveTranscriber.maximumHandsFreeMaximumDuration
+    )
+    #expect(LiveTranscriber.clampedHandsFreeMaximumDuration(.seconds(600)) == .seconds(600))
+}
+
 @Test @MainActor func handsFreeSilenceWaitsForSustainedSpeechBeforeStopping() {
     var gate = HandsFreeSpeechGate()
     for _ in 0..<(HandsFreeSpeechGate.requiredSpeechFrames - 1) {
