@@ -11,6 +11,7 @@ public struct DesktopElement: Codable, Equatable, Identifiable, Sendable {
     public let supportsPress: Bool
     public let supportsFocus: Bool
     public let supportsSelection: Bool
+    public let supportsPointerClick: Bool
 
     public init(
         id: String,
@@ -18,7 +19,8 @@ public struct DesktopElement: Codable, Equatable, Identifiable, Sendable {
         title: String,
         supportsPress: Bool = true,
         supportsFocus: Bool = false,
-        supportsSelection: Bool = false
+        supportsSelection: Bool = false,
+        supportsPointerClick: Bool = false
     ) {
         self.id = id
         self.role = role
@@ -26,6 +28,7 @@ public struct DesktopElement: Codable, Equatable, Identifiable, Sendable {
         self.supportsPress = supportsPress
         self.supportsFocus = supportsFocus
         self.supportsSelection = supportsSelection
+        self.supportsPointerClick = supportsPointerClick
     }
 }
 
@@ -55,7 +58,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     public var fingerprint: String {
         // Capability flags bind a plan to the visible interaction method, not just its title.
         let visibleControls = elements.map {
-            [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description]
+            [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description, $0.supportsPointerClick.description]
                 .joined(separator: "\u{1F}")
         }
             .joined(separator: "\u{1E}")
@@ -347,6 +350,7 @@ public enum DesktopAction: Codable, Equatable, Sendable {
     case press(elementID: String, expectedFingerprint: String)
     case focus(elementID: String, expectedFingerprint: String)
     case select(elementID: String, expectedFingerprint: String)
+    case clickAt(elementID: String, expectedFingerprint: String)
     case key(DesktopKey, expectedFingerprint: String)
 
     /// A syntactically valid, explicit app activation target. Observe the action
@@ -355,7 +359,7 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         switch self {
         case let .activate(bundleIdentifier), let .activateApplication(bundleIdentifier, _):
             Self.validatedBundleIdentifier(bundleIdentifier)
-        case .type, .open, .openFolder, .quit, .scroll, .press, .focus, .select, .key:
+        case .type, .open, .openFolder, .quit, .scroll, .press, .focus, .select, .clickAt, .key:
             nil
         }
     }
@@ -374,7 +378,7 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         switch self {
         case .quit:
             return true
-        case .press, .key:
+        case .press, .clickAt, .key:
             // AX locators are opaque, and keyboard events may commit or dismiss state. Review both.
             return true
         default:
@@ -471,7 +475,7 @@ public enum ControlPolicy {
     /// Text and UI interactions must not be sent to a background app.
     public static func requiresActiveTarget(for action: DesktopAction) -> Bool {
         switch action {
-        case .type, .scroll, .press, .focus, .select, .key:
+        case .type, .scroll, .press, .focus, .select, .clickAt, .key:
             true
         case .open, .openFolder, .activate, .activateApplication, .quit:
             false
@@ -480,7 +484,7 @@ public enum ControlPolicy {
 
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
         switch step.action {
-        case .press, .select:
+        case .press, .select, .clickAt:
             guard let candidateTitle = step.candidateTitle else { return true }
             return step.requiresConfirmation || isDestructiveControlTitle(candidateTitle)
         default:
@@ -517,9 +521,12 @@ public enum ControlOutcome {
         case .type:
             guard let after else { return .unknown }
             return after.focusedValue != before.focusedValue ? .observed : .notObserved
-        case .press, .focus, .select, .scroll:
+        case .press, .focus, .scroll:
             guard let after else { return .unknown }
             return after.fingerprint != before.fingerprint ? .observed : .notObserved
+        case .select, .clickAt:
+            // The executor reads AXSelected after the action. Selection is intentionally absent from this fingerprint.
+            return .unknown
         case .key:
             // Caret moves are not represented in DesktopSnapshot. Do not mistake them for failed actions.
             return .unknown
@@ -540,6 +547,8 @@ public enum ControlOutcome {
             return observed ? "observed field focus" : "no observed field focus"
         case .select:
             return observed ? "observed row selection" : "no observed row selection"
+        case .clickAt:
+            return observed ? "observed pointer row selection" : "no observed pointer row selection"
         case .key:
             return "keyboard event sent, effect not attributable"
         case .open:
@@ -838,17 +847,31 @@ public enum ControlPlanner {
         }
         if normalized.hasPrefix("click ") {
             let title = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            let matches = snapshot.elements.filter {
-                $0.supportsPress
-                    && $0.title.compare(title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+            let matchingTitle = snapshot.elements.filter {
+                $0.title.compare(title, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
             }
-            guard matches.count == 1, let element = matches.first else {
+            let pressMatches = matchingTitle.filter {
+                $0.supportsPress
+            }
+            if pressMatches.count == 1, let element = pressMatches.first {
+                return .init(
+                    action: .press(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
+                    confidence: 0.85,
+                    reason: "Exact visible control",
+                    candidateTitle: element.title
+                )
+            }
+            guard pressMatches.isEmpty else {
+                throw SaysoError.invalidAction("Click commands need one visible control with an exact title.")
+            }
+            let pointerMatches = matchingTitle.filter(\.supportsPointerClick)
+            guard pointerMatches.count == 1, let element = pointerMatches.first else {
                 throw SaysoError.invalidAction("Click commands need one visible control with an exact title.")
             }
             return .init(
-                action: .press(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
+                action: .clickAt(elementID: element.id, expectedFingerprint: snapshot.fingerprint),
                 confidence: 0.85,
-                reason: "Exact visible control",
+                reason: "Exact visible row",
                 candidateTitle: element.title
             )
         }
@@ -1061,7 +1084,7 @@ public final class AXDesktopController: @unchecked Sendable {
             ),
             isProtected: isProtected,
             elements: candidateSnapshot.candidates.filter {
-                $0.state.isTargetable || $0.state.isSelectable || $0.state.isSelectionTarget
+                $0.state.isTargetable || $0.state.isSelectable || $0.state.isSelectionTarget || $0.state.isPointerTarget
             }.map {
                 DesktopElement(
                     id: $0.id.rawValue,
@@ -1069,7 +1092,8 @@ public final class AXDesktopController: @unchecked Sendable {
                     title: $0.title,
                     supportsPress: $0.state.supportsPress,
                     supportsFocus: $0.state.supportsFocus,
-                    supportsSelection: $0.state.supportsSelection
+                    supportsSelection: $0.state.supportsSelection,
+                    supportsPointerClick: $0.state.supportsPointerClick
                 )
             }
         )
@@ -1193,6 +1217,12 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.staleTarget
             }
             selectionChanged = try candidateCapture.select(candidateID: .init(rawValue: elementID), application: target)
+        case let .clickAt(elementID, expectedFingerprint):
+            guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
+                throw SaysoError.staleTarget
+            }
+            selectionChanged = try candidateCapture.click(candidateID: .init(rawValue: elementID), application: target)
         case let .key(key, expectedFingerprint):
             let virtualKey = await key.resolvedVirtualKey()
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
@@ -1331,7 +1361,7 @@ public final class AXDesktopController: @unchecked Sendable {
         openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
-        case .type, .press, .focus, .select, .scroll:
+        case .type, .press, .focus, .scroll:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,
@@ -1350,7 +1380,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 effect: ControlOutcome.effect(for: action, before: before, after: observation.snapshot)
             )
 
-        case .key, .openFolder:
+        case .select, .clickAt, .key, .openFolder:
             return .init(snapshot: nil, action: action, effect: .unknown)
 
         case let .open(url):
