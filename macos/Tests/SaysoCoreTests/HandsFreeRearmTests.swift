@@ -31,10 +31,11 @@ import Testing
         wasDelivered: true,
         handsFreeEnabled: true,
         isDictationMode: true,
+        maximumSessionDuration: 2,
         now: startedAt.addingTimeInterval(2)
     )
-    #expect(rearmedAgain)
-    #expect(cycle.isArmed)
+    #expect(!rearmedAgain)
+    #expect(!cycle.isArmed)
 
     cycle.disarm()
     #expect(!cycle.shouldRearm(handsFreeEnabled: true, isDictationMode: true))
