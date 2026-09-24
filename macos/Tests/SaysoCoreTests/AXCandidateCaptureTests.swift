@@ -38,6 +38,15 @@ import Testing
         supportsFocus: false,
         isProtected: false
     ))
+    #expect(AXCandidateCapturePolicy.includesCandidate(
+        role: "AXRow",
+        title: "Downloads",
+        identifier: nil,
+        supportsPress: false,
+        supportsFocus: false,
+        supportsSelection: true,
+        isProtected: false
+    ))
 }
 
 @Test func captureLimitsClampToSafeMinimumsAndBoundQueuedPaths() {
