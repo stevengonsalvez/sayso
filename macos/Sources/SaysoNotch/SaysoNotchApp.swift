@@ -110,7 +110,7 @@ final class SaysoAppModel: ObservableObject {
 
     private final class ControlCommandRun {
         let commands: [String]
-        let target: NSRunningApplication
+        var target: NSRunningApplication
         let installedApplications: [InstalledDesktopApplication]
         var nextCommandIndex = 0
         var hasStarted = false
@@ -1468,6 +1468,7 @@ final class SaysoAppModel: ObservableObject {
                     await controlAudit.append(entry)
                     controlEntries = await controlAudit.entries()
                     guard !Task.isCancelled, controlRun === run else { return }
+                    updateControlTarget(after: entry, step: step, run: run)
                     let updated = await desktopControlSession.record(.init(entry.effect))
                     actionWasDispatched = false
                     run.nextCommandIndex += 1
@@ -1499,6 +1500,19 @@ final class SaysoAppModel: ObservableObject {
     private func finishControlRun() {
         controlRun = nil
         controlExecutionTask = nil
+    }
+
+    private func updateControlTarget(
+        after entry: ControlAuditEntry,
+        step: ControlPlanStep,
+        run: ControlCommandRun
+    ) {
+        guard entry.effect == .observed,
+              let bundleIdentifier = step.action.validatedNextTargetBundleIdentifier,
+              let target = NSWorkspace.shared.frontmostApplication,
+              target.bundleIdentifier == bundleIdentifier,
+              !target.isTerminated else { return }
+        run.target = target
     }
 
     private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
