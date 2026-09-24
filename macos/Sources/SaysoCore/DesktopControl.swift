@@ -494,7 +494,10 @@ public enum ControlPolicy {
 
     public static func requiresConfirmation(_ step: ControlPlanStep) -> Bool {
         switch step.action {
-        case .press, .select, .clickAt:
+        case .clickAt:
+            // Pointer rows can navigate or commit state without a semantic AX action.
+            return true
+        case .press, .select:
             guard let candidateTitle = step.candidateTitle else { return true }
             return step.requiresConfirmation || isDestructiveControlTitle(candidateTitle)
         default:
