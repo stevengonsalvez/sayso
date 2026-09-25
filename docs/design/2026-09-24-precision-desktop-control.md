@@ -161,7 +161,7 @@
 | Phase | Happy-Path Target | Worst-Case Bound | Note |
 |---|---|---|---|
 | Intent Parsing | 8ms | 15ms | In-memory closed-vocabulary pattern match |
-| Active Target & AX Capture | 40ms (2x 20ms p50) | 1500ms (2x 750ms) | Accounts for pre-activation and post-activation captures in execute(); 1500ms worst case represents 2 captures capped by 500ms soft clock check plus single 250ms in-flight call overrun each |
+| Active Target & AX Capture | 40ms (2x 20ms p50) | 1500ms (2x 750ms) | Fast-path reuses plan-time capture for pre-activation snapshot on in-app targets; 2 captures total (plan-time capture + post-dispatch verification capture = 40ms p50); 1500ms worst case represents 2 captures capped by 500ms soft clock check plus single 250ms in-flight call overrun each |
 | Pre-flight Attribute Check | 4ms (2x 2ms) | 500ms (2x 250ms) | isEnabled and isProtected attribute checks (2 calls x 250ms timeout) |
 | Semantic Action Dispatch | 4ms | 250ms | AXUIElementPerformAction (bounded by 250ms messaging timeout) |
 | Post-assert Diff | 15ms (initial check) | 1450ms | Immediate check at 0ms sleep. Subsequent attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays); 1200ms monotonic soft ceiling backstop bounds worst-case slow AX queries with at most one 250ms in-flight call overrun = 1450ms cutoff |
@@ -186,7 +186,7 @@
 Badge Overlay (Ambiguous Candidates Only):
 ┌──────────────────────────────────────┐
 │  ┌─[1]──────────┐   ┌─[2]─────────┐  │
-│  │ Cancel       │   │ Save Draft  │  │
+│  │ Cancel       │   │ Cancel      │  │
 │  └──────────────┘   └─────────────┘  │
 └──────────────────────────────────────┘
 ```
@@ -225,7 +225,7 @@ Multi-step chain execution semantics:
 | .effectObserved | ControlEffect.observed, .alreadySatisfied | State change verified (including modal sheets opened during AX timeout/cannotComplete). Reset consecutiveNoEffectCount to 0. Proceed to step k+1 |
 | .effectUnknown | ControlEffect.unknown | Benign unobservable completion (.key, .select). Tolerated without modifying consecutiveNoEffectCount. Proceed to step k+1 |
 | .noEffectObserved | ControlEffect.notObserved | State unchanged post-action. Increment consecutiveNoEffectCount. Proceed if counter < maxConsecutiveNoEffect (2); halt chain if counter == 2 |
-| .timedOut | AX call timeout (elapsed >= 250ms) without observed diff | Call messaging timeout without state change. Never retried fail-closed. Increment consecutiveNoEffectCount; 2 consecutive unverified (.noEffectObserved or .timedOut) halt session |
+| .timedOut | AX kAXErrorCannotComplete or messaging timeout (elapsed >= 250ms) without observed diff | Call messaging timeout without state change. Mapped from ControlEffect.timedOut. Never retried fail-closed. ControlSession.record(.timedOut) invokes finish(.failed) to halt multi-step chain immediately, preventing subsequent steps from running against unverified state |
 | .actionFailed | Hard OS/AX error | Hard structural failure (invalidUIElement, apiDisabled). ControlSession.record(.actionFailed) invokes finish(.failed) to halt chain immediately |
 | Budget Cap | Session counter | Session halts immediately if total actions reach maxActions (default 12) |
 
@@ -247,10 +247,10 @@ Multi-step chain execution semantics:
 | Fingerprint Bounds Exclusion | Snapshot fingerprint invariant | bounds: CGRect? on DesktopCandidate and DesktopElement are excluded from window snapshot fingerprint hash, ensuring window move or resize does not trigger false TOCTOU mismatch |
 | Badge Grammar Prefix | Spoken badge selection requires prefix | "badge <N>" required; "cancel badges" dismisses overlay; bare digits and bare words ("cancel") are rejected on open mic to prevent ambiguity with candidate titles |
 | Badge VAD Timeout | Overlay dismisses after 5s silence or 15s max | 5.0s timer extended on voice activity detection; hard cap of 15.0s overlay lifetime prevents mic chatter lock |
-| Confirmation Banner Spoken Safety | Disambiguated spoken grammar with audio ducking and energy check | Spoken "confirm action" or "approve action" confirms; "cancel action" or "abort action" aborts. Bare words ("yes", "no", "cancel") are rejected on open mic. Audio ducking is configured to minimal level outside confirmation banner; during active confirmation banner, Sayso configures AVAudioEngine voiceProcessingOtherAudioDuckingConfiguration (macOS 14+) on AVAudioInputNode without engine restart to duck background audio, and enforces speech recognition energy threshold to prevent speaker echo or background media playback from triggering confirmation. Dictation insertion into target app is suppressed while banner is active |
+| Confirmation Banner Spoken Safety | Disambiguated spoken grammar with speech energy threshold check | Spoken "confirm action" or "approve action" confirms; "cancel action" or "abort action" aborts. Bare words ("yes", "no", "cancel") are rejected on open mic. Speech recognition energy threshold enforced to prevent speaker echo or background media playback from triggering confirmation, avoiding OS voice-processing audio engine alterations during dictation. Dictation insertion into target app is suppressed while banner is active |
 | Confirmation Banner Timeout | Banner auto-dismisses and cancels on timeout | 5.0s timer extended on voice activity detection; hard cap of 15.0s maximum banner lifetime. On timeout, action is automatically cancelled fail-closed and banner dismisses |
 | Destructive Actions | Actions in ControlPolicy.destructiveWords require review | ControlPolicy.requiresConfirmation gates execution |
-| Button Press Confirmation Gating | Title classification in requiresConfirmation enables fast path | ControlPolicy.requiresConfirmation (:506-508) classifies .press and .select by candidate title via isDestructiveControlTitle(candidateTitle): destructive titles gate behind confirmation banner while benign button titles auto-run (~71ms fast path). A press with nil candidateTitle fails closed and requires confirmation. DesktopAction.clickAt and .key remain blanket confirmation-gated. DesktopAction.isDestructive retains its inherent destructive flag |
+| Button Press Confirmation Gating | Title classification in requiresConfirmation enables fast path | ControlPolicy.requiresConfirmation (:506-508) classifies .press and .select by candidate title via isDestructiveControlTitle(candidateTitle): destructive titles gate behind confirmation banner while benign button titles auto-run (~71ms fast path). A press with nil candidateTitle fails closed and requires confirmation. DesktopAction.clickAt and .key remain blanket confirmation-gated. DesktopAction.isDestructive retains its inherent destructive flag. UI risk label in Notch HUD derives strictly from ControlPolicy.requiresConfirmation (displays "Risk: Benign" for auto-running button presses) |
 | Pointer Click Safety | Raw CGEvent mouse clicks always require review | Kept: DesktopAction.isDestructive returns true for .clickAt (:386-388) |
 | Keystroke Safety | Keyboard shortcuts always require review | Kept: DesktopAction.isDestructive returns true for .key (:386-388) |
 | Fail-Closed Menu Policy | Explicit .menu case; allowlist check must be non-destructive | safeMenuAllowlist.contains(path) && !isDestructiveControlTitle(leaf) |
@@ -261,10 +261,10 @@ Multi-step chain execution semantics:
 | Menu Traversal Execution Timing | Menu traversal executes inside execute() after confirmation | Confirmation gate statically inspects menu path against allowlist and destructive stems without opening menus. AXMenuBar traversal (depth ≤3) runs inside execute() post-approval, preventing open menus from shifting focusedRole/focusedValue or timing out during user confirmation |
 | Menu Hierarchy Traversal Verification | Intermediate segments verified by exact title at each depth | AXMenuBar traversal navigates hierarchy step-by-step, verifying exact title match at each parent depth level (depth ≤3). Inside execute() post-traversal, re-run safeMenuAllowlist and isDestructiveControlTitle against the actual resolved AXMenuItem title attribute (canonicalizing ellipsis … vs ...). If resolved leaf title differs from confirmed leaf or matches destructive stems, abort fail-closed with menuLeafMismatch |
 | Action Failure Session Halt | Fail-closed session halt on structural error | ControlSession.record(.actionFailed) automatically terminates session fail-closed via finish(.failed), eliminating reliance on caller convention |
-| AX Diff-Based Outcome Classification | Classify by post-action diff; timeouts are non-retryable | After any kAXErrorCannotComplete or 250ms messaging timeout, post-action diff observation runs unconditionally. If attribute or window frame diff is observed (e.g. modal sheet opened), outcome is classified as .effectObserved. If no diff is observed after observation ceiling: dispatches taking >=250ms map to .timedOut and are non-retryable fail-closed; calls returning in <250ms without diff map to .noEffectObserved. Both .timedOut and .noEffectObserved increment consecutiveNoEffectCount (2 consecutive halt session fail-closed) |
+| AX Diff-Based Outcome Classification | Classify by post-action diff; timeouts halt session fail-closed | After any kAXErrorCannotComplete or 250ms messaging timeout, post-action diff observation runs unconditionally. If attribute or window frame diff is observed (e.g. modal sheet opened), outcome is classified as .effectObserved. If no diff is observed after observation ceiling: dispatches experiencing kAXErrorCannotComplete or messaging timeout with elapsed time >=250ms map to .timedOut, are non-retryable fail-closed, and halt session immediately via record(.timedOut) -> finish(.failed); calls returning in <250ms without diff map to .noEffectObserved (2 consecutive halt session fail-closed) |
 | Key/Select Chain Tolerance | Tolerates unverified keystrokes and selection actions | .effectUnknown outcomes (.key, .select) do not alter consecutiveNoEffectCount, preserving multi-key/select chains (e.g. repeated tab navigation); only .noEffectObserved or .timedOut increments toward halt |
 | Bounded AX Timeout | Cross-process AX queries cannot hang UI | AXUIElementSetMessagingTimeout 0.25s per call, 500ms soft clock check |
-| Resilient Audit Storage | Journal schema changes and read errors must never wipe history | ControlAuditStore decodes entries individually, preserving raw dictionary for every entry. Distinguishes missing file from read error (transient I/O, permissions); read errors abort append fail-closed without overwriting the journal. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. Unrecognised entries decode as raw dictionaries without backups; on whole-file JSON syntax failure, writes permanent initial backup control-audit.json.corrupt.initial and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) |
+| Resilient Audit Storage | Journal schema changes and read errors must never wipe history | ControlAuditStore decodes entries individually, preserving raw dictionary for every entry. Distinguishes missing file from read error (transient I/O, permissions); read errors abort append fail-closed without overwriting the journal, blocking the action and displaying an audit storage alert banner in Notch HUD. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. Unrecognised entries decode as raw dictionaries without backups; on whole-file JSON syntax failure, writes permanent initial backup control-audit.json.corrupt.initial and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) |
 | Observation Polling | Observation attempt cap is primary with 1200ms backstop | Polling starts with immediate check at 0ms, followed by attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays). Monotonic soft ceiling of 1200ms serves as backstop for slow cross-process AX responses, bounding worst case to at most one in-flight 250ms AX call overrun (~1450ms cutoff) |
 | Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive .noEffectObserved or .timedOut |
 
@@ -276,7 +276,7 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 
 | Failure mode | User-visible surface | Recovery |
 |---|---|---|
-| AX API Timeout | Notch HUD warning banner | Map to .timedOut; non-retryable; increment consecutiveNoEffectCount; 2 consecutive timeouts halt session fail-closed |
+| AX API Timeout | Notch HUD warning banner | Map to .timedOut; non-retryable; ControlSession.record(.timedOut) halts multi-step session immediately fail-closed via finish(.failed) |
 | Stale Target on Badge | Notch HUD alert banner | Abort dispatch when candidateID or title mismatch (ID equality ensures pid and windowTitle match); refresh list |
 | Window Title Mutation on Badge | Notch HUD alert banner | Window title mutation during 15s badge overlay (e.g. document Edited marker or tab change) rejects candidate fail-closed via candidateID mismatch; refreshes candidates |
 | Sibling Insertion on Badge | Notch HUD alert banner | Structural ancestry index shift rejects candidate fail-closed; dismiss overlay and refresh candidates |
@@ -284,7 +284,7 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Badge Overlay Timeout | Overlay dismisses silently | Auto-dismiss after 5s silence or 15s hard cap, record timeout in audit |
 | Confirmation Banner Timeout | Notch HUD banner dismisses | Auto-cancels action fail-closed after 5s silence or 15s hard cap; records cancellation in audit |
 | Post-assert Timeout | Notch HUD failed assertion | Report unobserved state after observation deadline; manual retry means initiating a fresh command (new capture, new planning, fresh confirmation if destructive), never automatic re-execution of a non-idempotent timed-out dispatch |
-| Invalid Menu Path | Notch HUD path error | List available items under parent menu (non-destructive inspection up to depth 3; dismisses menu on cancel/failure) |
+| Invalid Menu Path | Notch HUD path error | Inside execute() post-confirmation, list available items under parent menu (non-destructive inspection up to depth 3; dismisses menu on cancel/failure) |
 
 ## Testing strategy
 
@@ -302,17 +302,18 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Unit | Badge revalidation and drift check | Stale candidate ID or title mismatch aborts dispatch; PID/windowTitle mismatch prevents re-binding |
 | Unit | Pre-flight timing verification | PreFlightCheck validates isEnabled and !isProtected inside execute() after approval |
 | Unit | Badge dictation suppression | Target application dictation insertion suppressed during badge overlay |
-| Unit | Confirmation banner spoken safety | Spoken "confirm action" / "approve action" / "cancel action" / "abort action" recognized; bare words rejected; AVAudioEngine ducking configured to minimal level outside confirmation banner and raised during active banner |
+| Unit | Confirmation banner spoken safety | Spoken "confirm action" / "approve action" / "cancel action" / "abort action" recognized; bare words rejected; speech energy threshold enforced |
 | Unit | Confirmation banner timeout | Auto-cancels fail-closed after 5s silence or 15s hard cap |
 | Unit | Multi-key effectUnknown chain tolerance | 3 consecutive .key actions (.effectUnknown, each requiring individual confirmation banner) succeed without triggering no-effect halt; 2 consecutive .noEffectObserved or .timedOut halt chain fail-closed |
 | Unit | Post-action observation runs after AX timeout | Post-action diff observation runs after AX timeout/cannotComplete; modal sheet appearance verifies as .effectObserved; absence of diff verifies as .timedOut and prevents action retry |
-| Unit | Consecutive AX timeouts halt session | 2 consecutive .timedOut outcomes halt multi-step chain fail-closed |
+| Unit | Single AX timeout halts session | ControlSession.record(.timedOut) invokes finish(.failed) to halt multi-step chain fail-closed immediately without running subsequent steps |
 | Unit | Spatial row-bucket badge ordering | Badges 1..N order by anchored row (Y ±4pt threshold), then X |
 | Unit | Resilient audit journal decoding | Corrupt or unknown action entries preserved without wiping 500-entry journal; transient read errors abort append without overwrite; initial corrupt backup control-audit.json.corrupt.initial and up to 2 timestamped backups (capped at 3 files) written on whole-file JSON syntax corruption |
+| Unit | Audit read error blocks action execution | Transient read error in ControlAuditStore aborts append, blocks action execution fail-closed, and displays audit alert in Notch HUD |
 | Integration | Badge overlay coordinate mapping | AX top-left to Cocoa primary screen bottom-left conversion across screens |
 | Integration | AXMenuBar hierarchy traversal | Native macOS menu bar resolution with lazy-menu fallback (depth ≤3) |
 | Benchmark | Fast-path execution latency | Target composite pipeline latency p50 < 85ms, p95 < 140ms directly measured on standard AppKit target (intent parse + active target capture + pre-flight + semantic dispatch + immediate verification). Component capture p50 < 20ms, p95 < 35ms on Apple Silicon M-series |
-| Benchmark | Audio ducking transcription accuracy | Measure transcription accuracy with ducking set to minimal during dictation vs ducking level during confirmation banner |
+| Benchmark | Spoken confirmation energy threshold | Measure spoken confirmation trigger accuracy against background speaker audio and media playback |
 | E2E | Computer-use automated validation | Tab navigation, state inspection, and audio transcribe round-trip |
 
 ## Out of scope
