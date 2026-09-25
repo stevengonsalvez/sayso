@@ -6,7 +6,7 @@ Sayso Notch imports pinned SwiftPM products from JustSpeakToIt revision
 `0f0e92028a249e17b58349da3ee8033c73ffd219` and derives its local automation
 socket server from its MIT-licensed `AutomationServer` implementation.
 
-Copyright (c) crmitchelmore
+Copyright (c) 2026 Chris Mitchelmore
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,7 +30,7 @@ SOFTWARE.
 
 Sayso Notch desktop-control safety invariants and fast-path patterns are inspired by savka777/jev-use.
 
-Copyright (c) 2024 Yevhen Savchenko
+Copyright (c) 2026 Savva Bojko
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -49,4 +49,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
