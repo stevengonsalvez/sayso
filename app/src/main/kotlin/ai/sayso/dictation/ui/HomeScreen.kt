@@ -1188,7 +1188,6 @@ private val QUICK_LANG_OPTIONS = listOf(
     QuickLangOption(code = "ta", label = "Tamil", nativeScript = "தமிழ்", modelDir = "ai4bharat-indicconformer-ta", isIndic = true),
     QuickLangOption(code = "hi", label = "Hindi", nativeScript = "हिंदी", modelDir = "ai4bharat-indicconformer-hi", isIndic = true),
     QuickLangOption(code = "ml", label = "Malayalam", nativeScript = "മലയാളം", modelDir = "ai4bharat-indicconformer-ml", isIndic = true),
-    QuickLangOption(code = "multi", label = "Multilingual", nativeScript = "Whisper", modelDir = "sherpa-onnx-whisper-tiny"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1209,16 +1208,23 @@ private fun LanguageQuickSwitcherCard(
     val activeOption = remember(currentSttModelId, currentLanguage, isCloud) {
         when {
             isCloud -> null
-            currentSttModelId.contains("indicconformer-ta") || currentLanguage == "ta" -> QUICK_LANG_OPTIONS.first { it.code == "ta" }
-            currentSttModelId.contains("indicconformer-hi") || currentLanguage == "hi" -> QUICK_LANG_OPTIONS.first { it.code == "hi" }
-            currentSttModelId.contains("indicconformer-ml") || currentLanguage == "ml" -> QUICK_LANG_OPTIONS.first { it.code == "ml" }
-            currentSttModelId.contains("whisper") || (currentLanguage == null && !currentSttModelId.contains("parakeet")) -> QUICK_LANG_OPTIONS.first { it.code == "multi" }
-            else -> QUICK_LANG_OPTIONS.first { it.code == "en" }
+            currentSttModelId.contains("indicconformer-ta") || currentLanguage == "ta" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ta" }
+            currentSttModelId.contains("indicconformer-hi") || currentLanguage == "hi" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "hi" }
+            currentSttModelId.contains("indicconformer-ml") || currentLanguage == "ml" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ml" }
+            currentSttModelId.contains("parakeet") || currentLanguage == "en" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "en" }
+            else -> null
         }
     }
 
-    var selectedLangCode by remember(activeOption) { mutableStateOf(activeOption?.code ?: "en") }
-    val selectedOption = QUICK_LANG_OPTIONS.firstOrNull { it.code == selectedLangCode } ?: (activeOption ?: QUICK_LANG_OPTIONS.first())
+    val activeCustomModel: LocalModel? = remember(currentSttModelId) {
+        val dir = currentSttModelId.removePrefix("local/")
+        LocalModelCatalog.byDirName(dir)
+    }
+
+    var selectedLangCode by remember(activeOption) { mutableStateOf<String?>(activeOption?.code) }
+    val selectedOption = selectedLangCode?.let { code -> QUICK_LANG_OPTIONS.firstOrNull { it.code == code } }
+        ?: activeOption
+        ?: QUICK_LANG_OPTIONS.first()
     val targetModel = LocalModelCatalog.byDirName(selectedOption.modelDir) ?: LocalModelCatalog.default
     val isTargetInstalled = targetModel.dirName in installedModelDirNames
     val isDownloadingThis = isDownloading && activeDownloadingDir == targetModel.dirName
@@ -1252,6 +1258,7 @@ private fun LanguageQuickSwitcherCard(
                         val headerTitle = when {
                             isCloud -> "Active: Cloud Model (${currentSttModelId.substringBefore('/')})"
                             activeOption != null && selectedOption.code == activeOption.code -> "Active: ${activeOption.label} (${activeOption.nativeScript})"
+                            activeOption == null && selectedLangCode == null -> "Active: ${activeCustomModel?.displayName ?: "Custom Model"}"
                             else -> "Selected: ${selectedOption.label} (${selectedOption.nativeScript})"
                         }
                         Text(
@@ -1259,8 +1266,13 @@ private fun LanguageQuickSwitcherCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
+                        val headerSubtitle = when {
+                            isCloud -> "Tap any on-device language below to switch to private offline dictation"
+                            activeOption == null && selectedLangCode == null -> "Active model configured in Settings. Tap any language below to switch"
+                            else -> stringResource(R.string.home_quick_language_desc)
+                        }
                         Text(
-                            text = if (isCloud) "Tap any on-device language below to switch to private offline dictation" else stringResource(R.string.home_quick_language_desc),
+                            text = headerSubtitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1274,7 +1286,10 @@ private fun LanguageQuickSwitcherCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     for (opt in QUICK_LANG_OPTIONS) {
-                        val isSelected = (!isCloud && opt.code == activeOption?.code && selectedOption.code == opt.code) || (isCloud && opt.code == selectedLangCode) || (!isTargetInstalled && opt.code == selectedOption.code)
+                        val isSelected = (!isCloud && activeOption != null && opt.code == activeOption.code && selectedOption.code == opt.code) ||
+                            (isCloud && opt.code == selectedLangCode) ||
+                            (activeOption == null && selectedLangCode == opt.code) ||
+                            (!isTargetInstalled && opt.code == selectedOption.code && selectedLangCode != null)
                         val isInstalled = opt.modelDir in installedModelDirNames
                         FilterChip(
                             selected = isSelected,
@@ -1317,7 +1332,8 @@ private fun LanguageQuickSwitcherCard(
                 }
 
                 // If target model not installed, display download CTA
-                if (!isTargetInstalled) {
+                val showTargetDownload = selectedLangCode != null && !isTargetInstalled
+                if (showTargetDownload) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
@@ -1410,7 +1426,7 @@ private fun LanguageQuickSwitcherCard(
                             }
                         }
                     }
-                } else {
+                } else if (activeOption != null || selectedLangCode != null) {
                     // Model is installed: display active recommendation badge
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -1446,7 +1462,7 @@ private fun LanguageQuickSwitcherCard(
                                     "hi" -> "AI4Bharat Hindi Active · Best for colloquial Hindi, Hinglish & dialects"
                                     "ml" -> "AI4Bharat Malayalam Active · Best for colloquial Malayalam, Manglish & dialects"
                                     "en" -> "Parakeet 110M Active · Ultra-fast, highly accurate English transcription"
-                                    else -> "Whisper Multilingual Active · Note: Lower dialect accuracy than AI4Bharat"
+                                    else -> "${targetModel.displayName} Active"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Medium,
@@ -1454,10 +1470,31 @@ private fun LanguageQuickSwitcherCard(
                             )
                         }
                     }
+                } else if (activeCustomModel != null) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("ℹ", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text(
+                                text = "${activeCustomModel.displayName} Active · Configured in Settings",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
                 }
 
                 // Transliteration Toggle & Explanation when Indic language is active
-                if (selectedOption.isIndic) {
+                if (selectedOption.isIndic && (selectedLangCode != null || activeOption != null)) {
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     )
