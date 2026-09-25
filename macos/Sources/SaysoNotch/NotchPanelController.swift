@@ -19,7 +19,7 @@ final class NotchPanelController {
     private let expandedHeight: CGFloat = 210
     private let collapsedHeight: CGFloat = 42
     private let notchShoulder: CGFloat = 42
-    // Layout budget: 28pt icon + 156pt buttons (6 * 26) + 42pt spacing + 32pt padding + 102pt spacer = 360pt.
+    // 360pt chosen to fit ModePicker and 2-line text; icon row needs 266pt minimum.
     private let minimumExpandedWidth: CGFloat = 360
 
     init() {
