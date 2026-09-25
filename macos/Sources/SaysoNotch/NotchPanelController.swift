@@ -19,6 +19,8 @@ final class NotchPanelController {
     private let expandedHeight: CGFloat = 210
     private let collapsedHeight: CGFloat = 42
     private let notchShoulder: CGFloat = 42
+    // Layout budget: 28pt icon + 156pt buttons (6 * 26) + 42pt spacing + 32pt padding + 102pt spacer = 360pt.
+    private let minimumExpandedWidth: CGFloat = 360
 
     init() {
         panel = NSPanel(
@@ -99,11 +101,13 @@ final class NotchPanelController {
         } else {
             notchBounds = nil
         }
-        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
+        let compactWidth = model?.settings.overlayPresentation == .floating
+            ? 320
+            : notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
-        let expandedWidth: CGFloat = max(compactWidth, 360)
+        let expandedWidth: CGFloat = max(compactWidth, minimumExpandedWidth)
         if abs(state.expandedWidth - expandedWidth) > 0.5 {
             state.expandedWidth = expandedWidth
         }
