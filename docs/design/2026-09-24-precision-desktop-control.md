@@ -73,7 +73,7 @@
            │ execute() Fresh Capture & Verification       │
            │ • Capture(s) with active target activation   │
            │ • Pre-flight check: isEnabled, !isProtected  │
-           │ • Fingerprint comparison TOCTOU guard        │
+           │ • Fingerprint check (post-confirmation)      │
            └──────────────────────┬───────────────────────┘
                                   │ pass
                                   ▼
@@ -84,7 +84,7 @@
                      │               │ Target App  │
                      ▼               └──────┬──────┘
            ┌───────────────────┐            │
-           │ ControlObservation│◀───────────┘ AX diff (1200ms hard deadline)
+           │ ControlObservation│◀───────────┘ AX diff (1200ms soft ceiling)
            └─────────┬─────────┘
                      │
                      ▼
@@ -106,19 +106,19 @@
 | AXCandidateCapture | SaysoCore | Bounded frontmost-window AX traversal (p50 < 20ms, p95 < 35ms) | Extended: off-main background task with 500ms monotonic clock deadline |
 | DesktopCandidates | SaysoCore | Element representation: stable locator, role, state | Extended: bounds: CGRect? on DesktopCandidate and DesktopElement; bounds excluded from fingerprint hash |
 | DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y ±4pt threshold); returns .ambiguous |
-| ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case in isDestructive and requiresConfirmation; compiler eliminates default: fallbacks; .press classified by candidate title in requiresConfirmation (:506-508) while .clickAt and .key remain blanket gated; destructive check wins |
-| AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedApplicationTarget:) and 250ms timeout; runs post-action observation after cannotComplete/timeout; timed-out dispatches (>=250ms) are non-retryable; menu traversal, leaf AXTitle re-check, and pre-flight run inside execute() after confirmation |
-| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; runs after timeout to detect modal sheets; 1200ms monotonic soft ceiling (~1450ms worst case with in-flight AX overrun) |
-| ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Extended: record(.actionFailed) calls finish(.failed) directly; halts fail-closed on 2 consecutive unverified effects (.noEffectObserved or .timedOut) |
-| NotchHUD | SaysoNotch | Visual reticle, badge overlay, and telemetry breakdown | Extended: spatial badge rendering on nonactivating panel; spoken confirm/cancel banner with 5s/15s VAD timeout and audio ducking |
-| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: Phase 1 per-entry decode via JSONSerialization preserving raw dictionary for every entry; aborts append on read errors without overwrite; ships ExecutionTelemetry and .timedOut; retains initial corrupt backup control-audit.json.corrupt.initial and up to 2 timestamped backups (capped at 3 files) on whole-file JSON syntax failure |
+| ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case in isDestructive and requiresConfirmation; compiler eliminates default: fallbacks; in requiresConfirmation (:506-508), .press and .select evaluate candidate title via isDestructiveControlTitle and explicitly bypass isDestructive; .clickAt and .key remain blanket gated; destructive check wins |
+| AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedApplicationTarget:) and 250ms timeout; runs post-action observation after cannotComplete/timeout; timed-out dispatches (>=250ms) are non-retryable; on AX timeout without diff, execute() returns ControlObservationResult with effect = .timedOut rather than throwing an un-audited error; menu traversal, leaf AXTitle re-check, and pre-flight run inside execute() after confirmation |
+| ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; runs after timeout to detect modal sheets; 1200ms monotonic soft ceiling (~1450ms worst case with in-flight AX overrun); ControlEffect.timedOut added to ControlEffect (:458) in Phase 1 scope and maps to ControlSessionStepResult.timedOut |
+| ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Extended: record(.actionFailed) and record(.timedOut) call finish(.failed) directly; halts fail-closed immediately on single .timedOut or on 2 consecutive .noEffectObserved |
+| NotchHUD | SaysoNotch | Visual reticle, badge overlay, and telemetry breakdown | Extended: spatial badge rendering on nonactivating panel; spoken confirm/cancel banner with 5s/15s VAD timeout and speech energy threshold check |
+| ControlAuditStore | SaysoCore | Resilient persistent recording of newest 500 entries | Extended: Phase 1 per-entry decode via JSONSerialization preserving raw dictionary for every entry; pre-dispatch read check aborts and blocks action on read errors without overwrite; ships ExecutionTelemetry and ControlEffect.timedOut; retains initial corrupt backup control-audit.json.corrupt.initial and up to 2 timestamped backups (capped at 3 files) on whole-file JSON syntax failure |
 
 ## Migration Order & Schema Resilience for ControlAuditStore
 
 | Phase | Scope | Deployment Rule & Disk Invariant |
 |---|---|---|
 | Current Build Vulnerability | Existing code exposure in DesktopControl.swift:1078 | Current builds use try? decode([ControlAuditEntry]) ?? [] and overwrite the whole journal on any decode failure or unknown enum value on the next append. Phase 1 seals this vulnerability immediately. |
-| Phase 1: Storage Resilience | Ship per-entry decode in ControlAuditStore | Decodes array entries individually from disk via JSONSerialization and retains the raw JSON dictionary for EVERY entry alongside decoded structs. Distinguishes missing file (clean initial state, returns []) from read error (permissions, transient I/O); on read error, append aborts fail-closed and refuses to overwrite the disk journal. On save/append, updated fields are merged but all unknown keys/telemetry fields are preserved verbatim. ExecutionTelemetry and .timedOut ship in Phase 1 as part of the core resilient audit model. Unknown entry schemas or unrecognised enum values on downgrade/rollback decode into raw dictionary entries and NEVER trigger backups. If and only if the entire file fails to parse as valid JSON array, writes initial corrupt backup control-audit.json.corrupt.initial (preserved permanently) and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) before fallback. Minimum downgrade floor: Phase 1 release is the compatibility floor; rollback past Phase 1 is unsupported because pre-Phase-1 builds overwrite journal with empty array on decode failure. Ships in production release before Phase 2. |
+| Phase 1: Storage Resilience | Ship per-entry decode in ControlAuditStore | Decodes array entries individually from disk via JSONSerialization and retains the raw JSON dictionary for EVERY entry alongside decoded structs. Distinguishes missing file (clean initial state, returns []) from read error (permissions, transient I/O); pre-dispatch read check validates disk readability, aborting dispatch fail-closed on read error without overwriting disk journal. ExecutionTelemetry and ControlEffect.timedOut ship in Phase 1 as part of the core resilient audit model. Unknown entry schemas or unrecognised enum values on downgrade/rollback decode into raw dictionary entries and NEVER trigger backups. If and only if the entire file fails to parse as valid JSON array, writes initial corrupt backup control-audit.json.corrupt.initial (preserved permanently) and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) before fallback. Minimum downgrade floor: Phase 1 release is the compatibility floor; rollback past Phase 1 is unsupported because pre-Phase-1 builds overwrite journal with empty array on decode failure. Ships in production release before Phase 2. |
 | Phase 2: Action Extension | Ship DesktopAction.menu | Introduces .menu action type. Older builds running Phase 1 code safely preserve .menu entries on downgrade/rollback without failing full-array decode or dropping history on subsequent append. |
 
 ## Data model
@@ -161,7 +161,7 @@
 | Phase | Happy-Path Target | Worst-Case Bound | Note |
 |---|---|---|---|
 | Intent Parsing | 8ms | 15ms | In-memory closed-vocabulary pattern match |
-| Active Target & AX Capture | 40ms (2x 20ms p50) | 1500ms (2x 750ms) | Fast-path reuses plan-time capture for pre-activation snapshot on in-app targets; 2 captures total (plan-time capture + post-dispatch verification capture = 40ms p50); 1500ms worst case represents 2 captures capped by 500ms soft clock check plus single 250ms in-flight call overrun each |
+| Active Target & AX Capture | 40ms (2x 20ms p50) | 1500ms (2x 750ms) | Fast-path auto-run (~71ms p50) skips redundant pre-activation re-capture because plan-to-execute interval is sub-millisecond in-process (plan 8ms + pre-flight 4ms), using plan-time capture + post-dispatch verification capture = 2 captures (40ms p50); confirmation-gated flows run a full fresh capture to verify target window fingerprint; 1500ms worst case represents 2 captures capped by 500ms soft clock check plus single 250ms in-flight call overrun each |
 | Pre-flight Attribute Check | 4ms (2x 2ms) | 500ms (2x 250ms) | isEnabled and isProtected attribute checks (2 calls x 250ms timeout) |
 | Semantic Action Dispatch | 4ms | 250ms | AXUIElementPerformAction (bounded by 250ms messaging timeout) |
 | Post-assert Diff | 15ms (initial check) | 1450ms | Immediate check at 0ms sleep. Subsequent attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays); 1200ms monotonic soft ceiling backstop bounds worst-case slow AX queries with at most one 250ms in-flight call overrun = 1450ms cutoff |
@@ -195,7 +195,7 @@ Badge Overlay (Ambiguous Candidates Only):
 |---|---|---|
 | Notch HUD | Action dispatch and assert | Compact target reticle, auto-expanding diff |
 | Badge Overlay | Multiple candidates match title | Non-activating NSPanel window, row-bucket sorted badges |
-| Menu Traversal | Spoken "menu File > Save" | Cross-process AXMenuBar item press with confirmation banner |
+| Menu Traversal | Spoken "menu File, Save" or CLI "menu File > Save" | Cross-process AXMenuBar item press with confirmation banner |
 | Automation CLI | sayso status / transcribe / control | JSON response with latency breakdown |
 
 ## Behavior
@@ -262,11 +262,11 @@ Multi-step chain execution semantics:
 | Menu Hierarchy Traversal Verification | Intermediate segments verified by exact title at each depth | AXMenuBar traversal navigates hierarchy step-by-step, verifying exact title match at each parent depth level (depth ≤3). Inside execute() post-traversal, re-run safeMenuAllowlist and isDestructiveControlTitle against the actual resolved AXMenuItem title attribute (canonicalizing ellipsis … vs ...). If resolved leaf title differs from confirmed leaf or matches destructive stems, abort fail-closed with menuLeafMismatch |
 | Action Failure Session Halt | Fail-closed session halt on structural error | ControlSession.record(.actionFailed) automatically terminates session fail-closed via finish(.failed), eliminating reliance on caller convention |
 | AX Diff-Based Outcome Classification | Classify by post-action diff; timeouts halt session fail-closed | After any kAXErrorCannotComplete or 250ms messaging timeout, post-action diff observation runs unconditionally. If attribute or window frame diff is observed (e.g. modal sheet opened), outcome is classified as .effectObserved. If no diff is observed after observation ceiling: dispatches experiencing kAXErrorCannotComplete or messaging timeout with elapsed time >=250ms map to .timedOut, are non-retryable fail-closed, and halt session immediately via record(.timedOut) -> finish(.failed); calls returning in <250ms without diff map to .noEffectObserved (2 consecutive halt session fail-closed) |
-| Key/Select Chain Tolerance | Tolerates unverified keystrokes and selection actions | .effectUnknown outcomes (.key, .select) do not alter consecutiveNoEffectCount, preserving multi-key/select chains (e.g. repeated tab navigation); only .noEffectObserved or .timedOut increments toward halt |
+| Key/Select Chain Tolerance | Tolerates unverified keystrokes and selection actions | .effectUnknown outcomes (.key, .select) do not alter consecutiveNoEffectCount, preserving multi-key/select chains (e.g. repeated tab navigation); only .noEffectObserved increments toward 2-step halt (any .timedOut halts immediately fail-closed) |
 | Bounded AX Timeout | Cross-process AX queries cannot hang UI | AXUIElementSetMessagingTimeout 0.25s per call, 500ms soft clock check |
-| Resilient Audit Storage | Journal schema changes and read errors must never wipe history | ControlAuditStore decodes entries individually, preserving raw dictionary for every entry. Distinguishes missing file from read error (transient I/O, permissions); read errors abort append fail-closed without overwriting the journal, blocking the action and displaying an audit storage alert banner in Notch HUD. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. Unrecognised entries decode as raw dictionaries without backups; on whole-file JSON syntax failure, writes permanent initial backup control-audit.json.corrupt.initial and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) |
+| Resilient Audit Storage | Journal schema changes and read errors must never wipe history | ControlAuditStore decodes entries individually, preserving raw dictionary for every entry. Distinguishes missing file from read error (transient I/O, permissions); pre-dispatch audit readability pre-flight check aborts dispatch fail-closed on read error without overwriting journal, blocking the action and displaying an audit alert banner in Notch HUD. If dispatch succeeds but post-action append fails, in-memory state is retained and HUD displays a non-fatal warning banner without re-executing. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. Unrecognised entries decode as raw dictionaries without backups; on whole-file JSON syntax failure, writes permanent initial backup control-audit.json.corrupt.initial and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) |
 | Observation Polling | Observation attempt cap is primary with 1200ms backstop | Polling starts with immediate check at 0ms, followed by attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays). Monotonic soft ceiling of 1200ms serves as backstop for slow cross-process AX responses, bounding worst case to at most one in-flight 250ms AX call overrun (~1450ms cutoff) |
-| Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive .noEffectObserved or .timedOut |
+| Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive .noEffectObserved (or 1 .timedOut) |
 
 Safe menu allowlist (exact full path match, standard AppKit):
 `[["View", "Zoom In"], ["View", "Zoom Out"], ["View", "Actual Size"], ["Window", "Zoom"]]`
@@ -290,7 +290,7 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 
 | Layer | Scope | Gate |
 |---|---|---|
-| Unit | Menu hierarchy step parsing | "menu File > Save then click Confirm" splits on " then " (case-insensitive) into 2 steps while preserving ">" within the menu path. Segment quoting syntax is scoped to CLI and automation socket (e.g. menu File > "Export then Print"); spoken input uses unquoted token splitting and cannot generate quote characters |
+| Unit | Menu hierarchy step parsing | "menu File > Save then click Confirm" splits on " then " (case-insensitive) into 2 steps while preserving ">" within the menu path. Spoken grammar uses "menu File, Save" or "menu File then Save" (comma or capitalized "then" delimiter) while CLI/socket uses "menu File > Save". Segment quoting syntax is scoped to CLI and automation socket (e.g. menu File > "Export then Print"); spoken input uses unquoted token splitting and cannot generate quote characters |
 | Unit | Desktop candidate filtering and protection | All protected fields rejected |
 | Unit | Menu allowlist explicit classification | ["View","Zoom In"] auto-runs; ["File","Export"] triggers confirmation |
 | Unit | Menu application target verification | Application switch before menu dispatch aborts execution; live-updating window content within target app does not invalidate menu action |
@@ -304,16 +304,16 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Unit | Badge dictation suppression | Target application dictation insertion suppressed during badge overlay |
 | Unit | Confirmation banner spoken safety | Spoken "confirm action" / "approve action" / "cancel action" / "abort action" recognized; bare words rejected; speech energy threshold enforced |
 | Unit | Confirmation banner timeout | Auto-cancels fail-closed after 5s silence or 15s hard cap |
-| Unit | Multi-key effectUnknown chain tolerance | 3 consecutive .key actions (.effectUnknown, each requiring individual confirmation banner) succeed without triggering no-effect halt; 2 consecutive .noEffectObserved or .timedOut halt chain fail-closed |
+| Unit | Multi-key effectUnknown chain tolerance | 3 consecutive .key actions (.effectUnknown, each requiring individual confirmation banner) succeed without triggering no-effect halt; 2 consecutive .noEffectObserved or 1 .timedOut halt chain fail-closed |
 | Unit | Post-action observation runs after AX timeout | Post-action diff observation runs after AX timeout/cannotComplete; modal sheet appearance verifies as .effectObserved; absence of diff verifies as .timedOut and prevents action retry |
 | Unit | Single AX timeout halts session | ControlSession.record(.timedOut) invokes finish(.failed) to halt multi-step chain fail-closed immediately without running subsequent steps |
 | Unit | Spatial row-bucket badge ordering | Badges 1..N order by anchored row (Y ±4pt threshold), then X |
 | Unit | Resilient audit journal decoding | Corrupt or unknown action entries preserved without wiping 500-entry journal; transient read errors abort append without overwrite; initial corrupt backup control-audit.json.corrupt.initial and up to 2 timestamped backups (capped at 3 files) written on whole-file JSON syntax corruption |
-| Unit | Audit read error blocks action execution | Transient read error in ControlAuditStore aborts append, blocks action execution fail-closed, and displays audit alert in Notch HUD |
+| Unit | Audit read error blocks action execution | Pre-dispatch audit readability pre-flight check in ControlAuditStore aborts dispatch fail-closed on transient read error, blocking action execution and displaying audit alert in Notch HUD; post-dispatch append failure retains in-memory state with non-fatal HUD warning banner |
 | Integration | Badge overlay coordinate mapping | AX top-left to Cocoa primary screen bottom-left conversion across screens |
 | Integration | AXMenuBar hierarchy traversal | Native macOS menu bar resolution with lazy-menu fallback (depth ≤3) |
 | Benchmark | Fast-path execution latency | Target composite pipeline latency p50 < 85ms, p95 < 140ms directly measured on standard AppKit target (intent parse + active target capture + pre-flight + semantic dispatch + immediate verification). Component capture p50 < 20ms, p95 < 35ms on Apple Silicon M-series |
-| Benchmark | Spoken confirmation energy threshold | Measure spoken confirmation trigger accuracy against background speaker audio and media playback |
+| Benchmark | Spoken confirmation energy threshold | Measure spoken confirmation trigger accuracy against background speaker audio and media playback; acceptance gate: false accepts = 0 across 50 background media playback trials |
 | E2E | Computer-use automated validation | Tab navigation, state inspection, and audio transcribe round-trip |
 
 ## Out of scope
