@@ -1205,13 +1205,13 @@ private fun LanguageQuickSwitcherCard(
     modifier: Modifier = Modifier,
 ) {
     val isCloud = !currentSttModelId.startsWith("local/")
-    val activeOption = remember(currentSttModelId, currentLanguage, isCloud) {
+    val activeOption = remember(currentSttModelId, isCloud) {
         when {
             isCloud -> null
-            currentSttModelId.contains("indicconformer-ta") || currentLanguage == "ta" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ta" }
-            currentSttModelId.contains("indicconformer-hi") || currentLanguage == "hi" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "hi" }
-            currentSttModelId.contains("indicconformer-ml") || currentLanguage == "ml" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ml" }
-            currentSttModelId.contains("parakeet") || currentLanguage == "en" -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "en" }
+            currentSttModelId.contains("indicconformer-ta") -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ta" }
+            currentSttModelId.contains("indicconformer-hi") -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "hi" }
+            currentSttModelId.contains("indicconformer-ml") -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "ml" }
+            currentSttModelId.contains("parakeet") -> QUICK_LANG_OPTIONS.firstOrNull { it.code == "en" }
             else -> null
         }
     }
@@ -1221,7 +1221,7 @@ private fun LanguageQuickSwitcherCard(
         LocalModelCatalog.byDirName(dir)
     }
 
-    var selectedLangCode by remember(activeOption) { mutableStateOf<String?>(activeOption?.code) }
+    var selectedLangCode by remember(activeOption, currentSttModelId) { mutableStateOf<String?>(activeOption?.code) }
     val selectedOption = selectedLangCode?.let { code -> QUICK_LANG_OPTIONS.firstOrNull { it.code == code } }
         ?: activeOption
         ?: QUICK_LANG_OPTIONS.first()
