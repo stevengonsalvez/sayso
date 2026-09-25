@@ -106,7 +106,7 @@
 | AXCandidateCapture | SaysoCore | Bounded frontmost-window AX traversal (p50 < 20ms, p95 < 35ms) | Extended: off-main background task with 500ms monotonic clock deadline |
 | DesktopCandidates | SaysoCore | Element representation: stable locator, role, state | Extended: bounds: CGRect? on DesktopCandidate and DesktopElement; bounds excluded from fingerprint hash |
 | DesktopCandidateResolver | SaysoCore | Exact title and row resolution, badge overlay indexing | Extended: anchored row-bucket spatial sorting (anchor Y ±4pt threshold); returns .ambiguous |
-| ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case in isDestructive and all switches; compiler eliminates default: fallbacks; .press classified by title (isDestructiveControlTitle) while .clickAt and .key remain blanket destructive; destructive check wins |
+| ControlPolicy | SaysoCore | Fail-closed destructive classification and review gating | Extended: explicit .menu case in isDestructive and requiresConfirmation; compiler eliminates default: fallbacks; .press classified by candidate title in requiresConfirmation (:506-508) while .clickAt and .key remain blanket gated; destructive check wins |
 | AXDesktopController | SaysoCore | Semantic AX action dispatch and confirmation-gated pointer clicks | Extended: DesktopAction.menu(path:expectedApplicationTarget:) and 250ms timeout; runs post-action observation after cannotComplete/timeout; timed-out dispatches (>=250ms) are non-retryable; menu traversal, leaf AXTitle re-check, and pre-flight run inside execute() after confirmation |
 | ControlObservation | SaysoCore | Cross-process AX attribute diff and post-action verification | Extended: window-frame/attribute diff for menus; runs after timeout to detect modal sheets; 1200ms monotonic soft ceiling (~1450ms worst case with in-flight AX overrun) |
 | ControlSession | SaysoCore | Multi-step lifecycle, budget enforcement, and state transitions | Extended: record(.actionFailed) calls finish(.failed) directly; halts fail-closed on 2 consecutive unverified effects (.noEffectObserved or .timedOut) |
@@ -141,7 +141,7 @@
                                        │ dispatchMs Double          │
 ┌─ DesktopAction.menu ───────┐         │ verifyMs   Double          │
 │ path     [String]          │──▶      │ totalMs    Double          │
-│ expectedApplicationTarget  │         │ stepResult StepResult      │
+│ expectedApplicationTarget  │         │ stepResult ControlSessionStepResult │
 │   TargetAppIdentity        │         └────────────────────────────┘
 └────────────────────────────┘
 ```
@@ -154,7 +154,7 @@
 | DesktopCandidateState | isEnabled, isProtected, supportsPress, supportsFocus, supportsSelection, supportsPointerClick | Checked during PreFlightCheck |
 | ControlPlanStep | id, action, confidence, reason, candidateTitle, requiresConfirmation | Action (.press, .select, .focus, .clickAt) carries elementID; executed by AXDesktopController |
 | DesktopAction.menu | path: [String], expectedApplicationTarget: TargetApplicationIdentity | Traversed via AXMenuBar; bound to application target identity (bundleIdentifier + processIdentifier) rather than window AX element tree, preventing live-updating window contents from causing staleTarget failures |
-| ExecutionTelemetry | stepId, planMs, captureMs, dispatchMs, verifyMs, totalMs, stepResult | Matches ControlPlanStep.id; decoded optionally in ControlAuditEntry |
+| ExecutionTelemetry | stepId, planMs, captureMs, dispatchMs, verifyMs, totalMs, stepResult | Matches ControlPlanStep.id; stepResult is ControlSessionStepResult (.effectObserved, .effectUnknown, .noEffectObserved, .timedOut, .actionFailed); decoded optionally in ControlAuditEntry |
 
 ## Latency Budget
 
@@ -164,7 +164,7 @@
 | Active Target & AX Capture | 40ms (2x 20ms p50) | 1500ms (2x 750ms) | Accounts for pre-activation and post-activation captures in execute(); 1500ms worst case represents 2 captures capped by 500ms soft clock check plus single 250ms in-flight call overrun each |
 | Pre-flight Attribute Check | 4ms (2x 2ms) | 500ms (2x 250ms) | isEnabled and isProtected attribute checks (2 calls x 250ms timeout) |
 | Semantic Action Dispatch | 4ms | 250ms | AXUIElementPerformAction (bounded by 250ms messaging timeout) |
-| Post-assert Diff | 15ms (initial check) | 1450ms | Immediate check at 0ms sleep; observation attempt cap (8 attempts spaced by 125ms intervals, ~1000ms total) is primary, with a 1200ms monotonic soft ceiling backstop for slow AX responses (bounded by at most one 250ms in-flight AX call overrun = 1450ms worst-case abort) |
+| Post-assert Diff | 15ms (initial check) | 1450ms | Immediate check at 0ms sleep. Subsequent attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays); 1200ms monotonic soft ceiling backstop bounds worst-case slow AX queries with at most one 250ms in-flight call overrun = 1450ms cutoff |
 | Total (Benign Fast-Path) | ~71ms | ~3.7s | Fast-path p50 target ~71ms; worst-case bounded by timeouts |
 
 ## Interface
@@ -243,14 +243,14 @@ Multi-step chain execution semantics:
 | Coordinate Conversion | Top-left AX bounds converted to Cocoa screen | cocoaY = NSScreen.screens[0].frame.maxY - axY - axHeight |
 | Badge Candidate Revalidation | Re-asserts candidateID & title match on frontmost window | Candidate revalidation verifies candidateID and title against frontmost window; DesktopCandidateID equality inherently guarantees processIdentifier and windowTitle match. Absolute screen bounds are not pinned to ±2pt so window move/resize does not trigger false rejection |
 | Badge Overlay TOCTOU Window | Known trade-off during disambiguation overlay | Up-to-15s overlay window accepts background window mutation provided pid, windowTitle, and chosen candidate ID/title match. Bounds are excluded from the fingerprint, so .clickAt pointer actions must dynamically re-query fresh element bounds at dispatch time from the active AX element rather than using plan-time bounds |
-| Candidate Action Fingerprint Scope | Actions retain expectedFingerprint bound to window snapshot | Candidate actions retain expectedFingerprint bound to window snapshot at plan time, and badge pick revalidation re-binds it. Ambient window mutations during confirmation pause (sibling insertion, document title mutation, or ancestry index shift) intentionally reject fail-closed with staleTarget as a safety invariant |
+| Candidate Action Fingerprint Scope | Actions retain expectedFingerprint bound to window snapshot | Candidate actions retain expectedFingerprint bound to window snapshot at plan time, and badge pick revalidation re-binds it. Ambient window mutations during confirmation pause (sibling insertion, document title mutation, or ancestry index shift) intentionally reject fail-closed with staleTarget as a safety invariant. Known trade-off: live-updating controls (timers, chat feeds) in target window can cause staleTarget rejection, requiring user re-invocation |
 | Fingerprint Bounds Exclusion | Snapshot fingerprint invariant | bounds: CGRect? on DesktopCandidate and DesktopElement are excluded from window snapshot fingerprint hash, ensuring window move or resize does not trigger false TOCTOU mismatch |
 | Badge Grammar Prefix | Spoken badge selection requires prefix | "badge <N>" required; "cancel badges" dismisses overlay; bare digits and bare words ("cancel") are rejected on open mic to prevent ambiguity with candidate titles |
 | Badge VAD Timeout | Overlay dismisses after 5s silence or 15s max | 5.0s timer extended on voice activity detection; hard cap of 15.0s overlay lifetime prevents mic chatter lock |
-| Confirmation Banner Spoken Safety | Disambiguated spoken grammar with audio ducking and energy check | Spoken "confirm action" or "approve action" confirms; "cancel action" or "abort action" aborts. Bare words ("yes", "no", "cancel") are rejected on open mic. Audio engine initializes with voice processing enabled at startup; during confirmation banner, Sayso configures AVAudioEngine voiceProcessingOtherAudioDuckingConfiguration (macOS 14+) on AVAudioInputNode without engine restart and enforces speech recognition energy threshold to prevent speaker echo or background media playback from triggering confirmation. Dictation insertion into target app is suppressed while banner is active |
+| Confirmation Banner Spoken Safety | Disambiguated spoken grammar with audio ducking and energy check | Spoken "confirm action" or "approve action" confirms; "cancel action" or "abort action" aborts. Bare words ("yes", "no", "cancel") are rejected on open mic. Audio ducking is configured to minimal level outside confirmation banner; during active confirmation banner, Sayso configures AVAudioEngine voiceProcessingOtherAudioDuckingConfiguration (macOS 14+) on AVAudioInputNode without engine restart to duck background audio, and enforces speech recognition energy threshold to prevent speaker echo or background media playback from triggering confirmation. Dictation insertion into target app is suppressed while banner is active |
 | Confirmation Banner Timeout | Banner auto-dismisses and cancels on timeout | 5.0s timer extended on voice activity detection; hard cap of 15.0s maximum banner lifetime. On timeout, action is automatically cancelled fail-closed and banner dismisses |
 | Destructive Actions | Actions in ControlPolicy.destructiveWords require review | ControlPolicy.requiresConfirmation gates execution |
-| Button Press Classification | Title-classified destructive gating enables fast path | In DesktopAction.isDestructive, .press classifies by candidate title via isDestructiveControlTitle(candidate.title): destructive button titles require confirmation banner while benign button titles auto-run (~71ms fast path). DesktopAction.clickAt and .key remain blanket destructive |
+| Button Press Confirmation Gating | Title classification in requiresConfirmation enables fast path | ControlPolicy.requiresConfirmation (:506-508) classifies .press and .select by candidate title via isDestructiveControlTitle(candidateTitle): destructive titles gate behind confirmation banner while benign button titles auto-run (~71ms fast path). A press with nil candidateTitle fails closed and requires confirmation. DesktopAction.clickAt and .key remain blanket confirmation-gated. DesktopAction.isDestructive retains its inherent destructive flag |
 | Pointer Click Safety | Raw CGEvent mouse clicks always require review | Kept: DesktopAction.isDestructive returns true for .clickAt (:386-388) |
 | Keystroke Safety | Keyboard shortcuts always require review | Kept: DesktopAction.isDestructive returns true for .key (:386-388) |
 | Fail-Closed Menu Policy | Explicit .menu case; allowlist check must be non-destructive | safeMenuAllowlist.contains(path) && !isDestructiveControlTitle(leaf) |
@@ -265,7 +265,7 @@ Multi-step chain execution semantics:
 | Key/Select Chain Tolerance | Tolerates unverified keystrokes and selection actions | .effectUnknown outcomes (.key, .select) do not alter consecutiveNoEffectCount, preserving multi-key/select chains (e.g. repeated tab navigation); only .noEffectObserved or .timedOut increments toward halt |
 | Bounded AX Timeout | Cross-process AX queries cannot hang UI | AXUIElementSetMessagingTimeout 0.25s per call, 500ms soft clock check |
 | Resilient Audit Storage | Journal schema changes and read errors must never wipe history | ControlAuditStore decodes entries individually, preserving raw dictionary for every entry. Distinguishes missing file from read error (transient I/O, permissions); read errors abort append fail-closed without overwriting the journal. Phase 1 per-entry decode deploys before Phase 2 (.menu). Raw entries count toward 500-entry cap and are preserved on re-save. Unrecognised entries decode as raw dictionaries without backups; on whole-file JSON syntax failure, writes permanent initial backup control-audit.json.corrupt.initial and rotates up to 2 timestamped backups control-audit.json.corrupt-<timestamp> (capped at 3 backup files total) |
-| Observation Polling | Observation attempt cap is primary with 1200ms backstop | Polling starts with immediate check at 0ms, followed by attempts spaced by 125ms intervals with 100ms soft check per attempt. Observation attempt cap (8 attempts, ~1000ms total) is primary; 1200ms monotonic soft ceiling serves as backstop for slow AX responses, with at most one in-flight 250ms AX call overrun (~1450ms worst-case cutoff) |
+| Observation Polling | Observation attempt cap is primary with 1200ms backstop | Polling starts with immediate check at 0ms, followed by attempts spaced by 125ms intervals up to attempt cap of 8 attempts (~875ms interval delays). Monotonic soft ceiling of 1200ms serves as backstop for slow cross-process AX responses, bounding worst case to at most one in-flight 250ms AX call overrun (~1450ms cutoff) |
 | Chain No-Effect Limit | Consecutive no-effect actions capped at 2 | Tolerates 1 no-effect step; halts on 2 consecutive .noEffectObserved or .timedOut |
 
 Safe menu allowlist (exact full path match, standard AppKit):
@@ -296,12 +296,13 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Unit | Menu application target verification | Application switch before menu dispatch aborts execution; live-updating window content within target app does not invalidate menu action |
 | Unit | Menu leaf title mismatch aborts execution | Resolved AXMenuItem title differing from confirmed path or matching destructive stem aborts dispatch fail-closed |
 | Unit | Destructive badge confirmation gate | Picking destructive badge "Cancel" prompts confirmation banner |
+| Unit | Button press nil title requires confirmation | ControlPolicy.requiresConfirmation returns true fail-closed when ControlPlanStep.candidateTitle is nil |
 | Unit | Candidate action fingerprint scope | Candidate actions retain expectedFingerprint bound to window snapshot at plan time; ambient window mutations or ancestry index shifts reject fail-closed with staleTarget |
 | Unit | Immediate chain failure on .actionFailed | ControlSession.record(.actionFailed) directly invokes finish(.failed), halting multi-step chain immediately without caller convention |
 | Unit | Badge revalidation and drift check | Stale candidate ID or title mismatch aborts dispatch; PID/windowTitle mismatch prevents re-binding |
 | Unit | Pre-flight timing verification | PreFlightCheck validates isEnabled and !isProtected inside execute() after approval |
 | Unit | Badge dictation suppression | Target application dictation insertion suppressed during badge overlay |
-| Unit | Confirmation banner spoken safety | Spoken "confirm action" / "approve action" / "cancel action" / "abort action" recognized; bare words rejected; AVAudioEngine voiceProcessing ducking and speech energy threshold enforced |
+| Unit | Confirmation banner spoken safety | Spoken "confirm action" / "approve action" / "cancel action" / "abort action" recognized; bare words rejected; AVAudioEngine ducking configured to minimal level outside confirmation banner and raised during active banner |
 | Unit | Confirmation banner timeout | Auto-cancels fail-closed after 5s silence or 15s hard cap |
 | Unit | Multi-key effectUnknown chain tolerance | 3 consecutive .key actions (.effectUnknown, each requiring individual confirmation banner) succeed without triggering no-effect halt; 2 consecutive .noEffectObserved or .timedOut halt chain fail-closed |
 | Unit | Post-action observation runs after AX timeout | Post-action diff observation runs after AX timeout/cannotComplete; modal sheet appearance verifies as .effectObserved; absence of diff verifies as .timedOut and prevents action retry |
@@ -311,6 +312,7 @@ Rule: Destructive check always wins. Even if in allowlist, any title matching de
 | Integration | Badge overlay coordinate mapping | AX top-left to Cocoa primary screen bottom-left conversion across screens |
 | Integration | AXMenuBar hierarchy traversal | Native macOS menu bar resolution with lazy-menu fallback (depth ≤3) |
 | Benchmark | Fast-path execution latency | Target composite pipeline latency p50 < 85ms, p95 < 140ms directly measured on standard AppKit target (intent parse + active target capture + pre-flight + semantic dispatch + immediate verification). Component capture p50 < 20ms, p95 < 35ms on Apple Silicon M-series |
+| Benchmark | Audio ducking transcription accuracy | Measure transcription accuracy with ducking set to minimal during dictation vs ducking level during confirmation banner |
 | E2E | Computer-use automated validation | Tab navigation, state inspection, and audio transcribe round-trip |
 
 ## Out of scope
