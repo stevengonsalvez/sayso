@@ -6,6 +6,7 @@ import SwiftUI
 private final class NotchPresentationState: ObservableObject {
     @Published var isCollapsed = true
     @Published var compactWidth: CGFloat = 220
+    @Published var expandedWidth: CGFloat = 360
 }
 
 @MainActor
@@ -98,15 +99,17 @@ final class NotchPanelController {
         } else {
             notchBounds = nil
         }
-        let compactWidth = model?.settings.overlayPresentation == .floating
-            ? 320
-            : notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
+        let compactWidth = notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
+        let expandedWidth: CGFloat = max(compactWidth, 360)
+        if abs(state.expandedWidth - expandedWidth) > 0.5 {
+            state.expandedWidth = expandedWidth
+        }
         let size = state.isCollapsed
             ? NSSize(width: state.compactWidth, height: collapsedHeight)
-            : NSSize(width: state.compactWidth, height: expandedHeight)
+            : NSSize(width: state.expandedWidth, height: expandedHeight)
         let panelFrame: NSRect
         if model?.settings.overlayPresentation == .floating {
             let visibleFrame = screen.visibleFrame
@@ -209,7 +212,7 @@ private struct NotchHUD: View {
             .padding(.horizontal, 16)
             .padding(.top, 38)
             .padding(.bottom, 14)
-            .frame(width: state.compactWidth, height: 210)
+            .frame(width: state.expandedWidth, height: 210)
             .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
             .gesture(TapGesture().onEnded(toggle), including: .gesture)
             .background {
