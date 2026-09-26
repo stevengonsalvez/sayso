@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
@@ -43,6 +44,7 @@ class WakeWordService : Service() {
     private var audioRecord: AudioRecord? = null
     private var audioJob: Job? = null
     private var isListening = false
+    private var modeListener: Any? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -73,6 +75,26 @@ class WakeWordService : Service() {
             stopSelf()
             return
         }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager != null) {
+                val listener = AudioManager.OnModeChangedListener { mode ->
+                    if (CallStateDetector.isCallMode(mode)) {
+                        Log.i(TAG, "Audio mode changed to call mode ($mode): pausing wake word")
+                        runCatching { audioRecord?.stop() }
+                        detector?.reset()
+                    }
+                }
+                modeListener = listener
+                try {
+                    audioManager.addOnModeChangedListener(mainExecutor, listener)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed to register OnModeChangedListener: ${t.message}")
+                }
+            }
+        }
+
         startListening()
     }
 
@@ -85,6 +107,15 @@ class WakeWordService : Service() {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (modeListener as? AudioManager.OnModeChangedListener)?.let { listener ->
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                try {
+                    audioManager?.removeOnModeChangedListener(listener)
+                } catch (_: Throwable) {}
+            }
+            modeListener = null
+        }
         instance = null
         stopListening()
         scope.cancel()
@@ -100,9 +131,17 @@ class WakeWordService : Service() {
             val phrase = settings.wakeWordPhrase
             val sensitivity = settings.wakeWordSensitivity
             val d = WakeWordDetector(this@WakeWordService, phrase, sensitivity) { keyword ->
+                if (CallStateDetector.isCallActive(this@WakeWordService)) {
+                    Log.i(TAG, "Suppressed wake word trigger '$keyword': active call in progress")
+                    return@WakeWordDetector
+                }
                 Log.i(TAG, "Wake word trigger: $keyword")
                 triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
+                    if (CallStateDetector.isCallActive(this@WakeWordService)) {
+                        Log.i(TAG, "Suppressed wake word dispatch: active call in progress")
+                        return@launch
+                    }
                     val service = DictationService.instance
                     if (service != null) {
                         runCatching { audioRecord?.stop() }
@@ -135,9 +174,17 @@ class WakeWordService : Service() {
             val phrase = settings.wakeWordPhrase
             val sensitivity = settings.wakeWordSensitivity
             val newDetector = WakeWordDetector(this@WakeWordService, phrase, sensitivity) { keyword ->
+                if (CallStateDetector.isCallActive(this@WakeWordService)) {
+                    Log.i(TAG, "Suppressed wake word trigger '$keyword': active call in progress")
+                    return@WakeWordDetector
+                }
                 Log.i(TAG, "Wake word trigger: $keyword")
                 triggerWakeWordFeedback()
                 scope.launch(Dispatchers.Main) {
+                    if (CallStateDetector.isCallActive(this@WakeWordService)) {
+                        Log.i(TAG, "Suppressed wake word dispatch: active call in progress")
+                        return@launch
+                    }
                     val service = DictationService.instance
                     if (service != null) {
                         runCatching { audioRecord?.stop() }
@@ -257,10 +304,17 @@ class WakeWordService : Service() {
         val floatBuffer = FloatArray(chunkSize)
 
         while (scope.isActive && isListening) {
-            // While DictationService is recording or busy, pause wake-word ingestion to avoid mic contention
-            if (DictationService.isBusyOrRecording()) {
+            val callActive = CallStateDetector.isCallActive(this@WakeWordService)
+            val dictationBusy = DictationService.isBusyOrRecording()
+
+            // Pause wake-word ingestion during phone or VoIP calls (WhatsApp, Meet, cellular) or when dictation is active
+            if (callActive || dictationBusy) {
                 if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     try { record.stop() } catch (_: Throwable) {}
+                }
+                if (callActive) {
+                    // Reset detector state so speech during calls never carries over as a false trigger
+                    detector?.reset()
                 }
                 delay(200)
                 continue
@@ -277,6 +331,10 @@ class WakeWordService : Service() {
 
             val read = record.read(shortBuffer, 0, shortBuffer.size)
             if (read > 0) {
+                if (CallStateDetector.isCallActive(this@WakeWordService)) {
+                    detector?.reset()
+                    continue
+                }
                 for (i in 0 until read) {
                     val sample = (shortBuffer[i] / 32768.0f) * gain
                     floatBuffer[i] = sample.coerceIn(-1.0f, 1.0f)

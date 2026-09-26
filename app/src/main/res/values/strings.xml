@@ -228,7 +228,7 @@
     <string name="onboarding_lang_whisper_badge">Multilingual (English + Indic). Note: Lower dialect accuracy than AI4Bharat</string>
     <string name="onboarding_lang_english_badge">★ Recommended: Fastest &amp; most accurate for English (Parakeet 110M)</string>
     <string name="home_quick_language_title">SPOKEN LANGUAGE &amp; MODEL</string>
-    <string name="home_quick_language_desc">Switch languages instantly without digging into settings</string>
+    <string name="home_quick_language_desc">Each language activates its dedicated on-device neural model</string>
     <string name="home_wake_word_title">Wake Word Detection</string>
     <string name="home_wake_word_desc">Hands-free trigger: Say \"Hey Sayso\" anytime to dictate</string>
     <string name="onboarding_translit_title">How should Indian text appear?</string>
