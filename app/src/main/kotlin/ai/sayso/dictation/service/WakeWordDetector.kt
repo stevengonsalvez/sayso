@@ -89,6 +89,17 @@ class WakeWordDetector(
         }
     }
 
+    /** Resets the keyword spotter stream to clear buffered audio and hypothesis state. */
+    fun reset(): Unit = synchronized(lock) {
+        val s = spotter ?: return@synchronized
+        val str = stream ?: return@synchronized
+        try {
+            s.reset(str)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to reset KeywordSpotter stream: ${t.message}")
+        }
+    }
+
     /** Releases native stream and model resources. */
     fun release(): Unit = synchronized(lock) {
         try {

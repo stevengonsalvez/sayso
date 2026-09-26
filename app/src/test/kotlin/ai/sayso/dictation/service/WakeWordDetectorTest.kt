@@ -88,4 +88,19 @@ class WakeWordDetectorTest {
         assertTrue(WakeWordDetector.matchesWakePhrase("@say_so", SettingsStore.WAKE_PHRASE_SAYSO))
         assertFalse(WakeWordDetector.matchesWakePhrase("hey say so", SettingsStore.WAKE_PHRASE_SAYSO))
     }
+
+    @Test
+    fun `CallStateDetector recognizes active call modes`() {
+        // Telephony call
+        assertTrue(CallStateDetector.isCallMode(android.media.AudioManager.MODE_IN_CALL))
+        // VoIP calls (WhatsApp, Meet, Zoom, Telegram, Teams)
+        assertTrue(CallStateDetector.isCallMode(android.media.AudioManager.MODE_IN_COMMUNICATION))
+        // Phone ringing
+        assertTrue(CallStateDetector.isCallMode(android.media.AudioManager.MODE_RINGTONE))
+        // Normal mode (not in a call)
+        assertFalse(CallStateDetector.isCallMode(android.media.AudioManager.MODE_NORMAL))
+        // Arbitrary unknown mode
+        assertFalse(CallStateDetector.isCallMode(-1))
+    }
 }
+
