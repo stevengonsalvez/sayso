@@ -963,6 +963,7 @@ final class SaysoAppModel: ObservableObject {
         var corrected = transcript
         corrected.text = currentSettings.dictationProfile.postProcess(transcript.text)
         corrected.text = LexiconCorrections.apply(corrected.text, replacements: currentSettings.lexicon)
+        corrected.text = LexiconCorrections.apply(corrected.text, pronunciations: currentSettings.pronunciations)
         corrected.text = corrections.apply(to: corrected.text).transformedText
         corrected.text = await cleaned(corrected.text, language: corrected.language, settings: currentSettings)
         guard currentSettings.translationEnabled else { return corrected }
@@ -1018,6 +1019,7 @@ final class SaysoAppModel: ObservableObject {
             )
             cleaned = currentSettings.dictationProfile.postProcess(cleaned)
             cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
+            cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
             return corrections.apply(to: cleaned).transformedText
         } catch {
             transcriptProcessingNotice = "Cloud cleanup unavailable. Applied local cleanup."
@@ -1313,18 +1315,79 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func openSettings() {
-        selectedTab = 8
+        selectedTab = 10
         showMainWindow()
     }
 
     func openNotchSettings() {
-        selectedTab = 6
+        selectedTab = 7
         showMainWindow()
     }
 
     func openShortcutsSettings() {
-        selectedTab = 7
+        selectedTab = 8
         showMainWindow()
+    }
+
+    func openPreProcessingSettings() {
+        selectedTab = 3
+        showMainWindow()
+    }
+
+    func openModelsSettings() {
+        selectedTab = 4
+        showMainWindow()
+    }
+
+    func openPostProcessingSettings() {
+        selectedTab = 5
+        showMainWindow()
+    }
+
+    func openVocabularySettings() {
+        selectedTab = 6
+        showMainWindow()
+    }
+
+    func addPronunciation(_ entry: SaysoPronunciationEntry) {
+        settings.pronunciations.append(entry)
+        save()
+    }
+
+    func updatePronunciation(_ entry: SaysoPronunciationEntry) {
+        if let index = settings.pronunciations.firstIndex(where: { $0.id == entry.id }) {
+            settings.pronunciations[index] = entry
+            save()
+        }
+    }
+
+    func removePronunciation(_ id: String) {
+        settings.pronunciations.removeAll(where: { $0.id == id })
+        save()
+    }
+
+    func resetPronunciationsToDefaults() {
+        settings.pronunciations = PronunciationDefaults.standard
+        save()
+    }
+
+    func importPronunciations(json: String) throws {
+        let imported = try PronunciationJsonCodec.decode(json)
+        guard !imported.isEmpty else { return }
+        var current = settings.pronunciations
+        for entry in imported {
+            if let existingIndex = current.firstIndex(where: { $0.word.caseInsensitiveCompare(entry.word) == .orderedSame }) {
+                current[existingIndex] = entry
+            } else {
+                current.append(entry)
+            }
+        }
+        settings.pronunciations = current
+        save()
+    }
+
+    func exportPronunciationsJson() -> String? {
+        try? PronunciationJsonCodec.encode(settings.pronunciations)
     }
 
     func quit() {
@@ -1986,6 +2049,9 @@ private struct MenuContent: View {
                 Button("Copy pending voice edit rewrite") { model.copyLastVoiceEditRewrite() }
             }
             Button("Show Sayso Notch") { model.showNotch() }
+            Button("Pre-Processing") { model.openPreProcessingSettings() }
+            Button("Post-Processing") { model.openPostProcessingSettings() }
+            Button("Vocabulary Dictionary") { model.openVocabularySettings() }
             Button("Notch & HUD Display") { model.openNotchSettings() }
             Button("Keyboard Shortcuts") { model.openShortcutsSettings() }
             Button("Open Sayso") { model.showMainWindow() }
@@ -2207,18 +2273,24 @@ private struct SettingsHome: View {
                 .padding(16)
 
                 List(selection: $model.selectedTab) {
-                    Label("Speak", systemImage: "waveform").tag(0)
-                    Label("Control", systemImage: "cursorarrow.click").tag(1)
-                    Label("History", systemImage: "clock.arrow.circlepath").tag(2)
-                    Section("Voice") {
-                        Label("Languages", systemImage: "character.bubble").tag(3)
-                        Label("Models", systemImage: "cpu").tag(4)
-                        Label("Voice output", systemImage: "speaker.wave.2").tag(5)
+                    Section("Activity") {
+                        Label("Speak", systemImage: "waveform").tag(0)
+                        Label("Control", systemImage: "cursorarrow.click").tag(1)
+                        Label("History", systemImage: "clock.arrow.circlepath").tag(2)
                     }
-                    Section("Preferences") {
-                        Label("Notch & HUD", systemImage: "menubar.rectangle").tag(6)
-                        Label("Shortcuts", systemImage: "keyboard").tag(7)
-                        Label("Settings", systemImage: "gearshape").tag(8)
+                    Section("Pipeline") {
+                        Label("Pre-Processing", systemImage: "slider.horizontal.3").tag(3)
+                        Label("Models", systemImage: "cpu").tag(4)
+                        Label("Post-Processing", systemImage: "sparkles").tag(5)
+                        Label("Vocabulary", systemImage: "character.book.closed").tag(6)
+                    }
+                    Section("Desktop & Triggers") {
+                        Label("Notch & HUD", systemImage: "menubar.rectangle").tag(7)
+                        Label("Shortcuts", systemImage: "keyboard").tag(8)
+                    }
+                    Section("System") {
+                        Label("Voice output", systemImage: "speaker.wave.2").tag(9)
+                        Label("Settings", systemImage: "gearshape").tag(10)
                     }
                 }
                 .listStyle(.sidebar)
@@ -2239,11 +2311,13 @@ private struct SettingsHome: View {
             case 0: DictationWorkspace(model: model)
             case 1: ControlWorkspace(model: model)
             case 2: HistoryWorkspace(model: model)
-            case 3: LanguageWorkspace(model: model)
+            case 3: PreProcessingWorkspace(model: model)
             case 4: ModelsWorkspace(model: model)
-            case 5: VoiceOutputWorkspace(model: model, speech: model.speech)
-            case 6: NotchWorkspace(model: model)
-            case 7: ShortcutsWorkspace(model: model)
+            case 5: PostProcessingWorkspace(model: model)
+            case 6: VocabularyWorkspace(model: model)
+            case 7: NotchWorkspace(model: model)
+            case 8: ShortcutsWorkspace(model: model)
+            case 9: VoiceOutputWorkspace(model: model, speech: model.speech)
             default: SaysoSettingsView(model: model)
             }
         }
@@ -2888,27 +2962,93 @@ private struct LanguageWorkspace: View {
     @ObservedObject var model: SaysoAppModel
 
     var body: some View {
-        List {
-            Section("Dictation language") {
-                Picker("Speak", selection: $model.settings.language) {
+        PreProcessingWorkspace(model: model)
+    }
+}
+
+private struct PreProcessingWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var hintsText = ""
+
+    var body: some View {
+        Form {
+            Section("Spoken Language & Auto-Routing") {
+                Picker("Spoken language", selection: $model.settings.language) {
                     ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
-                Text("Choose Automatic for macOS detection, or lock Sayso to one language.")
+
+                Toggle("Auto-route spoken language (Early LID)", isOn: $model.settings.autoLanguageRouting)
+                Text("Analyzes initial speech sample to automatically route audio to the best matching language model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Transliterate Indic scripts to Latin", isOn: $model.settings.transliterateIndicToLatin)
+                Text("Converts Hindi, Tamil, and Malayalam script output into phonetic Latin script (Hinglish / Tanglish / Manglish).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Translation") {
-                Toggle("Translate final text", isOn: $model.settings.translationEnabled)
-                Picker("Output language", selection: $model.settings.outputLanguage) {
-                    ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
+
+            Section("Acoustic Vocabulary Hints") {
+                TextField("Custom words / proper nouns (comma-separated)", text: $hintsText)
+                    .onAppear {
+                        hintsText = model.settings.hints.joined(separator: ", ")
+                    }
+                    .onChange(of: hintsText) { _, newText in
+                        model.settings.hints = newText
+                            .split(separator: ",")
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        model.save()
+                    }
+                Text("Biases the speech recognizer toward specialized jargon, project terms, and unique names.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Audio Input & Hardware") {
+                Picker("Microphone", selection: $model.settings.preferredAudioInputUID) {
+                    Text("macOS default").tag(nil as AudioInputDeviceUID?)
+                    ForEach(model.audioInputDevices) { device in
+                        Text(device.displayName).tag(Optional(device.uid))
+                    }
                 }
-                if model.settings.translationEnabled && !model.settings.byokConsentGranted {
-                    Label("Translation stays off until BYOK cloud consent and provider setup.", systemImage: "lock.fill")
-                        .font(.caption)
-                        .foregroundStyle(SaysoPalette.amber)
+
+                HStack {
+                    Button("Refresh microphones") { model.refreshAudioInputDevices() }
+                    Spacer()
+                }
+
+                Toggle("Audio ducking", isOn: $model.settings.audioDuckingEnabled)
+                Text("Lowers background music and media playback volume while dictation is recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Play audio sound cues (start and stop tones)", isOn: $model.settings.soundCues)
+            }
+
+            Section("Silence & Recording Budgets") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Silence auto-stop timeout")
+                        Spacer()
+                        Text("\(model.settings.silenceTimeoutSeconds, format: .number.precision(.fractionLength(1)))s")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $model.settings.silenceTimeoutSeconds, in: 0.5 ... 5.0, step: 0.1)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Maximum recording duration")
+                        Spacer()
+                        Text("\(Int(model.settings.maxRecordingSeconds))s")
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $model.settings.maxRecordingSeconds, in: 15 ... 300, step: 15)
                 }
             }
-            Section("Language coverage") {
+
+            Section("Language Coverage") {
                 ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { language in
                     HStack {
                         Text(language.displayName)
@@ -2917,8 +3057,8 @@ private struct LanguageWorkspace: View {
                         let downloadAvailable = model.nativeModelDownloadAvailable(for: language)
                         let appleAvailable = SpeechCapabilities.supports(language)
                         Label(
-                            nativeReady ? "On-device ready" : downloadAvailable ? "Download local model" : appleAvailable ? "Apple Speech available" : "Unavailable",
-                            systemImage: nativeReady || appleAvailable ? "checkmark.circle.fill" : "xmark.circle"
+                            nativeReady ? "On-device ready" : downloadAvailable ? "Download local model" : appleAvailable ? "Apple Speech available" : "Cloud only",
+                            systemImage: nativeReady || appleAvailable ? "checkmark.circle.fill" : "circle"
                         )
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(nativeReady || appleAvailable ? SaysoPalette.cobalt : SaysoPalette.muted)
@@ -2926,8 +3066,462 @@ private struct LanguageWorkspace: View {
                 }
             }
         }
-        .navigationTitle("Languages")
+        .formStyle(.grouped)
+        .navigationTitle("Pre-Processing")
         .onChange(of: model.settings) { _, _ in model.save() }
+    }
+}
+
+private struct PostProcessingWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        Form {
+            Section("Cleanup Pipeline Mode") {
+                Picker("Processing mode", selection: $model.settings.cleanupMode) {
+                    ForEach(CleanupMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(model.settings.cleanupMode.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Enable text cleanup", isOn: $model.settings.cleanupEnabled)
+            }
+
+            Section("Prompt Presets") {
+                Picker("Preset style", selection: $model.settings.cleanupPreset) {
+                    ForEach(CleanupPreset.allCases) { preset in
+                        Text(preset.displayName).tag(preset)
+                    }
+                }
+
+                if model.settings.cleanupPreset == .custom {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Custom system prompt template:").font(.caption.weight(.semibold))
+                        TextEditor(text: Binding(
+                            get: { model.settings.customCleanupPrompt ?? CleanupPolicy.basePrompt },
+                            set: { model.settings.customCleanupPrompt = $0; model.save() }
+                        ))
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 140)
+                        .padding(6)
+                        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
+
+                        HStack {
+                            Spacer()
+                            Button("Reset Prompt to Base") {
+                                model.settings.customCleanupPrompt = CleanupPolicy.basePrompt
+                                model.save()
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        }
+                    }
+                } else {
+                    Text(presetDescription(for: model.settings.cleanupPreset))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("App Context Awareness") {
+                Toggle("Adapt formatting to active application", isOn: $model.settings.appContextAwarenessEnabled)
+                Text("Detects frontmost application to dynamically apply app-specific formatting rules:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(AppContextCategory.allCases.filter { $0 != .general }) { category in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: icon(for: category))
+                                .foregroundStyle(SaysoPalette.cobalt)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(category.displayName).font(.subheadline.weight(.semibold))
+                                Text(category.directive).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+
+            Section("Translation & Output Language") {
+                Toggle("Translate final cleaned text", isOn: $model.settings.translationEnabled)
+                Picker("Output language", selection: $model.settings.outputLanguage) {
+                    ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Post-Processing")
+        .onChange(of: model.settings) { _, _ in model.save() }
+    }
+
+    private func presetDescription(for preset: CleanupPreset) -> String {
+        switch preset {
+        case .standard: "Standard: Polishes grammar, punctuation, capitalization, and cleans speech stutters."
+        case .developer: "Developer: Preserves CLI commands, flags, camelCase, snake_case, paths, and technical symbols."
+        case .minimal: "Minimal: Fixes punctuation and capitalization only, leaving all spoken words unchanged."
+        case .casual: "Casual: Keeps a natural, conversational, concise tone suited for quick messages."
+        case .custom: "Custom: User-defined system instructions passed to the cleanup engine."
+        }
+    }
+
+    private func icon(for category: AppContextCategory) -> String {
+        switch category {
+        case .chat: "message"
+        case .email: "envelope"
+        case .codeTerminal: "terminal"
+        case .docsNotes: "note.text"
+        case .general: "doc"
+        }
+    }
+}
+
+private struct VocabularyWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var searchQuery = ""
+    @State private var selectedCategory: PronunciationCategory? = nil
+    @State private var editingEntry: SaysoPronunciationEntry? = nil
+    @State private var isAddingNew = false
+    @State private var showResetConfirm = false
+
+    var filteredEntries: [SaysoPronunciationEntry] {
+        model.settings.pronunciations.filter { entry in
+            let matchesCategory = selectedCategory == nil || entry.category == selectedCategory
+            let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let matchesSearch = query.isEmpty ||
+                entry.word.lowercased().contains(query) ||
+                entry.pronunciation.lowercased().contains(query) ||
+                (entry.replacement?.lowercased().contains(query) == true) ||
+                entry.category.displayName.lowercased().contains(query)
+            return matchesCategory && matchesSearch
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header & Search Toolbar
+            VStack(spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("Vocabulary & Pronunciation").font(.system(size: 26, weight: .bold))
+                            Text("\(model.settings.pronunciations.count)")
+                                .font(.caption.weight(.bold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.cobalt.opacity(0.15), in: Capsule())
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        }
+                        Text("Phonetic speech triggers and technical dictionary replacements.").foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    HStack(spacing: 10) {
+                        Button {
+                            isAddingNew = true
+                        } label: {
+                            Label("Add Word", systemImage: "plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(SaysoPalette.cobalt)
+
+                        Button {
+                            importVocabulary()
+                        } label: {
+                            Label("Import", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            exportVocabulary()
+                        } label: {
+                            Label("Export", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            showResetConfirm = true
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Reset to standard developer defaults")
+                    }
+                }
+
+                // Search field
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search word, pronunciation, or replacement...", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                    if !searchQuery.isEmpty {
+                        Button {
+                            searchQuery = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(10)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 8))
+
+                // Category filter chips
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        CategoryChip(title: "All", count: model.settings.pronunciations.count, isSelected: selectedCategory == nil) {
+                            selectedCategory = nil
+                        }
+                        ForEach(PronunciationCategory.allCases) { category in
+                            let count = model.settings.pronunciations.filter { $0.category == category }.count
+                            CategoryChip(title: category.displayName, count: count, isSelected: selectedCategory == category) {
+                                selectedCategory = category
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(20)
+            .background(SaysoPalette.surfaceRaised)
+
+            Divider()
+
+            // Entry List
+            if filteredEntries.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "character.book.closed")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("No vocabulary entries found")
+                        .font(.headline)
+                    Text(searchQuery.isEmpty ? "Tap 'Add Word' to add custom pronunciations." : "No entries match your search query.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(filteredEntries) { entry in
+                        HStack(spacing: 14) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 8) {
+                                    Text(entry.word)
+                                        .font(.headline.weight(.semibold))
+                                    Text(entry.category.displayName)
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(categoryColor(entry.category).opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                                        .foregroundStyle(categoryColor(entry.category))
+                                }
+                                HStack(spacing: 12) {
+                                    HStack(spacing: 4) {
+                                        Text("Spoken:").font(.caption).foregroundStyle(.secondary)
+                                        Text(entry.pronunciation.isEmpty ? entry.word : entry.pronunciation)
+                                            .font(.caption.weight(.medium))
+                                    }
+                                    if let replacement = entry.replacement, !replacement.isEmpty, replacement != entry.word {
+                                        HStack(spacing: 4) {
+                                            Text("Produces:").font(.caption).foregroundStyle(.secondary)
+                                            Text(replacement)
+                                                .font(.caption.weight(.medium))
+                                                .foregroundStyle(SaysoPalette.cobalt)
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer()
+                            Button {
+                                editingEntry = entry
+                            } label: {
+                                Image(systemName: "pencil")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+
+                            Button {
+                                model.removePronunciation(entry.id)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(SaysoPalette.crimson)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .listStyle(.inset)
+            }
+        }
+        .sheet(item: $editingEntry) { (entry: SaysoPronunciationEntry) in
+            AddEditPronunciationSheet(entry: entry) { updated in
+                model.updatePronunciation(updated)
+                editingEntry = nil
+            } onCancel: {
+                editingEntry = nil
+            }
+        }
+        .sheet(isPresented: $isAddingNew) {
+            AddEditPronunciationSheet(entry: nil as SaysoPronunciationEntry?) { newEntry in
+                model.addPronunciation(newEntry)
+                isAddingNew = false
+            } onCancel: {
+                isAddingNew = false
+            }
+        }
+        .confirmationDialog("Reset Vocabulary to Defaults?", isPresented: $showResetConfirm) {
+            Button("Reset to Defaults", role: .destructive) {
+                model.resetPronunciationsToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will replace current entries with standard developer and system vocabulary.")
+        }
+    }
+
+    private func categoryColor(_ category: PronunciationCategory) -> Color {
+        switch category {
+        case .technical: SaysoPalette.cobalt
+        case .names: Color.teal
+        case .acronyms: SaysoPalette.amber
+        case .symbols: Color.purple
+        case .brands: Color.orange
+        case .medical: Color.red
+        case .custom: Color.gray
+        }
+    }
+
+    private func exportVocabulary() {
+        let panel = NSSavePanel()
+        panel.title = "Export Vocabulary Dictionary"
+        panel.nameFieldStringValue = "sayso-vocabulary.json"
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            if let json = model.exportPronunciationsJson() {
+                try? json.write(to: url, atomically: true, encoding: .utf8)
+                model.notice = "Vocabulary dictionary exported successfully."
+            }
+        }
+    }
+
+    private func importVocabulary() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Vocabulary Dictionary"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            if let data = try? String(contentsOf: url, encoding: .utf8) {
+                do {
+                    try model.importPronunciations(json: data)
+                    model.notice = "Vocabulary dictionary imported successfully."
+                } catch {
+                    model.notice = "Failed to import vocabulary: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+}
+
+private struct CategoryChip: View {
+    let title: String
+    let count: Int
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title).font(.caption.weight(isSelected ? .bold : .medium))
+                Text("\(count)")
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isSelected ? SaysoPalette.cobalt : SaysoPalette.surface, in: Capsule())
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+            .overlay(Capsule().stroke(isSelected ? Color.clear : Color.secondary.opacity(0.2), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AddEditPronunciationSheet: View {
+    @State var word: String
+    @State var pronunciation: String
+    @State var replacement: String
+    @State var category: PronunciationCategory
+    @State var isRegex: Bool
+    @State var caseSensitive: Bool
+    let existingID: String?
+    let onSave: (SaysoPronunciationEntry) -> Void
+    let onCancel: () -> Void
+
+    init(entry: SaysoPronunciationEntry?, onSave: @escaping (SaysoPronunciationEntry) -> Void, onCancel: @escaping () -> Void) {
+        _word = State(initialValue: entry?.word ?? "")
+        _pronunciation = State(initialValue: entry?.pronunciation ?? "")
+        _replacement = State(initialValue: entry?.replacement ?? "")
+        _category = State(initialValue: entry?.category ?? .technical)
+        _isRegex = State(initialValue: entry?.isRegex ?? false)
+        _caseSensitive = State(initialValue: entry?.caseSensitive ?? false)
+        existingID = entry?.id
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(existingID == nil ? "Add Vocabulary Entry" : "Edit Vocabulary Entry")
+                .font(.headline.weight(.bold))
+
+            Form {
+                TextField("Canonical word / target output", text: $word)
+                TextField("Spoken phonetic trigger (e.g. 'eye OS')", text: $pronunciation)
+                TextField("Optional replacement text (leave blank to use word)", text: $replacement)
+
+                Picker("Category", selection: $category) {
+                    ForEach(PronunciationCategory.allCases) { cat in
+                        Text(cat.displayName).tag(cat)
+                    }
+                }
+
+                Toggle("Match as regular expression", isOn: $isRegex)
+                Toggle("Case sensitive matching", isOn: $caseSensitive)
+            }
+            .formStyle(.grouped)
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                Spacer()
+                Button("Save") {
+                    let entry = SaysoPronunciationEntry(
+                        id: existingID ?? UUID().uuidString,
+                        word: word.trimmingCharacters(in: .whitespacesAndNewlines),
+                        pronunciation: pronunciation.trimmingCharacters(in: .whitespacesAndNewlines),
+                        replacement: replacement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : replacement.trimmingCharacters(in: .whitespacesAndNewlines),
+                        category: category,
+                        isRegex: isRegex,
+                        caseSensitive: caseSensitive
+                    )
+                    onSave(entry)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+        .frame(minWidth: 420, minHeight: 340)
+        .padding(16)
     }
 }
 
