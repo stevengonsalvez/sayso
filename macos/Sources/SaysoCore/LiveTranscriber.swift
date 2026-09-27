@@ -152,6 +152,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var cloudAudioURL: URL?
     private var retainsCloudAudio = false
     private var usesCloudTranscription = false
+    private var cloudPreviewTask: SFSpeechRecognitionTask?
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
     private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
@@ -684,12 +685,40 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             retainsCloudAudio = saveAudio
             usesCloudTranscription = true
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
-            input.installTap(
-                onBus: 0,
-                bufferSize: 1_024,
-                format: format,
-                block: makeArchiveTap(archive: archive, levelReporter: levelReporter)
-            )
+
+            var previewRequest: SFSpeechAudioBufferRecognitionRequest?
+            if SFSpeechRecognizer.authorizationStatus() == .authorized,
+               let recognizer = SFSpeechRecognizer(), recognizer.isAvailable {
+                let req = SFSpeechAudioBufferRecognitionRequest()
+                req.shouldReportPartialResults = true
+                req.taskHint = .dictation
+                previewRequest = req
+                cloudPreviewTask = recognizer.recognitionTask(with: req) { [weak self] result, _ in
+                    if let text = result?.bestTranscription.formattedString {
+                        Task { @MainActor [weak self] in
+                            guard self?.cloudTranscriptionRunID == runID, self?.phase == .listening else { return }
+                            self?.partialText = text
+                            self?.onPartial?(text)
+                        }
+                    }
+                }
+            }
+
+            if let previewRequest {
+                input.installTap(
+                    onBus: 0,
+                    bufferSize: 1_024,
+                    format: format,
+                    block: makeSpeechTap(request: previewRequest, archive: archive, levelReporter: levelReporter)
+                )
+            } else {
+                input.installTap(
+                    onBus: 0,
+                    bufferSize: 1_024,
+                    format: format,
+                    block: makeArchiveTap(archive: archive, levelReporter: levelReporter)
+                )
+            }
             audioEngine.prepare()
             try audioEngine.start()
             phase = .listening
@@ -709,6 +738,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         guard usesCloudTranscription, phase == .listening,
               let runID = cloudTranscriptionRunID,
               let configuration = cloudTranscriptionConfiguration else { return }
+        cloudPreviewTask?.cancel()
+        cloudPreviewTask = nil
         phase = .processing
         stopAudioEngine()
         cancelHandsFreeTimers()
@@ -772,6 +803,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func clearCloudTranscriptionRun() {
+        cloudPreviewTask?.cancel()
+        cloudPreviewTask = nil
         cloudTranscriptionConfiguration = nil
         cloudTranscriptionRunID = nil
         cloudAudioURL = nil

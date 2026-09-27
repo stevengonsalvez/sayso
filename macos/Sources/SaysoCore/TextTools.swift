@@ -264,23 +264,43 @@ public enum TextOutput {
         destination: Destination?,
         restoreClipboardAfterPaste: Bool = true
     ) -> DeliveryResult {
-        guard AXIsProcessTrusted(), let destination else {
-            return clipboardFallback(for: text)
-        }
-        guard destination.isSafeDeliveryTarget else {
-            return clipboardFallback(for: text)
-        }
-        guard !isProtected(destination.field) else {
-            return clipboardFallback(for: text)
-        }
-        let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-        if setResult == .success { return .delivered(.directInsertion) }
+        if let destination, destination.isSafeDeliveryTarget, !isProtected(destination.field) {
+            let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
+            if setResult == .success { return .delivered(.directInsertion) }
 
-        switch paste(text, into: destination, restoreClipboardAfterPaste: restoreClipboardAfterPaste) {
-        case .pasted:
+            switch paste(text, into: destination, restoreClipboardAfterPaste: restoreClipboardAfterPaste) {
+            case .pasted:
+                return .delivered(.pidPaste)
+            case let .failed(failure):
+                return .pasteFailed(failure)
+            }
+        }
+
+        // If direct AX destination was unavailable or protected, simulate paste to frontmost app
+        return pasteToFrontmostOrCopy(text, restoreClipboardAfterPaste: restoreClipboardAfterPaste)
+    }
+
+    private static func pasteToFrontmostOrCopy(
+        _ text: String,
+        restoreClipboardAfterPaste: Bool
+    ) -> DeliveryResult {
+        guard copy(text) else { return .pasteFailed(.clipboardUnavailable) }
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
+            return .delivered(.clipboard)
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        if let targetPid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           targetPid != ProcessInfo.processInfo.processIdentifier {
+            keyDown.postToPid(targetPid)
+            keyUp.postToPid(targetPid)
             return .delivered(.pidPaste)
-        case let .failed(failure):
-            return .pasteFailed(failure)
+        } else {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            return .delivered(.pidPaste)
         }
     }
 
@@ -441,7 +461,7 @@ public enum TextOutput {
         let id = UUID()
         let task = Task { @MainActor in
             do {
-                try await Task.sleep(for: .milliseconds(300))
+                try await Task.sleep(for: .milliseconds(750))
             } catch {
                 return
             }
