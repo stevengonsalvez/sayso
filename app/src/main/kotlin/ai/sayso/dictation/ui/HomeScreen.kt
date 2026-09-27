@@ -71,6 +71,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import ai.sayso.dictation.models.LocalModel
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import ai.sayso.dictation.models.DownloadState
 import ai.sayso.dictation.models.LocalModelCatalog
 import java.io.File
@@ -436,6 +437,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 indicTransliteration = enabled
                 settings.transliterateIndicToLatin = enabled
             },
+            onOpenTranscription = { onNavigate(Screen.Transcription) },
         )
 
         // 3. Hands-Free & Overlay Controls Card
@@ -985,7 +987,7 @@ private fun EngineStatusCard(
             Spacer(Modifier.height(8.dp))
             StatusActionRow(
                 title = "Accessibility Service",
-                subtitle = if (serviceOn) "Service active with floating overlay" else "Tap to enable in Android settings",
+                subtitle = if (serviceOn) "Active: typing directly into other apps enabled" else "Required to type over other apps (tap to enable in Settings)",
                 done = serviceOn,
                 onClick = onOpenAccessibility,
             )
@@ -1180,14 +1182,42 @@ private data class QuickLangOption(
     val label: String,
     val nativeScript: String,
     val modelDir: String,
+    val engineName: String,
     val isIndic: Boolean = false,
 )
 
 private val QUICK_LANG_OPTIONS = listOf(
-    QuickLangOption(code = "en", label = "English", nativeScript = "EN", modelDir = "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"),
-    QuickLangOption(code = "ta", label = "Tamil", nativeScript = "தமிழ்", modelDir = "ai4bharat-indicconformer-ta", isIndic = true),
-    QuickLangOption(code = "hi", label = "Hindi", nativeScript = "हिंदी", modelDir = "ai4bharat-indicconformer-hi", isIndic = true),
-    QuickLangOption(code = "ml", label = "Malayalam", nativeScript = "മലയാളം", modelDir = "ai4bharat-indicconformer-ml", isIndic = true),
+    QuickLangOption(
+        code = "en",
+        label = "English",
+        nativeScript = "EN",
+        modelDir = "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8",
+        engineName = "Parakeet 110M",
+    ),
+    QuickLangOption(
+        code = "ta",
+        label = "Tamil",
+        nativeScript = "தமிழ்",
+        modelDir = "ai4bharat-indicconformer-ta",
+        engineName = "AI4Bharat Indic",
+        isIndic = true,
+    ),
+    QuickLangOption(
+        code = "hi",
+        label = "Hindi",
+        nativeScript = "हिंदी",
+        modelDir = "ai4bharat-indicconformer-hi",
+        engineName = "AI4Bharat Indic",
+        isIndic = true,
+    ),
+    QuickLangOption(
+        code = "ml",
+        label = "Malayalam",
+        nativeScript = "മലയാളം",
+        modelDir = "ai4bharat-indicconformer-ml",
+        engineName = "AI4Bharat Indic",
+        isIndic = true,
+    ),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1202,6 +1232,7 @@ private fun LanguageQuickSwitcherCard(
     downloadState: DownloadState?,
     onSelectLanguage: (String, LocalModel) -> Unit,
     onTransliterationChange: (Boolean) -> Unit,
+    onOpenTranscription: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isCloud = !currentSttModelId.startsWith("local/")
@@ -1257,9 +1288,9 @@ private fun LanguageQuickSwitcherCard(
                     Column {
                         val headerTitle = when {
                             isCloud -> "Active: Cloud Model (${currentSttModelId.substringBefore('/')})"
-                            activeOption != null && selectedOption.code == activeOption.code -> "Active: ${activeOption.label} (${activeOption.nativeScript})"
+                            activeOption != null && selectedOption.code == activeOption.code -> "Active: ${activeOption.label} (${activeOption.nativeScript}) · ${activeOption.engineName}"
                             activeOption == null && selectedLangCode == null -> "Active: ${activeCustomModel?.displayName ?: "Custom Model"}"
-                            else -> "Selected: ${selectedOption.label} (${selectedOption.nativeScript})"
+                            else -> "Selected: ${selectedOption.label} (${selectedOption.nativeScript}) · ${selectedOption.engineName}"
                         }
                         Text(
                             text = headerTitle,
@@ -1279,55 +1310,123 @@ private fun LanguageQuickSwitcherCard(
                     }
                 }
 
-                // Chips Flow Cloud (all visible on screen)
-                FlowRow(
+                // 2x2 Language & Neural Model Grid Cards
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    for (opt in QUICK_LANG_OPTIONS) {
-                        val isSelected = (!isCloud && activeOption != null && opt.code == activeOption.code && selectedOption.code == opt.code) ||
-                            (isCloud && opt.code == selectedLangCode) ||
-                            (activeOption == null && selectedLangCode == opt.code) ||
-                            (!isTargetInstalled && opt.code == selectedOption.code && selectedLangCode != null)
-                        val isInstalled = opt.modelDir in installedModelDirNames
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                selectedLangCode = opt.code
-                                val model = LocalModelCatalog.byDirName(opt.modelDir) ?: LocalModelCatalog.default
-                                if (model.dirName in installedModelDirNames) {
-                                    onSelectLanguage(opt.code, model)
+                    val rows = QUICK_LANG_OPTIONS.chunked(2)
+                    for (row in rows) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (opt in row) {
+                                val isSelected = (!isCloud && activeOption != null && opt.code == activeOption.code && selectedOption.code == opt.code) ||
+                                    (isCloud && opt.code == selectedLangCode) ||
+                                    (activeOption == null && selectedLangCode == opt.code) ||
+                                    (!isTargetInstalled && opt.code == selectedOption.code && selectedLangCode != null)
+                                val optModel = LocalModelCatalog.byDirName(opt.modelDir)
+                                val isInstalled = opt.modelDir in installedModelDirNames
+
+                                Surface(
+                                    onClick = {
+                                        selectedLangCode = opt.code
+                                        val model = LocalModelCatalog.byDirName(opt.modelDir) ?: LocalModelCatalog.default
+                                        if (model.dirName in installedModelDirNames) {
+                                            onSelectLanguage(opt.code, model)
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isSelected) {
+                                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                    },
+                                    border = BorderStroke(
+                                        width = if (isSelected) 2.dp else 1.dp,
+                                        color = if (isSelected) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                        },
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = if (opt.code == "en") "English" else "${opt.label} (${opt.nativeScript})",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f, fill = false),
+                                            )
+                                            if (isSelected) {
+                                                Spacer(Modifier.width(4.dp))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(8.dp)
+                                                        .clip(CircleShape)
+                                                        .background(MaterialTheme.colorScheme.primary),
+                                                )
+                                            }
+                                        }
+
+                                        Text(
+                                            text = opt.engineName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            if (isInstalled) {
+                                                Icon(
+                                                    imageVector = Icons.Default.CheckCircle,
+                                                    contentDescription = "Installed",
+                                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFF10B981),
+                                                    modifier = Modifier.size(13.dp),
+                                                )
+                                                Text(
+                                                    text = if (isSelected) "Active" else "Ready (${optModel?.sizeMb ?: 0} MB)",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Default.Download,
+                                                    contentDescription = "Needs download",
+                                                    tint = SaysoBrandAmber,
+                                                    modifier = Modifier.size(13.dp),
+                                                )
+                                                Text(
+                                                    text = "Download (${optModel?.sizeMb ?: 0} MB)",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = SaysoBrandAmber,
+                                                    fontWeight = FontWeight.Medium,
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                            },
-                            label = {
-                                Text(
-                                    text = if (opt.code == "en") "English" else "${opt.label} (${opt.nativeScript})",
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    fontSize = 13.sp,
-                                )
-                            },
-                            trailingIcon = {
-                                if (!isInstalled) {
-                                    Icon(
-                                        imageVector = Icons.Default.Download,
-                                        contentDescription = "Needs download",
-                                        modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = isSelected,
-                                selectedBorderColor = MaterialTheme.colorScheme.primary,
-                                selectedBorderWidth = 1.5.dp,
-                            ),
-                        )
+                            }
+                        }
                     }
                 }
 
@@ -1504,6 +1603,36 @@ private fun LanguageQuickSwitcherCard(
                         onTransliterationChange = onTransliterationChange,
                     )
                 }
+
+                // Additional languages notice
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenTranscription),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("🌐", fontSize = 13.sp)
+                        Text(
+                            text = "More languages (Spanish, French, German, Japanese, etc.) available in Transcription Settings",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
         }
     }
@@ -1596,8 +1725,8 @@ private fun HandsFreeControlsCard(
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 SwitchRow(
-                    title = "Automatic language routing",
-                    subtitle = "Uses Whisper Tiny neural LID (111 MB) to detect language. Routes Tamil/Hindi to AI4Bharat and English to Parakeet.",
+                    title = "Automatic language routing (Experimental)",
+                    subtitle = "Highly experimental and may not work correctly. Uses Whisper Tiny neural LID (111 MB) to detect language. Routes Tamil/Hindi to AI4Bharat and English to Parakeet.",
                     checked = autoLanguageRouting,
                     onCheckedChange = onAutoLanguageRoutingChange,
                 )
@@ -1703,7 +1832,7 @@ private fun HandsFreeControlsCard(
                                     fontSize = 14.sp,
                                 )
                                 Text(
-                                    text = "Neural LID Active: Tamil/Indic speech routes directly to AI4Bharat, and English routes to Parakeet. Tap to manage.",
+                                    text = "Neural LID Active (Experimental): Tamil/Indic speech routes directly to AI4Bharat, and English routes to Parakeet. Highly experimental and may not work correctly. Tap to manage.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f),
@@ -1781,7 +1910,7 @@ private fun LanguageRoutingDownloadDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Select models to download for automatic routing. Whisper Tiny (111 MB) acts as on-device Neural Language Detector (LID) to classify speech and route Tamil, Hindi, or Malayalam to AI4Bharat, and English to Parakeet.",
+                    text = "Select models to download for automatic routing. Note: Automatic detection is highly experimental and may not work correctly. Whisper Tiny (111 MB) acts as on-device Neural Language Detector (LID) to classify speech and route Tamil, Hindi, or Malayalam to AI4Bharat, and English to Parakeet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2374,9 +2503,9 @@ private val SETTINGS_INDEX = listOf(
         badge = "Hands-Free",
     ),
     SettingSearchItem(
-        title = "Automatic Language Routing",
-        description = "Classify speech to auto-switch between English (Parakeet) and Indic (AI4Bharat) models",
-        keywords = "automatic language routing early lid neural classification parakeet ai4bharat indic switch",
+        title = "Automatic Language Routing (Experimental)",
+        description = "Classify speech to auto-switch between English (Parakeet) and Indic (AI4Bharat) models (highly experimental and may not work correctly)",
+        keywords = "automatic language routing early lid neural classification parakeet ai4bharat indic switch experimental",
         screen = Screen.Transcription,
         badge = "Voice",
     ),

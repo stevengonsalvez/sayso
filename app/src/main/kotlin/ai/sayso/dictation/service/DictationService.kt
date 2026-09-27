@@ -7,6 +7,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -228,6 +229,10 @@ class DictationService : AccessibilityService() {
 
     fun startRecordingFromWakeWord() {
         if (state != State.IDLE) return
+        if (CallStateDetector.isCallActive(this)) {
+            Log.i(TAG, "Suppressed wake word recording: active call in progress")
+            return
+        }
         bubble?.show()
         startRecording()
     }
@@ -362,6 +367,8 @@ class DictationService : AccessibilityService() {
     }
 
     companion object {
+        private const val TAG = "DictationService"
+
         /** The running service, or null while it is switched off. */
         @Volatile
         var instance: DictationService? = null

@@ -48,7 +48,7 @@ object LocalModelCatalog {
             dirName = "sherpa-onnx-whisper-tiny",
             displayName = "Whisper Multilingual Tiny",
             sizeMb = 111,
-            note = "Multilingual & Neural Language Detector (LID). Auto-routes Tamil/Hindi to AI4Bharat and English to Parakeet",
+            note = "Multilingual & Neural Language Detector (LID). Auto-routes Tamil/Hindi to AI4Bharat and English to Parakeet (highly experimental and may not work correctly)",
             sha256 = "c46116994e539aa165266d96b325252728429c12535eb9d8b6a2b10f129e66b1",
         ),
         LocalModel(

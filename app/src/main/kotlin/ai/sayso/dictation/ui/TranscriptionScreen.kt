@@ -237,8 +237,8 @@ fun TranscriptionScreen(onOpenLocalModels: () -> Unit, modifier: Modifier = Modi
             }
         }
         SwitchRow(
-            title = "Automatic language routing",
-            subtitle = "Uses Whisper neural detector to route Tamil, Hindi, or Malayalam to AI4Bharat and English to Parakeet",
+            title = "Automatic language routing (Experimental)",
+            subtitle = "Highly experimental and may not work correctly. Uses Whisper neural detector to route Tamil, Hindi, or Malayalam to AI4Bharat and English to Parakeet",
             checked = autoLanguageRouting,
             onCheckedChange = {
                 autoLanguageRouting = it
