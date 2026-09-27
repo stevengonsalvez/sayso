@@ -253,6 +253,14 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     // Pronunciation & vocabulary dictionary
     public var pronunciations: [SaysoPronunciationEntry] = PronunciationDefaults.standard
 
+    // Multi-provider and model selections
+    public var selectedCloudProviderId = "groq"
+    public var selectedCloudModelId = "distil-whisper-large-v3-en"
+    public var selectedCloudCleanupProviderId = "groq"
+    public var selectedCloudCleanupModelId = "llama-3.1-8b-instant"
+    public var selectedLocalSlmModelId = "local-slm/qwen2.5-0.5b"
+    public var selectedLocalAsrModelId = "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8"
+
     public static func normalizedBaseURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), ProviderEndpointPolicy.allows(url) else {
@@ -292,6 +300,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case dictationProfile, dictationProfileOverrides
         case hints, autoLanguageRouting, transliterateIndicToLatin, silenceTimeoutSeconds, maxRecordingSeconds, audioDuckingEnabled
         case cleanupMode, cleanupPreset, customCleanupPrompt, appContextAwarenessEnabled, pronunciations
+        case selectedCloudProviderId, selectedCloudModelId, selectedCloudCleanupProviderId, selectedCloudCleanupModelId
+        case selectedLocalSlmModelId, selectedLocalAsrModelId
     }
 
     public init(from decoder: any Decoder) throws {
@@ -379,6 +389,12 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         customCleanupPrompt = decoded(String?.self, .customCleanupPrompt, fallback: customCleanupPrompt)
         appContextAwarenessEnabled = decoded(Bool.self, .appContextAwarenessEnabled, fallback: appContextAwarenessEnabled)
         pronunciations = decoded([SaysoPronunciationEntry].self, .pronunciations, fallback: pronunciations)
+        selectedCloudProviderId = decoded(String.self, .selectedCloudProviderId, fallback: selectedCloudProviderId)
+        selectedCloudModelId = decoded(String.self, .selectedCloudModelId, fallback: selectedCloudModelId)
+        selectedCloudCleanupProviderId = decoded(String.self, .selectedCloudCleanupProviderId, fallback: selectedCloudCleanupProviderId)
+        selectedCloudCleanupModelId = decoded(String.self, .selectedCloudCleanupModelId, fallback: selectedCloudCleanupModelId)
+        selectedLocalSlmModelId = decoded(String.self, .selectedLocalSlmModelId, fallback: selectedLocalSlmModelId)
+        selectedLocalAsrModelId = decoded(String.self, .selectedLocalAsrModelId, fallback: selectedLocalAsrModelId)
     }
 
     public func resolvedDictationProfile(forBundleIdentifier bundleIdentifier: String?) -> DictationProfile {
