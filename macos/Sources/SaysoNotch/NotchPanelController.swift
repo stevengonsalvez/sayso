@@ -16,7 +16,7 @@ final class NotchPanelController {
     private let state = NotchPresentationState()
     private weak var model: SaysoAppModel?
 
-    private let expandedHeight: CGFloat = 210
+    private let expandedHeight: CGFloat = 226
     private let collapsedHeight: CGFloat = 42
     private let notchShoulder: CGFloat = 42
     // 360pt chosen to fit ModePicker and 2-line text; icon row needs 266pt minimum.
@@ -152,6 +152,7 @@ final class NotchPanelController {
 private struct NotchHUD: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var state: NotchPresentationState
+    @State private var isGlowPulsing = false
     let toggle: () -> Void
     let dismiss: () -> Void
     let openApp: () -> Void
@@ -207,11 +208,13 @@ private struct NotchHUD: View {
                 }
 
                 Text(model.transcriber.partialText.isEmpty ? (model.notice ?? "Live words appear here.") : model.transcriber.partialText)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
+                    .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 50)
+                    .fixedSize(horizontal: false, vertical: true)
 
+                let isLive = model.transcriber.canStop || model.transcriber.phase == .listening
                 Button {
                     model.startOrStopDictation()
                 } label: {
@@ -223,13 +226,26 @@ private struct NotchHUD: View {
                     .frame(maxWidth: .infinity, minHeight: 34)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(model.transcriber.canStop ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .tint(isLive ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                .shadow(color: isLive ? SaysoPalette.crimson.opacity(isGlowPulsing ? 0.95 : 0.4) : .clear, radius: isGlowPulsing ? 12 : 5)
+                .overlay {
+                    if isLive {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(SaysoPalette.crimson.opacity(isGlowPulsing ? 0.9 : 0.5), lineWidth: 1.5)
+                            .shadow(color: SaysoPalette.crimson, radius: isGlowPulsing ? 8 : 4)
+                    }
+                }
                 .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                        isGlowPulsing = true
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 38)
             .padding(.bottom, 14)
-            .frame(width: state.expandedWidth, height: 210)
+            .frame(width: state.expandedWidth, height: 226)
             .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
             .gesture(TapGesture().onEnded(toggle), including: .gesture)
             .background {
