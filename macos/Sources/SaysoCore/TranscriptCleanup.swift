@@ -10,6 +10,17 @@ public enum TranscriptCleanup {
             with: " ",
             options: .regularExpression
         )
+
+        // Spoken punctuation replacements
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\b(?:period|full stop)\b"#, with: ".", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\bcomma\b"#, with: ",", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\bquestion mark\b"#, with: "?", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\b(?:exclamation mark|exclamation point)\b"#, with: "!", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\bcolon\b"#, with: ":", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\b(?:semicolon|semi colon)\b"#, with: ";", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\b(?:new line|newline)\b"#, with: "\n", options: .regularExpression)
+        cleaned = cleaned.replacingOccurrences(of: #"(?i)\s*\bnew paragraph\b"#, with: "\n\n", options: .regularExpression)
+
         cleaned = cleaned.replacingOccurrences(of: #"[ \t]+"#, with: " ", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(of: #"\s+(,)"#, with: "$1", options: .regularExpression)
         cleaned = cleaned.replacingOccurrences(
@@ -25,6 +36,36 @@ public enum TranscriptCleanup {
         if String(first) != uppercase {
             cleaned.replaceSubrange(cleaned.startIndex...cleaned.startIndex, with: uppercase)
         }
+
+        return cleaned
+    }
+
+    public static func smartFormat(
+        _ text: String,
+        capitalizesFirstLetter: Bool = true,
+        capitalizesSentences: Bool = true,
+        addsTerminalPunctuation: Bool = true
+    ) -> String {
+        var cleaned = processLocally(text, capitalizesFirstLetter: capitalizesFirstLetter)
+        guard !cleaned.isEmpty else { return cleaned }
+
+        if capitalizesSentences {
+            let sentencePattern = #"(?<=\.\s)([a-z])|(?<=\?\s)([a-z])|(?<=\!\s)([a-z])|(?<=\n)([a-z])"#
+            if let regex = try? NSRegularExpression(pattern: sentencePattern) {
+                let nsString = cleaned as NSString
+                let matches = regex.matches(in: cleaned, range: NSRange(location: 0, length: nsString.length))
+                for match in matches.reversed() {
+                    let range = match.range
+                    let char = nsString.substring(with: range).uppercased()
+                    cleaned = (cleaned as NSString).replacingCharacters(in: range, with: char)
+                }
+            }
+        }
+
+        if addsTerminalPunctuation, let last = cleaned.last, last.isLetter {
+            cleaned.append(".")
+        }
+
         return cleaned
     }
 }
