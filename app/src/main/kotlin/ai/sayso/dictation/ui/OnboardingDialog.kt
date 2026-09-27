@@ -838,7 +838,7 @@ private fun StepZeroLanguages(
                 name = "English + Indian",
                 nativeScript = "Multilingual",
                 dialectName = "Multi",
-                badge = "Multilingual (Whisper). Note: Lower dialect accuracy than AI4Bharat",
+                badge = "Multilingual (Whisper). Highly experimental and may not work correctly. Lower dialect accuracy than AI4Bharat",
                 isIndic = true,
             ),
         )

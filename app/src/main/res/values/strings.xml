@@ -185,7 +185,7 @@
     <string name="about_source">Source code</string>
 
     <!-- Languages -->
-    <string name="lang_auto">Detect automatically</string>
+    <string name="lang_auto">Detect automatically (Experimental)</string>
     <string name="lang_en">English</string>
     <string name="lang_es">Spanish</string>
     <string name="lang_fr">French</string>
@@ -284,7 +284,7 @@
     <string name="onboarding_guide_desc">All settings can be toggled anytime after onboarding:</string>
     <string name="onboarding_guide_routing_title">Language Routing</string>
     <string name="onboarding_guide_routing_badge">Home Screen</string>
-    <string name="onboarding_guide_routing_desc">Auto-detects English vs Indic languages and switches local speech models.</string>
+    <string name="onboarding_guide_routing_desc">Auto-detects English vs Indic languages and switches local speech models (highly experimental and may not work correctly).</string>
     <string name="onboarding_guide_translit_title">Tanglish / Hinglish</string>
     <string name="onboarding_guide_translit_badge">Post-Processing</string>
     <string name="onboarding_guide_translit_desc">Converts spoken Tamil, Hindi, or Malayalam into Tanglish, Hinglish, or Manglish using English letters.</string>

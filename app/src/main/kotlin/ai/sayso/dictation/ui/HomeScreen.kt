@@ -1693,8 +1693,8 @@ private fun HandsFreeControlsCard(
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 SwitchRow(
-                    title = "Automatic language routing",
-                    subtitle = "Uses Whisper Tiny neural LID (111 MB) to detect language. Routes Tamil/Hindi to AI4Bharat and English to Parakeet.",
+                    title = "Automatic language routing (Experimental)",
+                    subtitle = "Highly experimental and may not work correctly. Uses Whisper Tiny neural LID (111 MB) to detect language. Routes Tamil/Hindi to AI4Bharat and English to Parakeet.",
                     checked = autoLanguageRouting,
                     onCheckedChange = onAutoLanguageRoutingChange,
                 )
@@ -1800,7 +1800,7 @@ private fun HandsFreeControlsCard(
                                     fontSize = 14.sp,
                                 )
                                 Text(
-                                    text = "Neural LID Active: Tamil/Indic speech routes directly to AI4Bharat, and English routes to Parakeet. Tap to manage.",
+                                    text = "Neural LID Active (Experimental): Tamil/Indic speech routes directly to AI4Bharat, and English routes to Parakeet. Highly experimental and may not work correctly. Tap to manage.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f),
@@ -1878,7 +1878,7 @@ private fun LanguageRoutingDownloadDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Select models to download for automatic routing. Whisper Tiny (111 MB) acts as on-device Neural Language Detector (LID) to classify speech and route Tamil, Hindi, or Malayalam to AI4Bharat, and English to Parakeet.",
+                    text = "Select models to download for automatic routing. Note: Automatic detection is highly experimental and may not work correctly. Whisper Tiny (111 MB) acts as on-device Neural Language Detector (LID) to classify speech and route Tamil, Hindi, or Malayalam to AI4Bharat, and English to Parakeet.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -2471,9 +2471,9 @@ private val SETTINGS_INDEX = listOf(
         badge = "Hands-Free",
     ),
     SettingSearchItem(
-        title = "Automatic Language Routing",
-        description = "Classify speech to auto-switch between English (Parakeet) and Indic (AI4Bharat) models",
-        keywords = "automatic language routing early lid neural classification parakeet ai4bharat indic switch",
+        title = "Automatic Language Routing (Experimental)",
+        description = "Classify speech to auto-switch between English (Parakeet) and Indic (AI4Bharat) models (highly experimental and may not work correctly)",
+        keywords = "automatic language routing early lid neural classification parakeet ai4bharat indic switch experimental",
         screen = Screen.Transcription,
         badge = "Voice",
     ),
