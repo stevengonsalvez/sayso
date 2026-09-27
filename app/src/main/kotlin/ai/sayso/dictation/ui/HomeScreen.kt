@@ -48,6 +48,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -55,6 +56,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -387,14 +389,23 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
 
         if (showLanguageDownloadDialog) {
             LanguageRoutingDownloadDialog(
-                installedDirNames = installedIndicModels,
+                installedDirNames = installedModelDirNames,
                 isDownloading = downloads.busy,
+                activeDownloadingDir = downloads.activeDirName,
+                downloadState = downloads.state,
                 onDismiss = { showLanguageDownloadDialog = false },
                 onDownloadSelected = { selectedModels ->
-                    showLanguageDownloadDialog = false
-                    downloads.enqueue(selectedModels, modelsDir, context.cacheDir) {
-                        resumeTick++
-                    }
+                    downloads.enqueue(
+                        models = selectedModels,
+                        modelsDir = modelsDir,
+                        cacheDir = context.cacheDir,
+                        onModelFinished = {
+                            resumeTick++
+                        },
+                        onAllFinished = {
+                            resumeTick++
+                        },
+                    )
                 },
             )
         }
@@ -1860,18 +1871,24 @@ private fun HandsFreeControlsCard(
 private fun LanguageRoutingDownloadDialog(
     installedDirNames: Set<String>,
     isDownloading: Boolean,
+    activeDownloadingDir: String? = null,
+    downloadState: DownloadState? = null,
     onDismiss: () -> Unit,
     onDownloadSelected: (List<LocalModel>) -> Unit,
 ) {
     val routingModels = remember {
         listOfNotNull(LocalModelCatalog.byDirName(LocalModelCatalog.LID_MODEL_DIR)) + LocalModelCatalog.indicModels
     }
-    val selectedDirNames = remember(installedDirNames) {
+    val selectedDirNames = remember {
         mutableStateMapOf<String, Boolean>().apply {
             routingModels.forEach { model ->
                 put(model.dirName, model.dirName !in installedDirNames)
             }
         }
+    }
+
+    val toDownload = routingModels.filter { model ->
+        model.dirName !in installedDirNames && selectedDirNames[model.dirName] == true
     }
 
     AlertDialog(
@@ -1925,11 +1942,13 @@ private fun LanguageRoutingDownloadDialog(
                         routingModels.forEach { model ->
                             val isInstalled = model.dirName in installedDirNames
                             val isChecked = selectedDirNames[model.dirName] == true
+                            val isActive = isDownloading && activeDownloadingDir == model.dirName
+                            val isQueued = isDownloading && isChecked && !isInstalled && !isActive
 
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable(enabled = !isInstalled) {
+                                    .clickable(enabled = !isInstalled && !isDownloading) {
                                         selectedDirNames[model.dirName] = !isChecked
                                     }
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1937,10 +1956,10 @@ private fun LanguageRoutingDownloadDialog(
                             ) {
                                 Checkbox(
                                     checked = isInstalled || isChecked,
-                                    onCheckedChange = if (isInstalled) null else { checked ->
+                                    onCheckedChange = if (isInstalled || isDownloading) null else { checked ->
                                         selectedDirNames[model.dirName] = checked
                                     },
-                                    enabled = !isInstalled,
+                                    enabled = !isInstalled && !isDownloading,
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
@@ -1949,11 +1968,70 @@ private fun LanguageRoutingDownloadDialog(
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
                                     )
-                                    Text(
-                                        text = if (isInstalled) "Installed" else "${model.sizeMb} MB · On-device",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isInstalled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
+                                    when {
+                                        isInstalled -> {
+                                            Text(
+                                                text = "Installed",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                        }
+                                        isActive -> {
+                                            val statusText = when (downloadState) {
+                                                is DownloadState.Downloading -> {
+                                                    val pct = (downloadState.progress * 100).roundToInt()
+                                                    "Downloading ($pct%)..."
+                                                }
+                                                DownloadState.Extracting -> "Extracting neural weights..."
+                                                is DownloadState.Error -> "Download error: ${downloadState.message}"
+                                                else -> "Downloading..."
+                                            }
+                                            Text(
+                                                text = statusText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = SaysoBrandAmber,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Spacer(Modifier.height(4.dp))
+                                            when (downloadState) {
+                                                is DownloadState.Downloading -> {
+                                                    LinearProgressIndicator(
+                                                        progress = { downloadState.progress },
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(4.dp)
+                                                            .clip(RoundedCornerShape(2.dp)),
+                                                        color = SaysoBrandAmber,
+                                                    )
+                                                }
+                                                DownloadState.Extracting -> {
+                                                    LinearProgressIndicator(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(4.dp)
+                                                            .clip(RoundedCornerShape(2.dp)),
+                                                        color = SaysoBrandAmber,
+                                                    )
+                                                }
+                                                else -> Unit
+                                            }
+                                        }
+                                        isQueued -> {
+                                            Text(
+                                                text = "Queued (${model.sizeMb} MB)",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            )
+                                        }
+                                        else -> {
+                                            Text(
+                                                text = "${model.sizeMb} MB · On-device",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1962,12 +2040,11 @@ private fun LanguageRoutingDownloadDialog(
             }
         },
         confirmButton = {
-            val toDownload = routingModels.filter { model ->
-                model.dirName !in installedDirNames && selectedDirNames[model.dirName] == true
-            }
             Button(
                 onClick = {
-                    if (toDownload.isEmpty()) {
+                    if (isDownloading) {
+                        // Button is disabled during download
+                    } else if (toDownload.isEmpty()) {
                         onDismiss()
                     } else {
                         onDownloadSelected(toDownload)
@@ -1975,7 +2052,28 @@ private fun LanguageRoutingDownloadDialog(
                 },
                 enabled = !isDownloading,
             ) {
-                Text(if (toDownload.isEmpty()) "Done" else "Download (${toDownload.sumOf { it.sizeMb }} MB)")
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = LocalContentColor.current,
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    val progressPct = when (val s = downloadState) {
+                        is DownloadState.Downloading -> (s.progress * 100).roundToInt()
+                        else -> null
+                    }
+                    val label = when {
+                        downloadState is DownloadState.Extracting -> "Extracting..."
+                        progressPct != null -> "Downloading ($progressPct%)..."
+                        else -> "Downloading..."
+                    }
+                    Text(label)
+                } else if (toDownload.isEmpty()) {
+                    Text("Done")
+                } else {
+                    Text("Download (${toDownload.sumOf { it.sizeMb }} MB)")
+                }
             }
         },
         dismissButton = {
