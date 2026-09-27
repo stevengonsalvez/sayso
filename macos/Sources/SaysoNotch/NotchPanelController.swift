@@ -77,13 +77,26 @@ final class NotchPanelController {
         }
     }
 
-    private func toggle() {
+    var isVisible: Bool { panel.isVisible }
+    var isCollapsed: Bool { state.isCollapsed }
+
+    func toggle() {
         hideTask?.cancel()
+        if !panel.isVisible {
+            state.isCollapsed = false
+            reposition()
+            panel.orderFrontRegardless()
+            return
+        }
         state.isCollapsed.toggle()
         reposition()
     }
 
-    private func dismiss() {
+    func hide() {
+        dismiss()
+    }
+
+    func dismiss() {
         hideTask?.cancel()
         state.isCollapsed = true
         panel.orderOut(nil)
