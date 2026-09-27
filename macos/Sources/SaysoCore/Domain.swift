@@ -83,6 +83,32 @@ public enum DictationLanguage: String, Codable, CaseIterable, Identifiable, Send
     public var localeIdentifier: String? {
         self == .automatic ? nil : rawValue
     }
+
+    public var languageCode: String {
+        switch self {
+        case .hindi: "hi"
+        case .tamil: "ta"
+        case .malayalam: "ml"
+        case .bengali: "bn"
+        case .gujarati: "gu"
+        case .kannada: "kn"
+        case .marathi: "mr"
+        case .punjabi: "pa"
+        case .telugu: "te"
+        case .urdu: "ur"
+        case .english: "en"
+        case .automatic: "auto"
+        }
+    }
+
+    public var isIndic: Bool {
+        switch self {
+        case .hindi, .tamil, .malayalam, .bengali, .gujarati, .kannada, .marathi, .punjabi, .telugu, .urdu:
+            true
+        default:
+            false
+        }
+    }
 }
 
 public enum ProviderRoute: String, Codable, CaseIterable, Identifiable, Sendable {
