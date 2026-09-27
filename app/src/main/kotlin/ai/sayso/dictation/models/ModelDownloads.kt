@@ -55,6 +55,7 @@ class ModelDownloads(
         models: List<LocalModel>,
         modelsDir: File,
         cacheDir: File,
+        onModelFinished: (LocalModel) -> Unit = {},
         onAllFinished: () -> Unit = {},
     ) {
         if (models.isEmpty()) {
@@ -67,6 +68,7 @@ class ModelDownloads(
                 if (!alreadyInstalled) {
                     val done = CompletableDeferred<Unit>()
                     start(model, modelsDir, cacheDir) {
+                        onModelFinished(model)
                         done.complete(Unit)
                     }
                     done.await()

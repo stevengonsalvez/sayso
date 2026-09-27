@@ -91,6 +91,28 @@ class ModelDownloadsTest {
     }
 
     @Test
+    fun `enqueue triggers onModelFinished for each completed model`() = runBlocking {
+        val fake = FakeDownloader(installedResult = false)
+        val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
+        val finishedModels = mutableListOf<LocalModel>()
+        val finished = CompletableDeferred<Unit>()
+
+        downloads.enqueue(
+            models = listOf(LocalModelCatalog.default),
+            modelsDir = temp.newFolder("models"),
+            cacheDir = temp.newFolder("cache"),
+            onModelFinished = { finishedModels.add(it) },
+            onAllFinished = { finished.complete(Unit) },
+        )
+
+        withTimeout(5000) {
+            finished.await()
+        }
+        assertEquals(1, finishedModels.size)
+        assertEquals(LocalModelCatalog.default.dirName, finishedModels[0].dirName)
+    }
+
+    @Test
     fun `start does not deadlock onFinished when busy`() = runBlocking {
         val fake = FakeDownloader(hangDownload = true)
         val downloads = ModelDownloads(CoroutineScope(Dispatchers.Default), fake)
