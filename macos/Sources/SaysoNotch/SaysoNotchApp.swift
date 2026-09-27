@@ -148,6 +148,9 @@ final class SaysoAppModel: ObservableObject {
         }
     }
     @Published var dictationHotKey = HotKey.custom(keyCode: 49, modifiers: .option)
+    @Published var controlHotKey = HotKey.custom(keyCode: 49, modifiers: [.control, .option])
+    @Published var toggleNotchHotKey = HotKey.custom(keyCode: 45, modifiers: [.control, .option])
+    @Published private(set) var isNotchOverlayVisible = true
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
     @Published private(set) var reprocessingHistoryID: UUID?
@@ -176,7 +179,9 @@ final class SaysoAppModel: ObservableObject {
     private let automation = SaysoAutomationServer()
     private let settingsStore = UserDefaultsSettingsStore()
     private let hotKeyEngine = HotKeyEngine()
+    private let shortcutManager = SaysoShortcutManager()
     private let notch: NotchPanelController
+    private var controlKeyDownTime: Date?
     private let launchDate = Date()
     private var mainWindow: NSWindow?
     private var lastExternalApplication: NSRunningApplication?
@@ -229,9 +234,12 @@ final class SaysoAppModel: ObservableObject {
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
         hasBYOKKey = secrets.secret(named: "byok-api-key") != nil
-        dictationHotKey = Self.loadDictationHotKey()
+        dictationHotKey = Self.loadHotKey(for: .dictation)
+        controlHotKey = Self.loadHotKey(for: .control)
+        toggleNotchHotKey = Self.loadHotKey(for: .toggleNotch)
         hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
         notch = NotchPanelController()
+        isNotchOverlayVisible = notch.isVisible
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -251,6 +259,11 @@ final class SaysoAppModel: ObservableObject {
             self?.stopHoldDictation()
         }
         hotKeyEngine.start(for: dictationHotKey)
+        shortcutManager.register(action: .control, hotKey: controlHotKey)
+        shortcutManager.register(action: .toggleNotch, hotKey: toggleNotchHotKey)
+        shortcutManager.onActionTriggered = { [weak self] action, isKeyDown in
+            self?.handleShortcutAction(action, isKeyDown: isKeyDown)
+        }
         reopenObserver = DistributedNotificationCenter.default().addObserver(
             forName: saysoReopenNotification,
             object: nil,
@@ -292,25 +305,131 @@ final class SaysoAppModel: ObservableObject {
 
     func setDictationHotKey(_ hotKey: HotKey) {
         dictationHotKey = hotKey
-        if let data = try? JSONEncoder().encode(hotKey) {
-            UserDefaults.standard.set(data, forKey: Self.dictationHotKeyDefaultsKey)
-        }
+        Self.saveHotKey(hotKey, for: .dictation)
         hotKeyEngine.start(for: hotKey)
     }
 
-    private static let dictationHotKeyDefaultsKey = "sayso.dictation-hotkey"
+    func setControlHotKey(_ hotKey: HotKey) {
+        controlHotKey = hotKey
+        Self.saveHotKey(hotKey, for: .control)
+        shortcutManager.register(action: .control, hotKey: hotKey)
+    }
+
+    func setToggleNotchHotKey(_ hotKey: HotKey) {
+        toggleNotchHotKey = hotKey
+        Self.saveHotKey(hotKey, for: .toggleNotch)
+        shortcutManager.register(action: .toggleNotch, hotKey: hotKey)
+    }
+
+    func resetShortcutsToDefaults() {
+        setDictationHotKey(SaysoShortcutAction.dictation.defaultHotKey)
+        setControlHotKey(SaysoShortcutAction.control.defaultHotKey)
+        setToggleNotchHotKey(SaysoShortcutAction.toggleNotch.defaultHotKey)
+    }
+
+    var shortcutConflicts: [ShortcutConflict] {
+        SaysoShortcutManager.detectConflicts(
+            dictation: dictationHotKey,
+            control: controlHotKey,
+            toggleNotch: toggleNotchHotKey
+        )
+    }
+
+    private func handleShortcutAction(_ action: SaysoShortcutAction, isKeyDown: Bool) {
+        switch action {
+        case .dictation:
+            if isKeyDown {
+                handleTapDictationShortcut()
+            }
+        case .control:
+            if isKeyDown {
+                handleControlHotKeyDown()
+            } else {
+                handleControlHotKeyUp()
+            }
+        case .toggleNotch:
+            if isKeyDown {
+                toggleNotch()
+            }
+        }
+    }
+
+    private func handleControlHotKeyDown() {
+        controlKeyDownTime = Date()
+        if transcriber.canStop {
+            if settings.mode == .control {
+                if !settings.hotKeyActivation.usesPressAndHold {
+                    transcriber.stop()
+                }
+            } else {
+                transcriber.stop()
+                switchMode(.control)
+                requestDictationStart(onboardingTest: false)
+            }
+        } else if transcriber.canStart {
+            switchMode(.control)
+            requestDictationStart(onboardingTest: false)
+        }
+    }
+
+    private func handleControlHotKeyUp() {
+        guard let downTime = controlKeyDownTime else { return }
+        controlKeyDownTime = nil
+        let duration = Date().timeIntervalSince(downTime)
+        if duration >= settings.hotKeyHoldThresholdSeconds {
+            if transcriber.canStop, settings.mode == .control {
+                transcriber.stop()
+            }
+        } else if settings.hotKeyActivation.usesPressAndHold {
+            if transcriber.canStop, settings.mode == .control {
+                transcriber.stop()
+            }
+        }
+    }
+
+    var isNotchVisible: Bool { notch.isVisible }
+    var isNotchCollapsed: Bool { notch.isCollapsed }
+
+    func toggleNotch() {
+        notch.toggle()
+        isNotchOverlayVisible = notch.isVisible
+    }
+
+    func showNotch() {
+        notch.show()
+        isNotchOverlayVisible = true
+    }
+
+    func hideNotch() {
+        notch.hide()
+        isNotchOverlayVisible = false
+    }
+
+    func setNotchOverlayVisible(_ visible: Bool) {
+        if visible {
+            showNotch()
+        } else {
+            hideNotch()
+        }
+    }
+
+    private static func saveHotKey(_ hotKey: HotKey, for action: SaysoShortcutAction) {
+        if let data = try? JSONEncoder().encode(hotKey) {
+            UserDefaults.standard.set(data, forKey: action.defaultsKey)
+        }
+    }
+
+    private static func loadHotKey(for action: SaysoShortcutAction) -> HotKey {
+        guard let data = UserDefaults.standard.data(forKey: action.defaultsKey),
+              let hotKey = try? JSONDecoder().decode(HotKey.self, from: data) else {
+            return action.defaultHotKey
+        }
+        return hotKey
+    }
 
     private func showPersistentNotice(_ message: String) {
         nextNoticeIsPersistent = true
         notice = message
-    }
-
-    private static func loadDictationHotKey() -> HotKey {
-        guard let data = UserDefaults.standard.data(forKey: dictationHotKeyDefaultsKey),
-              let hotKey = try? JSONDecoder().decode(HotKey.self, from: data) else {
-            return .custom(keyCode: 49, modifiers: .option)
-        }
-        return hotKey
     }
 
     private func permissionSummary(_ kind: PermissionKind) -> String {
@@ -394,6 +513,14 @@ final class SaysoAppModel: ObservableObject {
 
     private func handleTapDictationShortcut() {
         guard settings.hotKeyActivation.usesTapToggle else { return }
+        if settings.mode != .dictation {
+            if transcriber.canStop {
+                transcriber.stop()
+            }
+            switchMode(.dictation)
+            requestDictationStart(onboardingTest: false, rearmHandsFree: settings.handsFreeContinuous)
+            return
+        }
         startOrStopDictation()
     }
 
@@ -401,6 +528,9 @@ final class SaysoAppModel: ObservableObject {
         guard settings.hotKeyActivation.usesPressAndHold,
               !transcriber.canStop,
               !isStartingDictation else { return }
+        if settings.mode != .dictation {
+            switchMode(.dictation)
+        }
         requestDictationStart(onboardingTest: false)
     }
 
@@ -1183,7 +1313,17 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func openSettings() {
+        selectedTab = 8
+        showMainWindow()
+    }
+
+    func openNotchSettings() {
         selectedTab = 6
+        showMainWindow()
+    }
+
+    func openShortcutsSettings() {
+        selectedTab = 7
         showMainWindow()
     }
 
@@ -1845,7 +1985,9 @@ private struct MenuContent: View {
             if model.lastVoiceEditRewrite != nil {
                 Button("Copy pending voice edit rewrite") { model.copyLastVoiceEditRewrite() }
             }
-            Button("Show Sayso Notch") { model.switchMode(model.settings.mode) }
+            Button("Show Sayso Notch") { model.showNotch() }
+            Button("Notch & HUD Display") { model.openNotchSettings() }
+            Button("Keyboard Shortcuts") { model.openShortcutsSettings() }
             Button("Open Sayso") { model.showMainWindow() }
             Button("Open Settings") { model.openSettings() }
             Divider()
@@ -1853,6 +1995,195 @@ private struct MenuContent: View {
         }
         .padding()
         .frame(width: 300)
+    }
+}
+
+private struct NotchWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notch & Desktop HUD").font(.system(size: 28, weight: .bold))
+                    Text("Configure the Sayso dynamic notch and floating desktop overlay.").foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("HUD Overlay Display").font(.headline)
+                            Text("Show or hide the live voice and control overlay.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { model.isNotchOverlayVisible },
+                            set: { model.setNotchOverlayVisible($0) }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Presentation Style").font(.subheadline.weight(.semibold))
+                        Picker("Presentation", selection: Binding(
+                            get: { model.settings.overlayPresentation },
+                            set: { model.setOverlayPresentation($0) }
+                        )) {
+                            ForEach(OverlayPresentation.allCases) { presentation in
+                                Text(presentation.displayName).tag(presentation)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text(model.settings.overlayPresentation == .notch
+                            ? "Notch: Docks seamlessly beside your MacBook camera cutout or top menu bar."
+                            : "Floating: Floats as a movable glass HUD widget on your desktop.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("HUD Controls").font(.subheadline.weight(.semibold))
+                        HStack(spacing: 12) {
+                            Button(model.isNotchCollapsed ? "Expand HUD" : "Collapse HUD") {
+                                model.toggleNotch()
+                            }
+                            Button("Show HUD") {
+                                model.showNotch()
+                            }
+                            Button("Hide HUD") {
+                                model.hideNotch()
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Toggle Shortcut").font(.subheadline.weight(.semibold))
+                        SaysoShortcutRecorderRow(
+                            action: .toggleNotch,
+                            hotKey: Binding(
+                                get: { model.toggleNotchHotKey },
+                                set: { model.setToggleNotchHotKey($0) }
+                            )
+                        )
+                    }
+                }
+                .padding(20)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(24)
+        }
+    }
+}
+
+private struct ShortcutsWorkspace: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Keyboard Shortcuts").font(.system(size: 28, weight: .bold))
+                    Text("Configure trigger hotkeys for dictation, desktop control, and the notch HUD.").foregroundStyle(.secondary)
+                }
+
+                if !model.shortcutConflicts.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(SaysoPalette.crimson)
+                            Text("Shortcut Conflicts Detected").font(.headline).foregroundStyle(SaysoPalette.crimson)
+                        }
+                        ForEach(model.shortcutConflicts) { conflict in
+                            Text(conflict.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(16)
+                    .background(SaysoPalette.crimson.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
+
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Global Shortcuts").font(.headline)
+                    Text("These hotkeys work anywhere in macOS, even when Sayso is running in the background.").font(.caption).foregroundStyle(.secondary)
+
+                    Divider()
+
+                    SaysoShortcutRecorderRow(
+                        action: .dictation,
+                        hotKey: Binding(
+                            get: { model.dictationHotKey },
+                            set: { model.setDictationHotKey($0) }
+                        )
+                    )
+
+                    Divider()
+
+                    SaysoShortcutRecorderRow(
+                        action: .control,
+                        hotKey: Binding(
+                            get: { model.controlHotKey },
+                            set: { model.setControlHotKey($0) }
+                        )
+                    )
+
+                    Divider()
+
+                    SaysoShortcutRecorderRow(
+                        action: .toggleNotch,
+                        hotKey: Binding(
+                            get: { model.toggleNotchHotKey },
+                            set: { model.setToggleNotchHotKey($0) }
+                        )
+                    )
+                }
+                .padding(20)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Activation & Timing").font(.headline)
+
+                    Picker("Dictation activation", selection: $model.settings.hotKeyActivation) {
+                        ForEach(DictationHotKeyActivation.allCases) { activation in
+                            Text(activation.displayName).tag(activation)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if model.settings.hotKeyActivation.usesPressAndHold {
+                        HStack {
+                            Text("Hold threshold: \(model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2)))s")
+                            Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
+                        }
+                    }
+
+                    Text("Double-tap the Dictation shortcut with text selected in any app to rewrite it with voice edit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    HStack {
+                        Spacer()
+                        Button("Reset Shortcuts to Defaults") {
+                            model.resetShortcutsToDefaults()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(20)
+                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(24)
+        }
     }
 }
 
@@ -1884,7 +2215,11 @@ private struct SettingsHome: View {
                         Label("Models", systemImage: "cpu").tag(4)
                         Label("Voice output", systemImage: "speaker.wave.2").tag(5)
                     }
-                    Label("Settings", systemImage: "gearshape").tag(6)
+                    Section("Preferences") {
+                        Label("Notch & HUD", systemImage: "menubar.rectangle").tag(6)
+                        Label("Shortcuts", systemImage: "keyboard").tag(7)
+                        Label("Settings", systemImage: "gearshape").tag(8)
+                    }
                 }
                 .listStyle(.sidebar)
 
@@ -1907,6 +2242,8 @@ private struct SettingsHome: View {
             case 3: LanguageWorkspace(model: model)
             case 4: ModelsWorkspace(model: model)
             case 5: VoiceOutputWorkspace(model: model, speech: model.speech)
+            case 6: NotchWorkspace(model: model)
+            case 7: ShortcutsWorkspace(model: model)
             default: SaysoSettingsView(model: model)
             }
         }
@@ -2799,6 +3136,99 @@ private struct SaysoSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Notch & Desktop HUD") {
+                Toggle("Show Notch HUD overlay", isOn: Binding(
+                    get: { model.isNotchOverlayVisible },
+                    set: { model.setNotchOverlayVisible($0) }
+                ))
+                Picker("Presentation style", selection: Binding(
+                    get: { model.settings.overlayPresentation },
+                    set: { model.setOverlayPresentation($0) }
+                )) {
+                    ForEach(OverlayPresentation.allCases) { presentation in
+                        Text(presentation.displayName).tag(presentation)
+                    }
+                }
+                HStack(spacing: 12) {
+                    Button(model.isNotchCollapsed ? "Expand HUD" : "Collapse HUD") {
+                        model.toggleNotch()
+                    }
+                    Button("Show HUD") {
+                        model.showNotch()
+                    }
+                    Button("Hide HUD") {
+                        model.hideNotch()
+                    }
+                }
+                Text("Notch mode docks beside the camera cutout or menu bar. Floating mode provides a draggable glass panel on your desktop.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Keyboard Shortcuts & Triggers") {
+                SaysoShortcutRecorderRow(
+                    action: .dictation,
+                    hotKey: Binding(
+                        get: { model.dictationHotKey },
+                        set: { model.setDictationHotKey($0) }
+                    )
+                )
+
+                SaysoShortcutRecorderRow(
+                    action: .control,
+                    hotKey: Binding(
+                        get: { model.controlHotKey },
+                        set: { model.setControlHotKey($0) }
+                    )
+                )
+
+                SaysoShortcutRecorderRow(
+                    action: .toggleNotch,
+                    hotKey: Binding(
+                        get: { model.toggleNotchHotKey },
+                        set: { model.setToggleNotchHotKey($0) }
+                    )
+                )
+
+                if !model.shortcutConflicts.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(model.shortcutConflicts) { conflict in
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(SaysoPalette.amber)
+                                Text(conflict.message)
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.amber)
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(SaysoPalette.amber.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                }
+
+                Divider()
+
+                Picker("Dictation activation", selection: $model.settings.hotKeyActivation) {
+                    ForEach(DictationHotKeyActivation.allCases) { activation in
+                        Text(activation.displayName).tag(activation)
+                    }
+                }
+
+                if model.settings.hotKeyActivation.usesPressAndHold {
+                    HStack {
+                        Text("Hold threshold: \(model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2)))s")
+                        Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
+                    }
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Reset All Shortcuts to Defaults") {
+                        model.resetShortcutsToDefaults()
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.caption)
+                }
+            }
             Section("Language") {
                 Picker("Spoken language", selection: $model.settings.language) {
                     ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
@@ -2885,39 +3315,6 @@ private struct SaysoSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            }
-            Section("Overlay") {
-                Picker("Presentation", selection: Binding(
-                    get: { model.settings.overlayPresentation },
-                    set: { model.setOverlayPresentation($0) }
-                )) {
-                    ForEach(OverlayPresentation.allCases) { presentation in
-                        Text(presentation.displayName).tag(presentation)
-                    }
-                }
-                Text("Notch sits beside the camera cutout. Floating places a movable Sayso panel on your desktop.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Dictation shortcut") {
-                HotKeyRecorder("Start or stop dictation", hotKey: Binding(
-                    get: { model.dictationHotKey },
-                    set: { model.setDictationHotKey($0) }
-                ))
-                Picker("Activation", selection: $model.settings.hotKeyActivation) {
-                    ForEach(DictationHotKeyActivation.allCases) { activation in
-                        Text(activation.displayName).tag(activation)
-                    }
-                }
-                if model.settings.hotKeyActivation.usesPressAndHold {
-                    HStack {
-                        Text("Hold for (model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
-                        Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
-                    }
-                }
-                Text("Default: ⌥ Space. Double-tap it with selected text to voice edit.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
             Section("Permissions") {
                 ForEach(PermissionKind.allCases) { permission in
