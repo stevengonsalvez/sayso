@@ -127,6 +127,29 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    private final class SlmDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        let onProgress: (Double) -> Void
+
+        init(onProgress: @escaping (Double) -> Void) {
+            self.onProgress = onProgress
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            downloadTask: URLSessionDownloadTask,
+            didWriteData bytesWritten: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            guard totalBytesExpectedToWrite > 0 else { return }
+            let progress = min(0.99, max(0.05, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+            onProgress(progress)
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        }
+    }
+
     @Published var settings: SaysoSettings
     @Published var lastTranscript: Transcript?
     @Published var controlStatus = "Ready"
@@ -1366,6 +1389,9 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func checkSlmStatus(_ manifest: LocalSlmManifest) -> LocalSlmState {
+        if let liveState = slmStates[manifest.id], liveState == .installing {
+            return .installing
+        }
         if LocalSlmCatalog.isInstalled(manifest) {
             return .installed
         }
@@ -1373,12 +1399,21 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func installSlm(_ manifest: LocalSlmManifest) async {
-        slmStates[manifest.id] = .installing
-        slmDownloadProgress[manifest.id] = 0.05
+        await MainActor.run {
+            slmStates[manifest.id] = .installing
+            slmDownloadProgress[manifest.id] = 0.05
+            notice = "Downloading \(manifest.displayName)..."
+        }
         let destDir = LocalSlmCatalog.modelsDirectory()
         let destFile = destDir.appendingPathComponent(manifest.fileName)
+        let delegate = SlmDownloadDelegate { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.slmDownloadProgress[manifest.id] = progress
+            }
+        }
         do {
-            let (tempURL, response) = try await URLSession.shared.download(from: manifest.downloadURL)
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let (tempURL, response) = try await session.download(from: manifest.downloadURL)
             guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 500
                 throw LocalModelInstallError.unexpectedHTTPStatus(manifest.downloadURL, code)
@@ -1387,12 +1422,17 @@ final class SaysoAppModel: ObservableObject {
                 try? FileManager.default.removeItem(at: destFile)
             }
             try FileManager.default.moveItem(at: tempURL, to: destFile)
-            slmStates[manifest.id] = .installed
-            slmDownloadProgress[manifest.id] = 1.0
-            notice = "\(manifest.displayName) ready on disk."
+            await MainActor.run {
+                slmStates[manifest.id] = .installed
+                slmDownloadProgress[manifest.id] = 1.0
+                notice = "\(manifest.displayName) ready on disk."
+            }
         } catch {
-            slmStates[manifest.id] = .failed(error.localizedDescription)
-            notice = "Download failed: \(error.localizedDescription)"
+            await MainActor.run {
+                slmStates[manifest.id] = .failed(error.localizedDescription)
+                slmDownloadProgress.removeValue(forKey: manifest.id)
+                notice = "Download failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -3065,12 +3105,19 @@ private struct SaysoSectionHeader: View {
     let text: String
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.caption.weight(.bold))
-            .foregroundStyle(SaysoPalette.brandAmber)
-            .padding(.top, 14)
-            .padding(.bottom, 4)
-            .padding(.horizontal, 4)
+        HStack(spacing: 7) {
+            Circle()
+                .fill(SaysoPalette.brandAmber)
+                .frame(width: 5, height: 5)
+                .shadow(color: SaysoPalette.brandAmber.opacity(0.8), radius: 3, x: 0, y: 0)
+            Text(text.uppercased())
+                .font(.caption.weight(.heavy))
+                .tracking(1.2)
+                .foregroundStyle(SaysoPalette.brandAmber)
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 4)
+        .padding(.horizontal, 4)
     }
 }
 
@@ -3086,11 +3133,16 @@ private struct SaysoCard<Content: View>: View {
             content
         }
         .padding(14)
-        .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 14))
+        .background(
+            SaysoPalette.cardSurfaceGradient,
+            in: RoundedRectangle(cornerRadius: 14)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(SaysoPalette.brandNavyContainer, lineWidth: 1)
+                .strokeBorder(SaysoPalette.cardBevelBorder, lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.55), radius: 7, x: 3, y: 5)
+        .shadow(color: Color(red: 0x33 / 255.0, green: 0x46 / 255.0, blue: 0x68 / 255.0).opacity(0.12), radius: 4, x: -2, y: -2)
     }
 }
 
@@ -3155,6 +3207,12 @@ private struct SaysoTransliterationCard: View {
         case "hi": "Hinglish"
         case "ml": "Manglish"
         case "ta": "Tanglish"
+        case "bn": "Banglish"
+        case "te": "Tenglish"
+        case "kn": "Kanglish"
+        case "mr": "Marathlish"
+        case "pa": "Punglish"
+        case "ur": "Roman Urdu"
         default: "Tanglish / Hinglish / Manglish"
         }
     }
@@ -3162,8 +3220,14 @@ private struct SaysoTransliterationCard: View {
     private var exampleLatin: String {
         switch languageCode {
         case "hi": "Namaste, aap kaise hain?"
-        case "ml": "Namaskaram, sugamano?"
+        case "ml": "Namaskaram, sugam aano?"
         case "ta": "Vanakkam, eppadi irukkeenga?"
+        case "bn": "Nomoshkar, kemon achhen?"
+        case "te": "Namaskaram, ela unnaru?"
+        case "kn": "Namaskara, hegiddira?"
+        case "mr": "Namaskar, kase aahat?"
+        case "pa": "Sat Sri Akal, ki haal hai?"
+        case "ur": "Adaab, aap kaise hain?"
         default: "Vanakkam, eppadi irukkeenga?"
         }
     }
@@ -3173,6 +3237,12 @@ private struct SaysoTransliterationCard: View {
         case "hi": "नमस्ते, आप कैसे हैं?"
         case "ml": "നമസ്കാരം, സുഖമാണോ?"
         case "ta": "வணக்கம், எப்படி இருக்கீங்க?"
+        case "bn": "নমস্কার, কেমন আছেন?"
+        case "te": "నమస్కారం, ఎలా ఉన్నారు?"
+        case "kn": "ನಮಸ್ಕಾರ, ಹೇಗಿದ್ದೀರಾ?"
+        case "mr": "नमस्कार, कसे आहात?"
+        case "pa": "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ, ਕੀ ਹਾਲ ਹੈ?"
+        case "ur": "آداب، آپ کیسے ہیں؟"
         default: "வணக்கம், எப்படி இருக்கீங்க?"
         }
     }
@@ -3231,25 +3301,34 @@ private struct SaysoTransliterationCard: View {
                         }
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(SaysoPalette.brandNavyDark, in: RoundedRectangle(cornerRadius: 6))
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(SaysoPalette.brandOutline, lineWidth: 0.5)
+                                .strokeBorder(
+                                    LinearGradient(colors: [Color.black.opacity(0.8), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
+                                    lineWidth: 1
+                                )
                         )
                     }
                     .padding(10)
                     .background(
                         transliterateToLatin
-                            ? SaysoPalette.brandAmber.opacity(0.12)
-                            : SaysoPalette.brandNavyDark.opacity(0.5),
+                            ? LinearGradient(colors: [Color(red: 0x22 / 255.0, green: 0x33 / 255.0, blue: 0x54 / 255.0), Color(red: 0x18 / 255.0, green: 0x25 / 255.0, blue: 0x3D / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            : LinearGradient(colors: [Color(red: 0x14 / 255.0, green: 0x1E / 255.0, blue: 0x32 / 255.0), Color(red: 0x0E / 255.0, green: 0x15 / 255.0, blue: 0x24 / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing),
                         in: RoundedRectangle(cornerRadius: 12)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                transliterateToLatin ? SaysoPalette.brandAmber : SaysoPalette.brandOutline.opacity(0.6),
+                            .strokeBorder(
+                                transliterateToLatin ? SaysoPalette.activeGlowGradient : LinearGradient(colors: [SaysoPalette.brandNavyContainer, SaysoPalette.brandNavyDark], startPoint: .topLeading, endPoint: .bottomTrailing),
                                 lineWidth: transliterateToLatin ? 1.5 : 1
                             )
+                    )
+                    .shadow(
+                        color: transliterateToLatin ? SaysoPalette.brandAmber.opacity(0.3) : Color.black.opacity(0.4),
+                        radius: transliterateToLatin ? 6 : 3,
+                        x: 0,
+                        y: 2
                     )
                 }
                 .buttonStyle(.plain)
@@ -3283,25 +3362,34 @@ private struct SaysoTransliterationCard: View {
                         }
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(SaysoPalette.brandNavyDark, in: RoundedRectangle(cornerRadius: 6))
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(SaysoPalette.brandOutline, lineWidth: 0.5)
+                                .strokeBorder(
+                                    LinearGradient(colors: [Color.black.opacity(0.8), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
+                                    lineWidth: 1
+                                )
                         )
                     }
                     .padding(10)
                     .background(
                         !transliterateToLatin
-                            ? SaysoPalette.brandAmber.opacity(0.12)
-                            : SaysoPalette.brandNavyDark.opacity(0.5),
+                            ? LinearGradient(colors: [Color(red: 0x22 / 255.0, green: 0x33 / 255.0, blue: 0x54 / 255.0), Color(red: 0x18 / 255.0, green: 0x25 / 255.0, blue: 0x3D / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            : LinearGradient(colors: [Color(red: 0x14 / 255.0, green: 0x1E / 255.0, blue: 0x32 / 255.0), Color(red: 0x0E / 255.0, green: 0x15 / 255.0, blue: 0x24 / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing),
                         in: RoundedRectangle(cornerRadius: 12)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                !transliterateToLatin ? SaysoPalette.brandAmber : SaysoPalette.brandOutline.opacity(0.6),
+                            .strokeBorder(
+                                !transliterateToLatin ? SaysoPalette.activeGlowGradient : LinearGradient(colors: [SaysoPalette.brandNavyContainer, SaysoPalette.brandNavyDark], startPoint: .topLeading, endPoint: .bottomTrailing),
                                 lineWidth: !transliterateToLatin ? 1.5 : 1
                             )
+                    )
+                    .shadow(
+                        color: !transliterateToLatin ? SaysoPalette.brandAmber.opacity(0.3) : Color.black.opacity(0.4),
+                        radius: !transliterateToLatin ? 6 : 3,
+                        x: 0,
+                        y: 2
                     )
                 }
                 .buttonStyle(.plain)
@@ -3336,16 +3424,22 @@ private struct SaysoModeOptionCard: View {
             .padding(.horizontal, 10)
             .background(
                 isSelected
-                    ? SaysoPalette.brandNavyContainer.opacity(0.8)
-                    : SaysoPalette.brandNavySurface,
+                    ? LinearGradient(colors: [Color(red: 0x22 / 255.0, green: 0x33 / 255.0, blue: 0x54 / 255.0), Color(red: 0x18 / 255.0, green: 0x25 / 255.0, blue: 0x3D / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    : LinearGradient(colors: [Color(red: 0x14 / 255.0, green: 0x1E / 255.0, blue: 0x32 / 255.0), Color(red: 0x0E / 255.0, green: 0x15 / 255.0, blue: 0x24 / 255.0)], startPoint: .topLeading, endPoint: .bottomTrailing),
                 in: RoundedRectangle(cornerRadius: 12)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                    .strokeBorder(
+                        isSelected ? SaysoPalette.activeGlowGradient : LinearGradient(colors: [SaysoPalette.brandNavyContainer, SaysoPalette.brandNavyDark], startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: isSelected ? 1.5 : 1
                     )
+            )
+            .shadow(
+                color: isSelected ? SaysoPalette.brandAmber.opacity(0.3) : Color.black.opacity(0.4),
+                radius: isSelected ? 8 : 4,
+                x: 0,
+                y: isSelected ? 2 : 3
             )
         }
         .buttonStyle(.plain)
@@ -3375,11 +3469,22 @@ private struct SaysoSliderCard: View {
                 }
                 Spacer()
                 Text(valueDisplay)
-                    .font(.subheadline.weight(.bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(SaysoPalette.brandAmber)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(SaysoPalette.brandNavyContainer, in: Capsule())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        SaysoPalette.brandNavyWell,
+                        in: Capsule()
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(
+                                LinearGradient(colors: [SaysoPalette.brandAmber.opacity(0.5), Color.clear], startPoint: .top, endPoint: .bottom),
+                                lineWidth: 1
+                            )
+                    )
+                    .shadow(color: SaysoPalette.brandAmber.opacity(0.2), radius: 4, x: 0, y: 1)
             }
             Slider(value: $value, in: range, step: step)
                 .tint(SaysoPalette.brandAmber)
@@ -3426,19 +3531,20 @@ private struct SaysoApiKeyCard: View {
             }
 
             HStack(spacing: 8) {
-                if isVisible {
-                    TextField("Enter API key...", text: $apiKeyInput)
-                        .textFieldStyle(.plain)
-                        .padding(8)
-                        .background(SaysoPalette.brandNavyDark, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SaysoPalette.brandOutline, lineWidth: 1))
-                } else {
-                    SecureField("Enter API key...", text: $apiKeyInput)
-                        .textFieldStyle(.plain)
-                        .padding(8)
-                        .background(SaysoPalette.brandNavyDark, in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(SaysoPalette.brandOutline, lineWidth: 1))
+                Group {
+                    if isVisible {
+                        TextField("Enter API key...", text: $apiKeyInput)
+                    } else {
+                        SecureField("Enter API key...", text: $apiKeyInput)
+                    }
                 }
+                .textFieldStyle(.plain)
+                .padding(8)
+                .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(LinearGradient(colors: [Color.black.opacity(0.8), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                )
 
                 Button {
                     isVisible.toggle()
@@ -3447,6 +3553,11 @@ private struct SaysoApiKeyCard: View {
                         .font(.subheadline)
                         .foregroundStyle(SaysoPalette.muted)
                         .frame(width: 32, height: 32)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 0.5)
+                        )
                 }
                 .buttonStyle(.plain)
             }
@@ -3455,8 +3566,12 @@ private struct SaysoApiKeyCard: View {
                 Button("Save Key") {
                     onSave()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(SaysoPalette.brandAmber)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(SaysoPalette.amberButtonGradient, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5))
+                .shadow(color: SaysoPalette.brandAmber.opacity(0.4), radius: 4, x: 0, y: 2)
                 .foregroundStyle(SaysoPalette.brandNavyDark)
                 .font(.caption.weight(.bold))
                 .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -3636,7 +3751,7 @@ private struct TranscriptionWorkspace: View {
                 }
 
                 // Section: Spoken Language & Transliteration
-                SaysoSectionHeader(text: "Spoken Language & Transliteration")
+                SaysoSectionHeader(text: model.settings.language.isIndic ? "Spoken Language & Transliteration" : "Spoken Language")
 
                 SaysoCard {
                     VStack(alignment: .leading, spacing: 8) {
@@ -3656,11 +3771,13 @@ private struct TranscriptionWorkspace: View {
                     isOn: $model.settings.autoLanguageRouting
                 )
 
-                SaysoTransliterationCard(
-                    transliterateToLatin: $model.settings.transliterateIndicToLatin,
-                    languageCode: model.settings.language.languageCode,
-                    onToggle: { _ in model.save() }
-                )
+                if model.settings.language.isIndic {
+                    SaysoTransliterationCard(
+                        transliterateToLatin: $model.settings.transliterateIndicToLatin,
+                        languageCode: model.settings.language.languageCode,
+                        onToggle: { _ in model.save() }
+                    )
+                }
 
                 // Section: Acoustic Vocabulary Hints
                 SaysoSectionHeader(text: "Acoustic Vocabulary Hints")
@@ -3677,8 +3794,11 @@ private struct TranscriptionWorkspace: View {
                         TextField("Custom words / proper nouns (comma-separated)", text: $hintsText)
                             .textFieldStyle(.plain)
                             .padding(8)
-                            .background(SaysoPalette.brandNavyDark, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(SaysoPalette.brandOutline, lineWidth: 1))
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(LinearGradient(colors: [Color.black.opacity(0.8), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                            )
                             .onAppear {
                                 hintsText = model.settings.hints.joined(separator: ", ")
                             }
@@ -3777,15 +3897,48 @@ private struct TranscriptionWorkspace: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.white)
                                 Spacer()
-                                let nativeReady = model.nativeModelReady(for: language)
-                                let downloadAvailable = model.nativeModelDownloadAvailable(for: language)
-                                let appleAvailable = SpeechCapabilities.supports(language)
-                                Label(
-                                    nativeReady ? "On-device ready" : downloadAvailable ? "Download local model" : appleAvailable ? "Apple Speech available" : "Cloud only",
-                                    systemImage: nativeReady || appleAvailable ? "checkmark.circle.fill" : "circle"
-                                )
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(nativeReady || appleAvailable ? SaysoPalette.emerald : SaysoPalette.muted)
+                                let isInstalling = (language == .english && model.localEnglishModel.state == .installing) ||
+                                    (language.isIndic && model.localEnglishModel.multilingualState == .installing) ||
+                                    (language == .punjabi && model.localPunjabiModel.state == .installing)
+
+                                if isInstalling {
+                                    HStack(spacing: 5) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Downloading...")
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(SaysoPalette.brandAmber)
+                                    }
+                                } else {
+                                    let nativeReady = model.nativeModelReady(for: language)
+                                    let downloadAvailable = model.nativeModelDownloadAvailable(for: language)
+                                    let appleAvailable = SpeechCapabilities.supports(language)
+                                    if downloadAvailable && !nativeReady {
+                                        Button {
+                                            if language == .punjabi {
+                                                Task { await model.localPunjabiModel.install() }
+                                            } else if language == .english {
+                                                Task { await model.localEnglishModel.install() }
+                                            } else {
+                                                Task { await model.localEnglishModel.install(language: language) }
+                                            }
+                                        } label: {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: "arrow.down.circle.fill")
+                                                Text("Download model")
+                                            }
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(SaysoPalette.brandCobalt)
+                                        }
+                                        .buttonStyle(.plain)
+                                    } else {
+                                        Label(
+                                            nativeReady ? "On-device ready" : appleAvailable ? "Apple Speech available" : "Cloud only",
+                                            systemImage: nativeReady || appleAvailable ? "checkmark.circle.fill" : "circle"
+                                        )
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(nativeReady || appleAvailable ? SaysoPalette.emerald : SaysoPalette.muted)
+                                    }
+                                }
                             }
                             if language != DictationLanguage.allCases.filter({ $0 != .automatic }).last {
                                 Divider().background(SaysoPalette.brandNavyContainer)
@@ -3809,16 +3962,18 @@ private struct LocalSlmRowCard: View {
     let slm: LocalSlmManifest
     let isSelected: Bool
     let status: LocalSlmState
+    let progress: Double?
     let onSelect: () -> Void
     let onDownload: () -> Void
 
     var body: some View {
         SaysoCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center) {
                     Button(action: onSelect) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                                .font(.title3.weight(.bold))
                                 .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(slm.displayName)
@@ -3835,13 +3990,41 @@ private struct LocalSlmRowCard: View {
                     Spacer()
 
                     if status.isInstalled {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 5) {
                             Image(systemName: "checkmark.circle.fill")
+                                .font(.caption.weight(.bold))
                                 .foregroundStyle(SaysoPalette.emerald)
-                            Text("Installed")
-                                .font(.caption.weight(.semibold))
+                            Text("Ready")
+                                .font(.caption.weight(.bold))
                                 .foregroundStyle(SaysoPalette.emerald)
                         }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(SaysoPalette.emerald.opacity(0.15), in: Capsule())
+                    } else if case .installing = status {
+                        let pct = Int((progress ?? 0.05) * 100)
+                        HStack(spacing: 5) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Downloading \(pct)%")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(SaysoPalette.brandAmber.opacity(0.15), in: Capsule())
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.crimson)
+                            Text("Not downloaded")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SaysoPalette.crimson)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(SaysoPalette.crimson.opacity(0.12), in: Capsule())
                     }
                 }
 
@@ -3849,29 +4032,86 @@ private struct LocalSlmRowCard: View {
                     .font(.caption)
                     .foregroundStyle(SaysoPalette.muted)
 
-                if !status.isInstalled {
-                    Button(action: onDownload) {
-                        HStack {
-                            Image(systemName: "arrow.down.circle.fill")
-                            Text("Download Model (\(slm.sizeDisplay))")
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SaysoPalette.brandAmber)
-                    .foregroundStyle(SaysoPalette.brandNavyDark)
-                    .font(.caption.weight(.bold))
-                } else {
+                if status.isInstalled {
                     HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle")
+                        Image(systemName: "checkmark.seal.fill")
                             .foregroundStyle(SaysoPalette.emerald)
                         Text("Model installed · Ready for offline rewrite")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(SaysoPalette.emerald)
+                        Spacer()
                     }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(SaysoPalette.emerald.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(10)
+                    .background(SaysoPalette.emerald.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(SaysoPalette.emerald.opacity(0.3), lineWidth: 1)
+                    )
+                } else if case .installing = status {
+                    let currentProgress = max(0.05, progress ?? 0.05)
+                    let pct = Int(currentProgress * 100)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Downloading \(slm.displayName)... \(pct)%")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                            Spacer()
+                            Text(slm.sizeDisplay)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(SaysoPalette.brandNavyWell)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(LinearGradient(colors: [Color.black.opacity(0.7), Color.white.opacity(0.08)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                                    )
+
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [SaysoPalette.brandAmber, SaysoPalette.amberDark],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: max(12, geo.size.width * CGFloat(currentProgress)))
+                                    .shadow(color: SaysoPalette.brandAmber.opacity(0.6), radius: 5, x: 0, y: 0)
+                            }
+                        }
+                        .frame(height: 8)
+                    }
+                    .padding(12)
+                    .background(SaysoPalette.brandNavyWell.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(SaysoPalette.brandAmber.opacity(0.3), lineWidth: 1)
+                    )
+                } else {
+                    Button(action: onDownload) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.caption.weight(.bold))
+                            Text("Download \(slm.displayName) (\(slm.sizeDisplay))")
+                                .font(.caption.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(SaysoPalette.blueButtonGradient, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                        )
+                        .shadow(color: SaysoPalette.brandCobalt.opacity(0.4), radius: 6, x: 0, y: 3)
+                        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
                 }
             }
         }
@@ -3966,6 +4206,7 @@ private struct AICleanupWorkspace: View {
                         slm: slm,
                         isSelected: model.settings.selectedLocalSlmModelId == slm.id,
                         status: model.checkSlmStatus(slm),
+                        progress: model.slmDownloadProgress[slm.id],
                         onSelect: {
                             model.settings.selectedLocalSlmModelId = slm.id
                             model.save()
@@ -4089,11 +4330,14 @@ private struct AICleanupWorkspace: View {
             }
         }
 
-        SaysoSwitchCard(
-            title: "Transliterate to Tanglish / Hinglish / Manglish",
-            subtitle: "Phonetically convert Tamil, Hindi, and Malayalam speech into English letters (Tanglish, Hinglish, Manglish).",
-            isOn: $model.settings.transliterateIndicToLatin
-        )
+        if model.settings.language.isIndic {
+            let indicTitle = model.settings.language == .tamil ? "Tanglish" : model.settings.language == .hindi ? "Hinglish" : model.settings.language == .malayalam ? "Manglish" : "Latin Script"
+            SaysoSwitchCard(
+                title: "Transliterate to \(indicTitle)",
+                subtitle: "Phonetically convert \(model.settings.language.displayName) speech into English letters (\(indicTitle)).",
+                isOn: $model.settings.transliterateIndicToLatin
+            )
+        }
     }
 
     @ViewBuilder
@@ -4620,19 +4864,34 @@ private struct ModelsWorkspace: View {
                 }
 
                 if case .installing = localEnglishModel.state {
-                    ProgressView(value: localEnglishModel.downloadProgress)
+                    let pct = Int(localEnglishModel.downloadProgress * 100)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Downloading English model... \(pct)%")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                        }
+                        ProgressView(value: localEnglishModel.downloadProgress)
+                            .tint(SaysoPalette.brandAmber)
+                    }
                 }
 
                 HStack {
                     if localEnglishModel.state.isInstalled {
                         Button("Delete model", role: .destructive) { localEnglishModel.delete() }
                             .font(.caption)
+                    } else if case .installing = localEnglishModel.state {
+                        Button("Downloading (\(Int(localEnglishModel.downloadProgress * 100))%)...") {}
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.brandAmber)
+                            .font(.caption)
+                            .disabled(true)
                     } else {
                         Button("Download English model") { Task { await localEnglishModel.install() } }
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                             .font(.caption)
-                            .disabled(localEnglishModel.state == .installing)
                     }
                     Spacer()
                 }
@@ -4656,19 +4915,34 @@ private struct ModelsWorkspace: View {
                 }
 
                 if case .installing = localEnglishModel.multilingualState {
-                    ProgressView(value: localEnglishModel.multilingualDownloadProgress)
+                    let pct = Int(localEnglishModel.multilingualDownloadProgress * 100)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Downloading Indian language model... \(pct)%")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                        }
+                        ProgressView(value: localEnglishModel.multilingualDownloadProgress)
+                            .tint(SaysoPalette.brandAmber)
+                    }
                 }
 
                 HStack {
                     if localEnglishModel.multilingualState.isInstalled {
                         Button("Delete model", role: .destructive) { localEnglishModel.deleteMultilingual() }
                             .font(.caption)
+                    } else if case .installing = localEnglishModel.multilingualState {
+                        Button("Downloading (\(Int(localEnglishModel.multilingualDownloadProgress * 100))%)...") {}
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.brandAmber)
+                            .font(.caption)
+                            .disabled(true)
                     } else {
                         Button("Download Indian language model") { Task { await localEnglishModel.install(language: .hindi) } }
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                             .font(.caption)
-                            .disabled(localEnglishModel.multilingualState == .installing)
                     }
                     Spacer()
                 }
@@ -4695,19 +4969,29 @@ private struct ModelsWorkspace: View {
                 }
 
                 if case .installing = localPunjabiModel.state {
-                    ProgressView()
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.small)
+                        Text("Downloading Punjabi model...")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.brandAmber)
+                    }
                 }
 
                 HStack {
                     if localPunjabiModel.state.isInstalled {
                         Button("Delete model", role: .destructive) { localPunjabiModel.delete() }
                             .font(.caption)
+                    } else if case .installing = localPunjabiModel.state {
+                        Button("Downloading...") {}
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.brandAmber)
+                            .font(.caption)
+                            .disabled(true)
                     } else {
                         Button("Download Punjabi model") { Task { await localPunjabiModel.install() } }
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                             .font(.caption)
-                            .disabled(localPunjabiModel.state == .installing)
                     }
                     Spacer()
                 }
@@ -4797,13 +5081,34 @@ private struct ModelsWorkspace: View {
                         }
                         Spacer()
 
-                        Text(status.isInstalled ? "Ready" : "Not downloaded")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(status.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        if status.isInstalled {
+                            Text("Ready")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        } else if case .installing = status {
+                            let pct = Int((model.slmDownloadProgress[slm.id] ?? 0.05) * 100)
+                            Text("Downloading \(pct)%")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                        } else {
+                            Text("Not downloaded")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
                     }
 
                     if case .installing = status {
-                        ProgressView()
+                        let p = model.slmDownloadProgress[slm.id] ?? 0.05
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Downloading \(slm.displayName)... \(Int(p * 100))%")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(SaysoPalette.brandAmber)
+                            }
+                            ProgressView(value: p)
+                                .tint(SaysoPalette.brandAmber)
+                        }
                     }
 
                     HStack {
@@ -4822,6 +5127,13 @@ private struct ModelsWorkspace: View {
                                 model.deleteSlm(slm)
                             }
                             .font(.caption)
+                        } else if case .installing = status {
+                            let pct = Int((model.slmDownloadProgress[slm.id] ?? 0.05) * 100)
+                            Button("Downloading (\(pct)%)...") {}
+                                .buttonStyle(.borderedProminent)
+                                .tint(SaysoPalette.brandAmber)
+                                .font(.caption)
+                                .disabled(true)
                         } else {
                             Button("Download \(slm.displayName)") {
                                 Task { await model.installSlm(slm) }
@@ -4829,7 +5141,6 @@ private struct ModelsWorkspace: View {
                             .buttonStyle(.borderedProminent)
                             .tint(SaysoPalette.cobalt)
                             .font(.caption)
-                            .disabled(status == .installing)
                         }
                         Spacer()
                     }
@@ -5142,11 +5453,13 @@ private struct SaysoSettingsView: View {
                     ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Translate final text", isOn: $model.settings.translationEnabled)
-                SaysoTransliterationCard(
-                    transliterateToLatin: $model.settings.transliterateIndicToLatin,
-                    languageCode: model.settings.language.languageCode,
-                    onToggle: { _ in model.save() }
-                )
+                if model.settings.language.isIndic {
+                    SaysoTransliterationCard(
+                        transliterateToLatin: $model.settings.transliterateIndicToLatin,
+                        languageCode: model.settings.language.languageCode,
+                        onToggle: { _ in model.save() }
+                    )
+                }
                 Toggle("Insert final text", isOn: $model.settings.autoInsert)
                 Toggle("Insert partial text live in TextEdit and Notes", isOn: $model.settings.livePartialInsertion)
                     .disabled(!model.settings.autoInsert)
@@ -5958,6 +6271,8 @@ enum SaysoPalette {
     static let onAmberContainer = Color(red: 0x92 / 255.0, green: 0x40 / 255.0, blue: 0x0E / 255.0)
 
     static let cobalt = Color(red: 37 / 255.0, green: 99 / 255.0, blue: 235 / 255.0)
+    static let brandCobalt = Color(red: 0x25 / 255.0, green: 0x63 / 255.0, blue: 0xEB / 255.0)
+    static let brandCobaltDark = Color(red: 0x1D / 255.0, green: 0x4E / 255.0, blue: 0xD8 / 255.0)
     static let amber = Color(red: 0xF4 / 255.0, green: 0xB9 / 255.0, blue: 0x42 / 255.0)
     static let crimson = Color(red: 239 / 255.0, green: 68 / 255.0, blue: 68 / 255.0)
     static let emerald = Color(red: 0x16 / 255.0, green: 0xA3 / 255.0, blue: 0x4A / 255.0)
@@ -5969,8 +6284,55 @@ enum SaysoPalette {
 
     static let brandNavyDark = Color(red: 0x0C / 255.0, green: 0x13 / 255.0, blue: 0x22 / 255.0)
     static let brandNavySurface = Color(red: 0x15 / 255.0, green: 0x1F / 255.0, blue: 0x33 / 255.0)
+    static let brandNavySurfaceTop = Color(red: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0)
+    static let brandNavySurfaceBottom = Color(red: 0x11 / 255.0, green: 0x1A / 255.0, blue: 0x2B / 255.0)
     static let brandNavyElevated = Color(red: 0x1E / 255.0, green: 0x2A / 255.0, blue: 0x44 / 255.0)
     static let brandNavyContainer = Color(red: 0x26 / 255.0, green: 0x36 / 255.0, blue: 0x54 / 255.0)
+    static let brandNavyWell = Color(red: 0x09 / 255.0, green: 0x0E / 255.0, blue: 0x1A / 255.0)
     static let brandOutline = Color(red: 0x33 / 255.0, green: 0x46 / 255.0, blue: 0x68 / 255.0)
+
+    static var cardSurfaceGradient: LinearGradient {
+        LinearGradient(
+            colors: [brandNavySurfaceTop, brandNavySurfaceBottom],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    static var cardBevelBorder: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(0.12),
+                brandNavyContainer.opacity(0.7),
+                Color.black.opacity(0.4)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    static var activeGlowGradient: LinearGradient {
+        LinearGradient(
+            colors: [brandAmber, amberDark],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    static var blueButtonGradient: LinearGradient {
+        LinearGradient(
+            colors: [Color(red: 0x3B / 255.0, green: 0x82 / 255.0, blue: 0xF6 / 255.0), brandCobaltDark],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    static var amberButtonGradient: LinearGradient {
+        LinearGradient(
+            colors: [brandAmber, amberDark],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
 }
 
