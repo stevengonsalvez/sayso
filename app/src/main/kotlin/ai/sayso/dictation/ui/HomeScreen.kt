@@ -437,6 +437,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 indicTransliteration = enabled
                 settings.transliterateIndicToLatin = enabled
             },
+            onOpenTranscription = { onNavigate(Screen.Transcription) },
         )
 
         // 3. Hands-Free & Overlay Controls Card
@@ -986,7 +987,7 @@ private fun EngineStatusCard(
             Spacer(Modifier.height(8.dp))
             StatusActionRow(
                 title = "Accessibility Service",
-                subtitle = if (serviceOn) "Service active with floating overlay" else "Tap to enable in Android settings",
+                subtitle = if (serviceOn) "Active: typing directly into other apps enabled" else "Required to type over other apps (tap to enable in Settings)",
                 done = serviceOn,
                 onClick = onOpenAccessibility,
             )
@@ -1231,6 +1232,7 @@ private fun LanguageQuickSwitcherCard(
     downloadState: DownloadState?,
     onSelectLanguage: (String, LocalModel) -> Unit,
     onTransliterationChange: (Boolean) -> Unit,
+    onOpenTranscription: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val isCloud = !currentSttModelId.startsWith("local/")
@@ -1600,6 +1602,36 @@ private fun LanguageQuickSwitcherCard(
                         indicTransliteration = indicTransliteration,
                         onTransliterationChange = onTransliterationChange,
                     )
+                }
+
+                // Additional languages notice
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenTranscription),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("🌐", fontSize = 13.sp)
+                        Text(
+                            text = "More languages (Spanish, French, German, Japanese, etc.) available in Transcription Settings",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "Open settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
             }
         }

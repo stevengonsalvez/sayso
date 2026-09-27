@@ -133,11 +133,11 @@ fun OnboardingDialog(
                 settings.language == "ml" || settings.sttModelId.contains("-ml") -> "ml"
                 settings.language == "ta" || settings.sttModelId.contains("-ta") -> "ta"
                 settings.language == "en" || settings.sttModelId.contains("parakeet") -> "en"
-                settings.autoLanguageRoutingEnabled || settings.sttModelId.contains("whisper") -> "multi"
                 Locale.getDefault().language == "hi" -> "hi"
                 Locale.getDefault().language == "ml" -> "ml"
                 Locale.getDefault().language == "ta" -> "ta"
-                else -> "ta"
+                Locale.getDefault().language == "en" -> "en"
+                else -> "en"
             }
         )
     }
@@ -524,16 +524,12 @@ fun OnboardingDialog(
                             onClick = {
                                 when {
                                     isLangStep -> {
-                                        val isIndic = selectedPrimaryLanguage in listOf("ta", "hi", "ml", "multi")
+                                        val isIndic = selectedPrimaryLanguage in listOf("ta", "hi", "ml")
                                         settings.transliterateIndicToLatin = if (isIndic) transliterateToLatin else false
                                         when (selectedPrimaryLanguage) {
                                             "ta", "hi", "ml" -> {
                                                 settings.language = selectedPrimaryLanguage
                                                 settings.autoLanguageRoutingEnabled = false
-                                            }
-                                            "multi" -> {
-                                                settings.language = null
-                                                settings.autoLanguageRoutingEnabled = true
                                             }
                                             else -> {
                                                 settings.language = "en"
@@ -802,6 +798,14 @@ private fun StepZeroLanguages(
     val options = remember {
         listOf(
             OnboardingLanguageOption(
+                code = "en",
+                name = "English",
+                nativeScript = "English",
+                dialectName = "",
+                badge = "★ Recommended for English (Parakeet 110M: fast, high accuracy)",
+                isIndic = false,
+            ),
+            OnboardingLanguageOption(
                 code = "ta",
                 name = "Tamil",
                 nativeScript = "தமிழ்",
@@ -823,22 +827,6 @@ private fun StepZeroLanguages(
                 nativeScript = "മലയാളം",
                 dialectName = "Manglish",
                 badge = "★ Recommended: AI4Bharat is superior for Malayalam",
-                isIndic = true,
-            ),
-            OnboardingLanguageOption(
-                code = "en",
-                name = "English",
-                nativeScript = "English",
-                dialectName = "",
-                badge = "★ Recommended for English (Parakeet 110M)",
-                isIndic = false,
-            ),
-            OnboardingLanguageOption(
-                code = "multi",
-                name = "English + Indian",
-                nativeScript = "Multilingual",
-                dialectName = "Multi",
-                badge = "Multilingual (Whisper). Highly experimental and may not work correctly. Lower dialect accuracy than AI4Bharat",
                 isIndic = true,
             ),
         )
@@ -917,6 +905,37 @@ private fun StepZeroLanguages(
             }
         }
 
+        // More languages available in Transcription Settings
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "🌐",
+                    fontSize = 16.sp,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "More languages in Transcription Settings",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Need Spanish, French, German, Italian, Portuguese, Dutch, Japanese, or other languages? Select them in Transcription Settings using Whisper Multilingual or Cloud providers.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
         // Transliteration Section for Indian Languages
         if (selectedOption.isIndic) {
             Text(
@@ -933,13 +952,11 @@ private fun StepZeroLanguages(
             val exampleSpoken = when (selectedOption.code) {
                 "hi" -> "नमस्ते, आप कैसे हैं?"
                 "ml" -> "നമസ്കാരം, സുഖമാണോ?"
-                "multi" -> "வணக்கம் / नमस्ते / നമസ്കാരം"
                 else -> "வணக்கம், எப்படி இருக்கீங்க?"
             }
             val exampleLatin = when (selectedOption.code) {
                 "hi" -> "Namaste, aap kaise hain?"
                 "ml" -> "Namaskaram, sugamano?"
-                "multi" -> "Vanakkam / Namaste / Namaskaram"
                 else -> "Vanakkam, eppadi irukkeenga?"
             }
 
@@ -1096,7 +1113,7 @@ private fun StepZeroLanguages(
                         color = SaysoBrandAmber,
                     ) {
                         Text(
-                            text = if (selectedOption.isIndic && selectedOption.code != "multi") "★ RECOMMENDED: AI4BHARAT" else "RECOMMENDED MODEL",
+                            text = if (selectedOption.isIndic) "★ RECOMMENDED: AI4BHARAT" else "RECOMMENDED MODEL",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = SaysoBrandNavy,
@@ -1118,7 +1135,7 @@ private fun StepZeroLanguages(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = if (selectedOption.isIndic && selectedOption.code != "multi") {
+                    text = if (selectedOption.isIndic) {
                         "AI4Bharat IndicConformer is the most superior on-device model for Indian dialects and conversational Tanglish/Hinglish speech."
                     } else {
                         recommendedModel.note
@@ -1798,6 +1815,38 @@ private fun StepThreePermissions(
             actionLabel = stringResource(R.string.onboarding_perm_enable),
         )
 
+        // 100% On-Device & Zero-Tracking Privacy Banner
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "🔒",
+                    fontSize = 18.sp,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = "100% On-Device Privacy Guaranteed",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "No data leaves your device. We do not track you, do not collect metrics or analytics, and do not send voice or text anywhere. Everything runs completely offline and private on your phone.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+
         // Customization Cues Guide Card
         QuickSettingsGuideCard()
     }
@@ -2062,7 +2111,7 @@ private fun AccessibilityDisclosureDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    text = "Sayso uses Android's AccessibilityService API solely to detect active text input fields and paste your dictated speech into them.",
+                    text = "Sayso uses Android's AccessibilityService API solely to type and insert your dictated speech directly over other apps (such as WhatsApp, Slack, Notes, or Gmail) without copy-pasting.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -2079,7 +2128,7 @@ private fun AccessibilityDisclosureDialog(
                         Row(verticalAlignment = Alignment.Top) {
                             Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                             Text(
-                                text = "Only active editable text fields are detected when you tap dictate.",
+                                text = "Purpose: types your dictated text directly over other apps seamlessly.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -2087,7 +2136,7 @@ private fun AccessibilityDisclosureDialog(
                         Row(verticalAlignment = Alignment.Top) {
                             Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                             Text(
-                                text = "No passwords, personal messages, or screen content are monitored.",
+                                text = "Zero data leaves device: no tracking, no metrics, no analytics, no external servers.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )
@@ -2095,7 +2144,7 @@ private fun AccessibilityDisclosureDialog(
                         Row(verticalAlignment = Alignment.Top) {
                             Text("• ", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
                             Text(
-                                text = "Zero audio, text, or keystrokes are tracked or sent to external servers.",
+                                text = "Private and secure: no passwords, messages, or screen content are monitored.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                             )

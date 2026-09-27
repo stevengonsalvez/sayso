@@ -270,7 +270,7 @@
     <string name="onboarding_perm_mic_title">Microphone Permission</string>
     <string name="onboarding_perm_mic_desc">Required to record audio when you tap the dictation button.</string>
     <string name="onboarding_perm_acc_title">Accessibility Service</string>
-    <string name="onboarding_perm_acc_desc">Required to detect focused input fields and type text directly into apps.</string>
+    <string name="onboarding_perm_acc_desc">Required to type and insert your dictated text directly into other apps (WhatsApp, Slack, Notes, etc.) without copy-pasting.</string>
     <string name="onboarding_perm_grant">Grant</string>
     <string name="onboarding_perm_enable">Enable</string>
     <string name="onboarding_perm_granted">Granted</string>
