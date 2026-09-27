@@ -161,10 +161,14 @@ import Testing
 }
 
 @Test func indicLanguagePropertiesAndCleanupPolicySystemPrompt() {
-    #expect(DictationLanguage.tamil.isIndic == true)
-    #expect(DictationLanguage.hindi.isIndic == true)
-    #expect(DictationLanguage.malayalam.isIndic == true)
-    #expect(DictationLanguage.bengali.isIndic == true)
+    let indicLanguages: [DictationLanguage] = [
+        .hindi, .tamil, .malayalam, .bengali, .gujarati,
+        .kannada, .marathi, .punjabi, .telugu, .urdu
+    ]
+    for lang in indicLanguages {
+        #expect(lang.isIndic == true)
+        #expect(!lang.languageCode.isEmpty)
+    }
     #expect(DictationLanguage.english.isIndic == false)
     #expect(DictationLanguage.automatic.isIndic == false)
 
