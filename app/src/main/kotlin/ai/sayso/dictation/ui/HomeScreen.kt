@@ -1942,7 +1942,7 @@ private fun LanguageRoutingDownloadDialog(
                         routingModels.forEach { model ->
                             val isInstalled = model.dirName in installedDirNames
                             val isChecked = selectedDirNames[model.dirName] == true
-                            val isActive = isDownloading && activeDownloadingDir == model.dirName
+                            val isActive = (isDownloading || downloadState is DownloadState.Error) && activeDownloadingDir == model.dirName
                             val isQueued = isDownloading && isChecked && !isInstalled && !isActive
 
                             Row(
@@ -2076,9 +2076,11 @@ private fun LanguageRoutingDownloadDialog(
                 }
             }
         },
-        dismissButton = {
-            OutlinedButton(onClick = onDismiss) {
-                Text("Later")
+        dismissButton = if (!isDownloading && toDownload.isEmpty()) null else {
+            {
+                OutlinedButton(onClick = onDismiss) {
+                    Text("Later")
+                }
             }
         },
         shape = RoundedCornerShape(20.dp),
