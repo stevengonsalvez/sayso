@@ -236,6 +236,23 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var dictationProfile: DictationProfile = .default
     public var dictationProfileOverrides: [DictationProfileBundleOverride] = []
 
+    // Pre-processing pipeline settings
+    public var hints: [String] = []
+    public var autoLanguageRouting = false
+    public var transliterateIndicToLatin = false
+    public var silenceTimeoutSeconds: Double = 1.5
+    public var maxRecordingSeconds: Double = 120.0
+    public var audioDuckingEnabled = true
+
+    // Post-processing pipeline settings
+    public var cleanupMode: CleanupMode = .rules
+    public var cleanupPreset: CleanupPreset = .standard
+    public var customCleanupPrompt: String? = nil
+    public var appContextAwarenessEnabled = true
+
+    // Pronunciation & vocabulary dictionary
+    public var pronunciations: [SaysoPronunciationEntry] = PronunciationDefaults.standard
+
     public static func normalizedBaseURL(_ raw: String) -> URL? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), ProviderEndpointPolicy.allows(url) else {
@@ -273,6 +290,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
+        case hints, autoLanguageRouting, transliterateIndicToLatin, silenceTimeoutSeconds, maxRecordingSeconds, audioDuckingEnabled
+        case cleanupMode, cleanupPreset, customCleanupPrompt, appContextAwarenessEnabled, pronunciations
     }
 
     public init(from decoder: any Decoder) throws {
@@ -349,6 +368,17 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
             .dictationProfileOverrides,
             fallback: dictationProfileOverrides
         )
+        hints = decoded([String].self, .hints, fallback: hints)
+        autoLanguageRouting = decoded(Bool.self, .autoLanguageRouting, fallback: autoLanguageRouting)
+        transliterateIndicToLatin = decoded(Bool.self, .transliterateIndicToLatin, fallback: transliterateIndicToLatin)
+        silenceTimeoutSeconds = min(max(decoded(Double.self, .silenceTimeoutSeconds, fallback: silenceTimeoutSeconds), 0.5), 5.0)
+        maxRecordingSeconds = min(max(decoded(Double.self, .maxRecordingSeconds, fallback: maxRecordingSeconds), 15.0), 300.0)
+        audioDuckingEnabled = decoded(Bool.self, .audioDuckingEnabled, fallback: audioDuckingEnabled)
+        cleanupMode = decoded(CleanupMode.self, .cleanupMode, fallback: cleanupMode)
+        cleanupPreset = decoded(CleanupPreset.self, .cleanupPreset, fallback: cleanupPreset)
+        customCleanupPrompt = decoded(String?.self, .customCleanupPrompt, fallback: customCleanupPrompt)
+        appContextAwarenessEnabled = decoded(Bool.self, .appContextAwarenessEnabled, fallback: appContextAwarenessEnabled)
+        pronunciations = decoded([SaysoPronunciationEntry].self, .pronunciations, fallback: pronunciations)
     }
 
     public func resolvedDictationProfile(forBundleIdentifier bundleIdentifier: String?) -> DictationProfile {
@@ -401,6 +431,18 @@ public enum LexiconCorrections {
             }
             .map { DictationCorrection(source: $0.key, replacement: $0.value) }
         return DictationProfile(name: "Lexicon", corrections: corrections).postProcess(text)
+    }
+
+    public static func apply(_ text: String, pronunciations: [SaysoPronunciationEntry]) -> String {
+        var map: [String: String] = [:]
+        for entry in pronunciations {
+            let trigger = entry.spokenTrigger
+            let rep = entry.effectiveReplacement
+            if !trigger.isEmpty && !rep.isEmpty && trigger.caseInsensitiveCompare(rep) != .orderedSame {
+                map[trigger] = rep
+            }
+        }
+        return apply(text, replacements: map)
     }
 }
 
