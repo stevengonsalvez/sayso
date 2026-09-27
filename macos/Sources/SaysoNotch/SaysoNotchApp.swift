@@ -162,6 +162,8 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var onboardingTestTranscriptID: UUID?
     @Published private(set) var audioInputDevices: [AudioInputDevice] = []
     @Published private(set) var hasBYOKKey = false
+    @Published var slmStates: [String: LocalSlmState] = [:]
+    @Published var slmDownloadProgress: [String: Double] = [:]
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -287,6 +289,12 @@ final class SaysoAppModel: ObservableObject {
                 save()
             } catch {
                 notice = "Could not migrate saved corrections."
+            }
+        }
+
+        for slm in LocalSlmCatalog.all {
+            if LocalSlmCatalog.isInstalled(slm) {
+                slmStates[slm.id] = .installed
             }
         }
     }
@@ -1329,9 +1337,13 @@ final class SaysoAppModel: ObservableObject {
         showMainWindow()
     }
 
-    func openPreProcessingSettings() {
+    func openTranscriptionSettings() {
         selectedTab = 3
         showMainWindow()
+    }
+
+    func openPreProcessingSettings() {
+        openTranscriptionSettings()
     }
 
     func openModelsSettings() {
@@ -1339,14 +1351,94 @@ final class SaysoAppModel: ObservableObject {
         showMainWindow()
     }
 
-    func openPostProcessingSettings() {
+    func openAICleanupSettings() {
         selectedTab = 5
         showMainWindow()
+    }
+
+    func openPostProcessingSettings() {
+        openAICleanupSettings()
     }
 
     func openVocabularySettings() {
         selectedTab = 6
         showMainWindow()
+    }
+
+    func checkSlmStatus(_ manifest: LocalSlmManifest) -> LocalSlmState {
+        if LocalSlmCatalog.isInstalled(manifest) {
+            return .installed
+        }
+        return slmStates[manifest.id] ?? .notInstalled
+    }
+
+    func installSlm(_ manifest: LocalSlmManifest) async {
+        slmStates[manifest.id] = .installing
+        slmDownloadProgress[manifest.id] = 0.05
+        let destDir = LocalSlmCatalog.modelsDirectory()
+        let destFile = destDir.appendingPathComponent(manifest.fileName)
+        do {
+            let (tempURL, response) = try await URLSession.shared.download(from: manifest.downloadURL)
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 500
+                throw LocalModelInstallError.unexpectedHTTPStatus(manifest.downloadURL, code)
+            }
+            if FileManager.default.fileExists(atPath: destFile.path) {
+                try? FileManager.default.removeItem(at: destFile)
+            }
+            try FileManager.default.moveItem(at: tempURL, to: destFile)
+            slmStates[manifest.id] = .installed
+            slmDownloadProgress[manifest.id] = 1.0
+            notice = "\(manifest.displayName) ready on disk."
+        } catch {
+            slmStates[manifest.id] = .failed(error.localizedDescription)
+            notice = "Download failed: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteSlm(_ manifest: LocalSlmManifest) {
+        try? LocalSlmCatalog.delete(manifest)
+        slmStates[manifest.id] = .notInstalled
+        slmDownloadProgress.removeValue(forKey: manifest.id)
+        notice = "\(manifest.displayName) deleted."
+    }
+
+    func hasKey(for provider: CloudProvider) -> Bool {
+        if provider.id == "ollama" { return true }
+        if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        if provider.id == "openai" || provider.id == "custom" {
+            return hasBYOKKey
+        }
+        return false
+    }
+
+    @discardableResult
+    func saveProviderKey(_ key: String, for provider: CloudProvider) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            try secrets.store(trimmed, named: provider.keychainServiceIdentifier)
+            if provider.id == "openai" || provider.id == "custom" {
+                try? secrets.store(trimmed, named: "byok-api-key")
+                hasBYOKKey = true
+            }
+            notice = "\(provider.displayName) key saved in Keychain."
+            return true
+        } catch {
+            notice = "Could not save \(provider.displayName) key."
+            return false
+        }
+    }
+
+    func removeProviderKey(for provider: CloudProvider) {
+        secrets.remove(named: provider.keychainServiceIdentifier)
+        if provider.id == "openai" || provider.id == "custom" {
+            secrets.remove(named: "byok-api-key")
+            hasBYOKKey = false
+        }
+        notice = "\(provider.displayName) key removed from Keychain."
     }
 
     func addPronunciation(_ entry: SaysoPronunciationEntry) {
@@ -2049,8 +2141,9 @@ private struct MenuContent: View {
                 Button("Copy pending voice edit rewrite") { model.copyLastVoiceEditRewrite() }
             }
             Button("Show Sayso Notch") { model.showNotch() }
-            Button("Pre-Processing") { model.openPreProcessingSettings() }
-            Button("Post-Processing") { model.openPostProcessingSettings() }
+            Button("Transcription") { model.openTranscriptionSettings() }
+            Button("Models & Downloads") { model.openModelsSettings() }
+            Button("AI Cleanup") { model.openAICleanupSettings() }
             Button("Vocabulary Dictionary") { model.openVocabularySettings() }
             Button("Notch & HUD Display") { model.openNotchSettings() }
             Button("Keyboard Shortcuts") { model.openShortcutsSettings() }
@@ -2279,10 +2372,10 @@ private struct SettingsHome: View {
                         Label("History", systemImage: "clock.arrow.circlepath").tag(2)
                     }
                     Section("Pipeline") {
-                        Label("Pre-Processing", systemImage: "slider.horizontal.3").tag(3)
-                        Label("Models", systemImage: "cpu").tag(4)
-                        Label("Post-Processing", systemImage: "sparkles").tag(5)
-                        Label("Vocabulary", systemImage: "character.book.closed").tag(6)
+                        Label("Transcription", systemImage: "mic.badge.waveform").tag(3)
+                        Label("Models & Downloads", systemImage: "square.stack.3d.up.fill").tag(4)
+                        Label("AI Cleanup", systemImage: "sparkles").tag(5)
+                        Label("Vocabulary Dictionary", systemImage: "character.book.closed").tag(6)
                     }
                     Section("Desktop & Triggers") {
                         Label("Notch & HUD", systemImage: "menubar.rectangle").tag(7)
@@ -2311,9 +2404,9 @@ private struct SettingsHome: View {
             case 0: DictationWorkspace(model: model)
             case 1: ControlWorkspace(model: model)
             case 2: HistoryWorkspace(model: model)
-            case 3: PreProcessingWorkspace(model: model)
+            case 3: TranscriptionWorkspace(model: model)
             case 4: ModelsWorkspace(model: model)
-            case 5: PostProcessingWorkspace(model: model)
+            case 5: AICleanupWorkspace(model: model)
             case 6: VocabularyWorkspace(model: model)
             case 7: NotchWorkspace(model: model)
             case 8: ShortcutsWorkspace(model: model)
@@ -2962,16 +3055,118 @@ private struct LanguageWorkspace: View {
     @ObservedObject var model: SaysoAppModel
 
     var body: some View {
-        PreProcessingWorkspace(model: model)
+        TranscriptionWorkspace(model: model)
     }
 }
 
-private struct PreProcessingWorkspace: View {
+private struct TranscriptionWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var hintsText = ""
+    @State private var apiKey = ""
 
     var body: some View {
         Form {
+            Section("Speech Recognition Engine") {
+                Picker("Recognition engine", selection: $model.settings.route) {
+                    Text("On-Device (Private, Local)").tag(ProviderRoute.local)
+                    Text("Cloud Provider (BYOK)").tag(ProviderRoute.byok)
+                    Text("Apple Speech (System)").tag(ProviderRoute.appleSpeech)
+                }
+                .pickerStyle(.segmented)
+
+                if model.settings.route == .local {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Engine: Local On-Device Neural ASR")
+                                .fontWeight(.semibold)
+                            Text("Audio never leaves this Mac. Offline dictation with zero latency jitter.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Manage on-device models") {
+                            model.openModelsSettings()
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.caption)
+                    }
+                } else if model.settings.route == .byok {
+                    let providers = CloudProviderCatalog.transcriptionProviders
+                    let currentProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudProviderId) ?? CloudProviderCatalog.saysoCloud
+
+                    Picker("Cloud provider", selection: Binding(
+                        get: { model.settings.selectedCloudProviderId },
+                        set: { newId in
+                            model.settings.selectedCloudProviderId = newId
+                            if let p = CloudProviderCatalog.provider(for: newId) {
+                                model.settings.byokBaseURL = p.defaultBaseURL
+                                if let firstModel = p.transcriptionModels.first {
+                                    model.settings.selectedCloudModelId = firstModel.id
+                                    model.settings.byokTranscriptionModel = firstModel.id
+                                }
+                            }
+                            model.save()
+                        }
+                    )) {
+                        ForEach(providers) { p in
+                            Text(p.displayName).tag(p.id)
+                        }
+                    }
+
+                    if !currentProvider.transcriptionModels.isEmpty {
+                        Picker("Transcription model", selection: Binding(
+                            get: { model.settings.selectedCloudModelId },
+                            set: {
+                                model.settings.selectedCloudModelId = $0
+                                model.settings.byokTranscriptionModel = $0
+                                model.save()
+                            }
+                        )) {
+                            ForEach(currentProvider.transcriptionModels) { opt in
+                                HStack {
+                                    Text(opt.displayName)
+                                    Spacer()
+                                    Text(opt.latencyTier.badgeText)
+                                }
+                                .tag(opt.id)
+                            }
+                        }
+                    }
+
+                    if currentProvider.id == "custom" {
+                        TextField("Base URL", text: $model.settings.byokBaseURL)
+                        TextField("Model name", text: $model.settings.byokTranscriptionModel)
+                    }
+
+                    HStack {
+                        let hasKey = model.hasKey(for: currentProvider)
+                        Label(hasKey ? "Key saved in Keychain" : "No API key stored",
+                              systemImage: hasKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(hasKey ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                        Spacer()
+                        if let url = currentProvider.apiKeyURL {
+                            Link("Get API Key ↗", destination: url)
+                                .font(.caption)
+                        }
+                    }
+
+                    HStack {
+                        SecureField("API key", text: $apiKey)
+                        Button("Store key") {
+                            if model.saveProviderKey(apiKey, for: currentProvider) {
+                                apiKey = ""
+                            }
+                        }
+                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                } else {
+                    Text("Uses Apple Speech recognition framework built into macOS.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Spoken Language & Auto-Routing") {
                 Picker("Spoken language", selection: $model.settings.language) {
                     ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
@@ -3067,13 +3262,16 @@ private struct PreProcessingWorkspace: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Pre-Processing")
+        .navigationTitle("Transcription")
         .onChange(of: model.settings) { _, _ in model.save() }
     }
 }
 
-private struct PostProcessingWorkspace: View {
+private typealias PreProcessingWorkspace = TranscriptionWorkspace
+
+private struct AICleanupWorkspace: View {
     @ObservedObject var model: SaysoAppModel
+    @State private var apiKey = ""
 
     var body: some View {
         Form {
@@ -3090,6 +3288,123 @@ private struct PostProcessingWorkspace: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("Enable text cleanup", isOn: $model.settings.cleanupEnabled)
+            }
+
+            if model.settings.cleanupMode == .localSLM {
+                Section("On-Device SLM Engine") {
+                    let currentSlm = LocalSlmCatalog.byId(model.settings.selectedLocalSlmModelId) ?? LocalSlmCatalog.defaultModel
+
+                    Picker("Local model", selection: Binding(
+                        get: { model.settings.selectedLocalSlmModelId },
+                        set: {
+                            model.settings.selectedLocalSlmModelId = $0
+                            model.save()
+                        }
+                    )) {
+                        ForEach(LocalSlmCatalog.all) { slm in
+                            HStack {
+                                Text("\(slm.displayName) (\(slm.sizeDisplay))")
+                                Spacer()
+                                Text(slm.latencyTier.badgeText)
+                            }
+                            .tag(slm.id)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(currentSlm.summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            let status = model.checkSlmStatus(currentSlm)
+                            Label(status.isInstalled ? "Ready on disk" : "Not downloaded",
+                                  systemImage: status.isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(status.isInstalled ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                        }
+
+                        if !model.checkSlmStatus(currentSlm).isInstalled {
+                            Button("Download \(currentSlm.displayName)") {
+                                Task { await model.installSlm(currentSlm) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .font(.caption)
+                        }
+                    }
+                }
+            } else if model.settings.cleanupMode == .cloudLLM {
+                Section("Cloud LLM Provider") {
+                    let providers = CloudProviderCatalog.cleanupProviders
+                    let currentProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
+
+                    Picker("Cloud provider", selection: Binding(
+                        get: { model.settings.selectedCloudCleanupProviderId },
+                        set: { newId in
+                            model.settings.selectedCloudCleanupProviderId = newId
+                            if let p = CloudProviderCatalog.provider(for: newId) {
+                                model.settings.byokBaseURL = p.defaultBaseURL
+                                if let firstModel = p.cleanupModels.first {
+                                    model.settings.selectedCloudCleanupModelId = firstModel.id
+                                    model.settings.byokCleanupModel = firstModel.id
+                                }
+                            }
+                            model.save()
+                        }
+                    )) {
+                        ForEach(providers) { p in
+                            Text(p.displayName).tag(p.id)
+                        }
+                    }
+
+                    if !currentProvider.cleanupModels.isEmpty {
+                        Picker("Cleanup model", selection: Binding(
+                            get: { model.settings.selectedCloudCleanupModelId },
+                            set: {
+                                model.settings.selectedCloudCleanupModelId = $0
+                                model.settings.byokCleanupModel = $0
+                                model.save()
+                            }
+                        )) {
+                            ForEach(currentProvider.cleanupModels) { opt in
+                                HStack {
+                                    Text(opt.displayName)
+                                    Spacer()
+                                    Text(opt.latencyTier.badgeText)
+                                }
+                                .tag(opt.id)
+                            }
+                        }
+                    }
+
+                    if currentProvider.id == "custom" {
+                        TextField("Base URL", text: $model.settings.byokBaseURL)
+                        TextField("Model name", text: $model.settings.byokCleanupModel)
+                    }
+
+                    HStack {
+                        let hasKey = model.hasKey(for: currentProvider)
+                        Label(hasKey ? "Key saved in Keychain" : "No API key stored",
+                              systemImage: hasKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(hasKey ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                        Spacer()
+                        if let url = currentProvider.apiKeyURL {
+                            Link("Get API Key ↗", destination: url)
+                                .font(.caption)
+                        }
+                    }
+
+                    HStack {
+                        SecureField("API key", text: $apiKey)
+                        Button("Store key") {
+                            if model.saveProviderKey(apiKey, for: currentProvider) {
+                                apiKey = ""
+                            }
+                        }
+                        .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
             }
 
             Section("Prompt Presets") {
@@ -3158,7 +3473,7 @@ private struct PostProcessingWorkspace: View {
             }
         }
         .formStyle(.grouped)
-        .navigationTitle("Post-Processing")
+        .navigationTitle("AI Cleanup")
         .onChange(of: model.settings) { _, _ in model.save() }
     }
 
@@ -3174,14 +3489,16 @@ private struct PostProcessingWorkspace: View {
 
     private func icon(for category: AppContextCategory) -> String {
         switch category {
-        case .chat: "message"
+        case .chat: "bubble.left.and.bubble.right"
         case .email: "envelope"
         case .codeTerminal: "terminal"
-        case .docsNotes: "note.text"
-        case .general: "doc"
+        case .docsNotes: "doc.text"
+        case .general: "app"
         }
     }
 }
+
+private typealias PostProcessingWorkspace = AICleanupWorkspace
 
 private struct VocabularyWorkspace: View {
     @ObservedObject var model: SaysoAppModel
@@ -3529,7 +3846,8 @@ private struct ModelsWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject private var localEnglishModel: FluidAudioLocalModelManager
     @ObservedObject private var localPunjabiModel: SherpaPunjabiModelManager
-    @State private var apiKey = ""
+    @State private var selectedCategory = 0
+    @State private var providerApiKey = ""
 
     init(model: SaysoAppModel) {
         self.model = model
@@ -3538,35 +3856,58 @@ private struct ModelsWorkspace: View {
     }
 
     var body: some View {
-        Form {
-            Section("Speech route") {
-                Picker("Active route", selection: $model.settings.route) {
-                    ForEach(ProviderRoute.dictationRoutes) { route in
-                        Text(route.displayName).tag(route)
-                    }
-                }
-                ForEach(ProviderRoute.dictationRoutes) { route in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(route.displayName).fontWeight(.semibold)
-                            Text(route == .local ? "Private, runs on this Mac." : "Uses Apple or your selected provider.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if route == model.settings.route {
-                            Text("Active")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(SaysoPalette.cobalt)
-                        }
-                    }
+        VStack(spacing: 0) {
+            Picker("Category", selection: $selectedCategory) {
+                Text("On-Device Speech").tag(0)
+                Text("On-Device SLMs").tag(1)
+                Text("Cloud Providers & BYOK").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+
+            Form {
+                switch selectedCategory {
+                case 0:
+                    onDeviceSpeechSection
+                case 1:
+                    onDeviceSlmSection
+                default:
+                    cloudProvidersSection
                 }
             }
-            Section("Native English model") {
+            .formStyle(.grouped)
+        }
+        .navigationTitle("Models & Downloads")
+        .onChange(of: model.settings) { _, _ in model.save() }
+    }
+
+    @ViewBuilder
+    private var onDeviceSpeechSection: some View {
+        Section("Speech Route") {
+            Picker("Active speech route", selection: $model.settings.route) {
+                ForEach(ProviderRoute.dictationRoutes) { route in
+                    Text(route.displayName).tag(route)
+                }
+            }
+            Text("Select 'On-device' for 100% private transcription without internet.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+
+        Section("Native Streaming Models (Apple Silicon CoreML)") {
+            // English FluidAudio
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(FluidAudioLocalModelManager.displayName).fontWeight(.semibold)
-                        Text("On-device English streaming. Apple silicon only. About 430 MB.")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(FluidAudioLocalModelManager.displayName).fontWeight(.semibold)
+                            Text("⚡ Instant").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.yellow.opacity(0.2), in: Capsule())
+                            if localEnglishModel.state.isInstalled && model.settings.route == .local && model.settings.language == .english {
+                                Text("Active Engine").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(SaysoPalette.cobalt.opacity(0.2), in: Capsule()).foregroundStyle(SaysoPalette.cobalt)
+                            }
+                        }
+                        Text("On-device English streaming. Apple silicon only. 430 MB.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -3574,26 +3915,35 @@ private struct ModelsWorkspace: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(localEnglishModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
                 }
+
                 if case .installing = localEnglishModel.state {
                     ProgressView(value: localEnglishModel.downloadProgress)
                 }
-                if localEnglishModel.state.isInstalled {
-                    Button("Delete local model", role: .destructive) { localEnglishModel.delete() }
-                } else {
-                    Button("Download local English model") { Task { await localEnglishModel.install() } }
-                        .buttonStyle(.borderedProminent)
-                        .tint(SaysoPalette.cobalt)
-                        .disabled(localEnglishModel.state == .installing)
-                }
-                if case let .failed(message) = localEnglishModel.state {
-                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+
+                HStack {
+                    if localEnglishModel.state.isInstalled {
+                        Button("Delete model", role: .destructive) { localEnglishModel.delete() }
+                            .font(.caption)
+                    } else {
+                        Button("Download English model") { Task { await localEnglishModel.install() } }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+                            .font(.caption)
+                            .disabled(localEnglishModel.state == .installing)
+                    }
+                    Spacer()
                 }
             }
-            Section("Native Indian language model") {
+
+            // Indian Language FluidAudio
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(FluidAudioLocalModelManager.multilingualDisplayName).fontWeight(.semibold)
-                        Text("Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Telugu and Urdu. Apple silicon only. About 1.5 GB.")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(FluidAudioLocalModelManager.multilingualDisplayName).fontWeight(.semibold)
+                            Text("⚡ Fast").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.teal.opacity(0.2), in: Capsule())
+                        }
+                        Text("Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Telugu and Urdu. 1.5 GB.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -3601,28 +3951,38 @@ private struct ModelsWorkspace: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(localEnglishModel.multilingualState.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
                 }
-                Text("Runs entirely on this Mac. Model terms: NVIDIA Open Model Development License 1.1.")
-                    .font(.caption).foregroundStyle(.secondary)
+
                 if case .installing = localEnglishModel.multilingualState {
                     ProgressView(value: localEnglishModel.multilingualDownloadProgress)
                 }
-                if localEnglishModel.multilingualState.isInstalled {
-                    Button("Delete Indian language model", role: .destructive) { localEnglishModel.deleteMultilingual() }
-                } else {
-                    Button("Download Indian language model") { Task { await localEnglishModel.install(language: .hindi) } }
-                        .buttonStyle(.borderedProminent)
-                        .tint(SaysoPalette.cobalt)
-                        .disabled(localEnglishModel.multilingualState == .installing)
-                }
-                if case let .failed(message) = localEnglishModel.multilingualState {
-                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+
+                HStack {
+                    if localEnglishModel.multilingualState.isInstalled {
+                        Button("Delete model", role: .destructive) { localEnglishModel.deleteMultilingual() }
+                            .font(.caption)
+                    } else {
+                        Button("Download Indian language model") { Task { await localEnglishModel.install(language: .hindi) } }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+                            .font(.caption)
+                            .disabled(localEnglishModel.multilingualState == .installing)
+                    }
+                    Spacer()
                 }
             }
-            Section("Native Punjabi model") {
+        }
+
+        Section("Offline Indic & Sherpa-ONNX Catalog") {
+            // Punjabi model
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(SherpaPunjabiModelManager.displayName).fontWeight(.semibold)
-                        Text("Offline Punjabi final transcription. Any Mac. About 198 MB.")
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(SherpaPunjabiModelManager.displayName).fontWeight(.semibold)
+                            Text("⚡ Fast").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.teal.opacity(0.2), in: Capsule())
+                            Text("★ Best for Punjabi").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange.opacity(0.2), in: Capsule())
+                        }
+                        Text("Offline Punjabi final transcription. Apache-2.0. 198 MB.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -3630,38 +3990,276 @@ private struct ModelsWorkspace: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(localPunjabiModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
                 }
-                Text("Runs entirely on this Mac. Model and runtime: Apache-2.0.")
-                    .font(.caption).foregroundStyle(.secondary)
+
                 if case .installing = localPunjabiModel.state {
                     ProgressView()
                 }
-                if localPunjabiModel.state.isInstalled {
-                    Button("Delete Punjabi model", role: .destructive) { localPunjabiModel.delete() }
-                } else {
-                    Button("Download Punjabi model") { Task { await localPunjabiModel.install() } }
-                        .buttonStyle(.borderedProminent)
-                        .tint(SaysoPalette.cobalt)
-                        .disabled(localPunjabiModel.state == .installing)
-                }
-                if case let .failed(message) = localPunjabiModel.state {
-                    Text(message).font(.caption).foregroundStyle(SaysoPalette.crimson)
+
+                HStack {
+                    if localPunjabiModel.state.isInstalled {
+                        Button("Delete model", role: .destructive) { localPunjabiModel.delete() }
+                            .font(.caption)
+                    } else {
+                        Button("Download Punjabi model") { Task { await localPunjabiModel.install() } }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+                            .font(.caption)
+                            .disabled(localPunjabiModel.state == .installing)
+                    }
+                    Spacer()
                 }
             }
-            Section("Your provider") {
-                Text("Optional. Used only after explicit cloud consent. API key stays in Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
-                TextField("Base URL", text: $model.settings.byokBaseURL)
-                TextField("Transcription model", text: $model.settings.byokTranscriptionModel)
-                TextField("Translation model", text: $model.settings.byokTranslationModel)
-                TextField("Voice edit model", text: $model.settings.byokRewriteModel)
-                SecureField("API key", text: $apiKey)
-                Button("Store key") { if model.saveBYOKKey(apiKey) { apiKey = "" } }
-                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.isBYOKBaseURLValid)
+
+            // Sherpa-ONNX models
+            ForEach(LocalModelCatalog.all) { manifest in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(manifest.displayName).fontWeight(.semibold)
+                                if manifest.isRecommended {
+                                    Text("Recommended").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(SaysoPalette.cobalt.opacity(0.15), in: Capsule()).foregroundStyle(SaysoPalette.cobalt)
+                                }
+                                if manifest.id == model.settings.selectedLocalAsrModelId && model.settings.route == .local {
+                                    Text("Selected").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.green.opacity(0.2), in: Capsule()).foregroundStyle(Color.green)
+                                }
+                            }
+                            Text("\(manifest.summary) Size: \(manifest.expectedSizeBytes / 1_000_000) MB. License: \(manifest.license.displayName).")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    HStack {
+                        if manifest.id != model.settings.selectedLocalAsrModelId {
+                            Button("Use for Dictation") {
+                                model.settings.selectedLocalAsrModelId = manifest.id
+                                model.settings.route = .local
+                                model.save()
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(.vertical, 3)
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle("Models")
-        .onChange(of: model.settings) { _, _ in model.save() }
+    }
+
+    @ViewBuilder
+    private var onDeviceSlmSection: some View {
+        Section("On-Device Small Language Models") {
+            Text("Small Language Models (SLMs) run locally on CPU and Apple Neural Engine. They polish transcripts, format lists, and fix grammar without sending text to any cloud server.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+
+        Section("SLM Catalog (Qwen & SmolLM)") {
+            ForEach(LocalSlmCatalog.all) { slm in
+                let status = model.checkSlmStatus(slm)
+                let isSelected = model.settings.selectedLocalSlmModelId == slm.id
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(slm.displayName).fontWeight(.semibold)
+                                Text(slm.latencyTier.badgeText)
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(slm.latencyTier == .instant ? Color.yellow.opacity(0.2) : Color.teal.opacity(0.2), in: Capsule())
+
+                                if slm.isRecommended {
+                                    Text("Recommended")
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(SaysoPalette.cobalt.opacity(0.15), in: Capsule())
+                                        .foregroundStyle(SaysoPalette.cobalt)
+                                }
+
+                                if isSelected {
+                                    Text("Active SLM")
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.green.opacity(0.2), in: Capsule())
+                                        .foregroundStyle(Color.green)
+                                }
+                            }
+
+                            Text("\(slm.summary) Parameters: \(slm.parameterCount). Quantized: \(slm.sizeDisplay).")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+
+                        Text(status.isInstalled ? "Ready" : "Not downloaded")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(status.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                    }
+
+                    if case .installing = status {
+                        ProgressView()
+                    }
+
+                    HStack {
+                        if status.isInstalled {
+                            if !isSelected {
+                                Button("Select as Active") {
+                                    model.settings.selectedLocalSlmModelId = slm.id
+                                    model.settings.cleanupMode = .localSLM
+                                    model.save()
+                                }
+                                .buttonStyle(.bordered)
+                                .font(.caption)
+                            }
+
+                            Button("Delete", role: .destructive) {
+                                model.deleteSlm(slm)
+                            }
+                            .font(.caption)
+                        } else {
+                            Button("Download \(slm.displayName)") {
+                                Task { await model.installSlm(slm) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+                            .font(.caption)
+                            .disabled(status == .installing)
+                        }
+                        Spacer()
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cloudProvidersSection: some View {
+        let providers = CloudProviderCatalog.all
+        let selectedProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudProviderId) ?? CloudProviderCatalog.saysoCloud
+
+        Section("Select Cloud Provider") {
+            Picker("Provider", selection: Binding(
+                get: { model.settings.selectedCloudProviderId },
+                set: { newId in
+                    model.settings.selectedCloudProviderId = newId
+                    if let p = CloudProviderCatalog.provider(for: newId) {
+                        model.settings.byokBaseURL = p.defaultBaseURL
+                        if let firstStt = p.transcriptionModels.first {
+                            model.settings.selectedCloudModelId = firstStt.id
+                            model.settings.byokTranscriptionModel = firstStt.id
+                        }
+                        if let firstLlm = p.cleanupModels.first {
+                            model.settings.selectedCloudCleanupModelId = firstLlm.id
+                            model.settings.byokCleanupModel = firstLlm.id
+                        }
+                    }
+                    model.save()
+                }
+            )) {
+                ForEach(providers) { p in
+                    Text(p.displayName).tag(p.id)
+                }
+            }
+
+            HStack {
+                Text("Default endpoint: \(selectedProvider.defaultBaseURL)")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let url = selectedProvider.apiKeyURL {
+                    Link("Get API Key ↗", destination: url)
+                        .font(.caption)
+                }
+            }
+        }
+
+        Section("Provider Configuration") {
+            TextField("API Base URL", text: $model.settings.byokBaseURL)
+
+            if selectedProvider.supportsTranscription {
+                if !selectedProvider.transcriptionModels.isEmpty {
+                    Picker("Transcription model (STT)", selection: Binding(
+                        get: { model.settings.selectedCloudModelId },
+                        set: {
+                            model.settings.selectedCloudModelId = $0
+                            model.settings.byokTranscriptionModel = $0
+                            model.save()
+                        }
+                    )) {
+                        ForEach(selectedProvider.transcriptionModels) { opt in
+                            HStack {
+                                Text(opt.displayName)
+                                Spacer()
+                                Text(opt.latencyTier.badgeText)
+                            }
+                            .tag(opt.id)
+                        }
+                    }
+                } else {
+                    TextField("Transcription model (STT)", text: $model.settings.byokTranscriptionModel)
+                }
+            }
+
+            if selectedProvider.supportsCleanup {
+                if !selectedProvider.cleanupModels.isEmpty {
+                    Picker("Cleanup model (LLM)", selection: Binding(
+                        get: { model.settings.selectedCloudCleanupModelId },
+                        set: {
+                            model.settings.selectedCloudCleanupModelId = $0
+                            model.settings.byokCleanupModel = $0
+                            model.save()
+                        }
+                    )) {
+                        ForEach(selectedProvider.cleanupModels) { opt in
+                            HStack {
+                                Text(opt.displayName)
+                                Spacer()
+                                Text(opt.latencyTier.badgeText)
+                            }
+                            .tag(opt.id)
+                        }
+                    }
+                } else {
+                    TextField("Cleanup model (LLM)", text: $model.settings.byokCleanupModel)
+                }
+            }
+
+            TextField("Translation model", text: $model.settings.byokTranslationModel)
+            TextField("Voice edit rewrite model", text: $model.settings.byokRewriteModel)
+        }
+
+        Section("API Key & Keychain Security") {
+            let hasKey = model.hasKey(for: selectedProvider)
+            HStack {
+                Label(hasKey ? "API Key stored securely in Keychain" : "No API key stored for \(selectedProvider.displayName)",
+                      systemImage: hasKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(hasKey ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                Spacer()
+                if hasKey && selectedProvider.id != "ollama" {
+                    Button("Remove key", role: .destructive) {
+                        model.removeProviderKey(for: selectedProvider)
+                    }
+                    .font(.caption)
+                }
+            }
+
+            if selectedProvider.id != "ollama" {
+                SecureField("Enter API key", text: $providerApiKey)
+                Button("Store in Keychain") {
+                    if model.saveProviderKey(providerApiKey, for: selectedProvider) {
+                        providerApiKey = ""
+                    }
+                }
+                .disabled(providerApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } else {
+                Text("Ollama runs locally on http://localhost:11434 and does not require an API key.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var localModelStatus: String {
@@ -4643,12 +5241,20 @@ struct ModePicker: View {
 }
 
 enum SaysoPalette {
-    static let cobalt = Color(red: 37 / 255, green: 99 / 255, blue: 235 / 255)
-    static let amber = Color(red: 245 / 255, green: 158 / 255, blue: 11 / 255)
-    static let crimson = Color(red: 239 / 255, green: 68 / 255, blue: 68 / 255)
-    static let obsidian = Color(red: 11 / 255, green: 15 / 255, blue: 23 / 255)
-    static let surface = Color(red: 19 / 255, green: 27 / 255, blue: 42 / 255)
-    static let surfaceRaised = Color(red: 30 / 255, green: 41 / 255, blue: 59 / 255)
-    static let outline = Color(red: 51 / 255, green: 65 / 255, blue: 85 / 255)
-    static let muted = Color(red: 148 / 255, green: 163 / 255, blue: 184 / 255)
+    /// Deep Navy (#1E2A44) - Sayso anchor color from Android Theme
+    static let brandNavy = Color(red: 0x1E / 255.0, green: 0x2A / 255.0, blue: 0x44 / 255.0)
+    /// Golden Amber (#F4B942) - Sayso accent color from Android Theme
+    static let brandAmber = Color(red: 0xF4 / 255.0, green: 0xB9 / 255.0, blue: 0x42 / 255.0)
+    static let amberDark = Color(red: 0xD9 / 255.0, green: 0x9B / 255.0, blue: 0x26 / 255.0)
+    static let amberContainer = Color(red: 0xFE / 255.0, green: 0xF3 / 255.0, blue: 0xC7 / 255.0)
+    static let onAmberContainer = Color(red: 0x92 / 255.0, green: 0x40 / 255.0, blue: 0x0E / 255.0)
+
+    static let cobalt = Color(red: 37 / 255.0, green: 99 / 255.0, blue: 235 / 255.0)
+    static let amber = Color(red: 0xF4 / 255.0, green: 0xB9 / 255.0, blue: 0x42 / 255.0)
+    static let crimson = Color(red: 239 / 255.0, green: 68 / 255.0, blue: 68 / 255.0)
+    static let obsidian = Color(red: 11 / 255.0, green: 15 / 255.0, blue: 23 / 255.0)
+    static let surface = Color(red: 19 / 255.0, green: 27 / 255.0, blue: 42 / 255.0)
+    static let surfaceRaised = Color(red: 30 / 255.0, green: 41 / 255.0, blue: 59 / 255.0)
+    static let outline = Color(red: 51 / 255.0, green: 65 / 255.0, blue: 85 / 255.0)
+    static let muted = Color(red: 148 / 255.0, green: 163 / 255.0, blue: 184 / 255.0)
 }
