@@ -31,6 +31,7 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "sherpa-onnx", package: "sherpa-onnx"),
                 .product(name: "SpeakCore", package: "justspeaktoit"),
+                .product(name: "SpeakHotKeys", package: "justspeaktoit"),
             ]
         ),
         .target(
@@ -51,6 +52,6 @@ let package = Package(
             path: "Sources/speak"
         ),
         .executableTarget(name: "SaysoMCP", dependencies: ["SaysoCore", "SpeakUpstreamBridge"], path: "Sources/sayso-mcp"),
-        .testTarget(name: "SaysoCoreTests", dependencies: ["SaysoCore"]),
+        .testTarget(name: "SaysoCoreTests", dependencies: ["SaysoCore", .product(name: "SpeakHotKeys", package: "justspeaktoit")]),
     ]
 )
