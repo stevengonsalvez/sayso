@@ -1028,11 +1028,51 @@ final class SaysoAppModel: ObservableObject {
         settings currentSettings: SaysoSettings
     ) async -> String {
         guard currentSettings.cleanupEnabled else { return text }
-        let local = TranscriptCleanup.processLocally(
+        let formatted = TranscriptCleanup.smartFormat(
             text,
-            capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
+            capitalizesFirstLetter: true,
+            capitalizesSentences: currentSettings.cleanupPreset != .minimal,
+            addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
         )
-        guard currentSettings.cloudCleanupEnabled,
+
+        var base = formatted
+        base = currentSettings.dictationProfile.postProcess(base)
+        base = LexiconCorrections.apply(base, replacements: currentSettings.lexicon)
+        base = LexiconCorrections.apply(base, pronunciations: currentSettings.pronunciations)
+        let local = corrections.apply(to: base).transformedText
+
+        if currentSettings.cleanupMode == .localSLM {
+            if let localEndpoint = URL(string: "http://127.0.0.1:11434/v1") {
+                let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
+                do {
+                    let localCleaner = OpenAICompatibleTranscriptCleaner(
+                        baseURL: localEndpoint,
+                        apiKey: "ollama",
+                        model: slmModelName
+                    )
+                    let slmCleaned = try await localCleaner.clean(
+                        text,
+                        language: language,
+                        lexiconDirectives: currentSettings.dictationProfile.cleanupDirectives
+                    )
+                    var cleaned = TranscriptCleanup.smartFormat(
+                        slmCleaned,
+                        capitalizesFirstLetter: true,
+                        capitalizesSentences: currentSettings.cleanupPreset != .minimal,
+                        addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
+                    )
+                    cleaned = currentSettings.dictationProfile.postProcess(cleaned)
+                    cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
+                    cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
+                    return corrections.apply(to: cleaned).transformedText
+                } catch {
+                    // Local server offline, continue with smart rules
+                }
+            }
+            return local
+        }
+
+        guard currentSettings.cleanupMode == .cloudLLM || currentSettings.cloudCleanupEnabled,
               currentSettings.byokConsentGranted,
               let key = secrets.secret(named: "byok-api-key"),
               let baseURL = currentSettings.normalizedBYOKBaseURL,
@@ -1044,16 +1084,18 @@ final class SaysoAppModel: ObservableObject {
             let cloud = try await OpenAICompatibleTranscriptCleaner(
                 baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
             ).clean(text, language: language, lexiconDirectives: directives)
-            var cleaned = TranscriptCleanup.processLocally(
+            var cleaned = TranscriptCleanup.smartFormat(
                 cloud,
-                capitalizesFirstLetter: currentSettings.dictationProfile.capitalizesSentences
+                capitalizesFirstLetter: true,
+                capitalizesSentences: currentSettings.cleanupPreset != .minimal,
+                addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
             )
             cleaned = currentSettings.dictationProfile.postProcess(cleaned)
             cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
             cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
             return corrections.apply(to: cleaned).transformedText
         } catch {
-            transcriptProcessingNotice = "Cloud cleanup unavailable. Applied local cleanup."
+            transcriptProcessingNotice = "Cloud cleanup unavailable. Applied smart rules."
             return local
         }
     }
@@ -1479,6 +1521,49 @@ final class SaysoAppModel: ObservableObject {
             hasBYOKKey = false
         }
         notice = "\(provider.displayName) key removed from Keychain."
+    }
+
+    var hasTypeSafeKey: Bool {
+        if let key = secrets.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        let jevStore = KeychainSecretStore(service: "local.jev-use")
+        if let key = jevStore.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return false
+    }
+
+    func typeSafeKey() -> String? {
+        if let key = secrets.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let jevStore = KeychainSecretStore(service: "local.jev-use")
+        if let key = jevStore.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    @discardableResult
+    func saveTypeSafeKey(_ key: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            try secrets.store(trimmed, named: "typesafe-api-key")
+            notice = "TypeSafe / Jev key saved in Keychain."
+            objectWillChange.send()
+            return true
+        } catch {
+            notice = "Could not save TypeSafe key."
+            return false
+        }
+    }
+
+    func removeTypeSafeKey() {
+        secrets.remove(named: "typesafe-api-key")
+        notice = "TypeSafe key removed."
+        objectWillChange.send()
     }
 
     func addPronunciation(_ entry: SaysoPronunciationEntry) {
@@ -2058,11 +2143,42 @@ final class SaysoAppModel: ObservableObject {
                     } else {
                         let snapshot = try controller.capture(application: run.target)
                         currentSnapshot = snapshot
-                        step = try ControlPlanner.plan(
-                            command: run.commands[run.nextCommandIndex],
-                            snapshot: snapshot,
-                            installedApplications: run.installedApplications
-                        )
+                        let cmd = run.commands[run.nextCommandIndex]
+                        var planned: ControlPlanStep? = nil
+                        do {
+                            planned = try ControlPlanner.plan(
+                                command: cmd,
+                                snapshot: snapshot,
+                                installedApplications: run.installedApplications
+                            )
+                        } catch {
+                            if let jevKey = typeSafeKey() {
+                                controlStatus = "Consulting Jev model..."
+                                let candidates = JevControlBridge.makeCandidates(
+                                    from: snapshot,
+                                    installedApplications: run.installedApplications
+                                )
+                                let context = JevCommandContext(
+                                    command: cmd,
+                                    application: run.target.localizedName ?? snapshot.applicationName,
+                                    window: snapshot.windowTitle,
+                                    completedSteps: run.commands.prefix(run.nextCommandIndex).map { String($0) }
+                                )
+                                let decision = try await JevClient.decide(context: context, candidates: candidates, apiKey: jevKey)
+                                planned = try JevControlBridge.planStep(
+                                    from: decision,
+                                    candidates: candidates,
+                                    snapshot: snapshot,
+                                    installedApplications: run.installedApplications
+                                )
+                            } else {
+                                throw error
+                            }
+                        }
+                        guard let stepCandidate = planned else {
+                            throw SaysoError.invalidAction("Could not plan action for command.")
+                        }
+                        step = stepCandidate
                         isApprovedStep = false
                         controlStatus = "Planned: \(step.reason)"
                         if ControlPolicy.requiresConfirmation(step) {
@@ -2389,6 +2505,22 @@ private struct ShortcutsWorkspace: View {
 private struct SettingsHome: View {
     @ObservedObject var model: SaysoAppModel
 
+    private var selectedTabTitle: String {
+        switch model.selectedTab {
+        case 0: return "Speak"
+        case 1: return "Control"
+        case 2: return "History"
+        case 3: return "Transcription"
+        case 4: return "Models & Downloads"
+        case 5: return "AI Cleanup"
+        case 6: return "Vocabulary Dictionary"
+        case 7: return "Notch & HUD"
+        case 8: return "Shortcuts"
+        case 9: return "Voice output"
+        default: return "Settings"
+        }
+    }
+
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
@@ -2440,22 +2572,29 @@ private struct SettingsHome: View {
             }
             .frame(minWidth: 218)
         } detail: {
-            switch model.selectedTab {
-            case 0: DictationWorkspace(model: model)
-            case 1: ControlWorkspace(model: model)
-            case 2: HistoryWorkspace(model: model)
-            case 3: TranscriptionWorkspace(model: model)
-            case 4: ModelsWorkspace(model: model)
-            case 5: AICleanupWorkspace(model: model)
-            case 6: VocabularyWorkspace(model: model)
-            case 7: NotchWorkspace(model: model)
-            case 8: ShortcutsWorkspace(model: model)
-            case 9: VoiceOutputWorkspace(model: model, speech: model.speech)
-            default: SaysoSettingsView(model: model)
+            Group {
+                switch model.selectedTab {
+                case 0: DictationWorkspace(model: model)
+                case 1: ControlWorkspace(model: model)
+                case 2: HistoryWorkspace(model: model)
+                case 3: TranscriptionWorkspace(model: model)
+                case 4: ModelsWorkspace(model: model)
+                case 5: AICleanupWorkspace(model: model)
+                case 6: VocabularyWorkspace(model: model)
+                case 7: NotchWorkspace(model: model)
+                case 8: ShortcutsWorkspace(model: model)
+                case 9: VoiceOutputWorkspace(model: model, speech: model.speech)
+                default: SaysoSettingsView(model: model)
+                }
             }
+            .navigationTitle(selectedTabTitle)
+            .toolbarBackground(SaysoPalette.brandNavyDark, for: .windowToolbar)
+            .toolbarBackground(.visible, for: .windowToolbar)
         }
         .tint(SaysoPalette.cobalt)
         .navigationSplitViewStyle(.balanced)
+        .toolbarBackground(SaysoPalette.brandNavyDark, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .overlay(alignment: .bottom) {
             if let notice = model.notice {
                 NoticeBanner(text: notice) { model.notice = nil }
@@ -2724,136 +2863,185 @@ private struct VoiceOutputWorkspace: View {
 private struct ControlWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var command = ""
+    @State private var jevKeyInput = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack {
-                HStack(spacing: 12) {
-                    Image(systemName: "cursorarrow.click.2")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(SaysoPalette.cobalt, in: RoundedRectangle(cornerRadius: 10))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Desktop control").font(.largeTitle.bold())
-                        Text("Ground. Act. Verify.").foregroundStyle(SaysoPalette.muted)
-                    }
-                }
-                Spacer()
-                ModePicker(model: model)
-            }
-            HStack(spacing: 12) {
-                Button {
-                    model.captureDesktop()
-                } label: {
-                    Label("Capture desktop", systemImage: "viewfinder")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(SaysoPalette.cobalt)
-                Button {
-                    model.runSafeDemoControl()
-                } label: {
-                    Label("Verify target", systemImage: "checkmark.shield")
-                }
-                .buttonStyle(.bordered)
-                .tint(SaysoPalette.amber)
-            }
-            .disabled(!model.settings.desktopControlEnabled)
-            HStack(spacing: 12) {
-                TextField("Type, scroll down, or open https://…", text: $command)
-                    .onSubmit { model.runControl(command) }
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    model.runControl(command)
-                } label: {
-                    Label("Run", systemImage: "arrow.up.right")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(SaysoPalette.cobalt)
-                Button("Cancel", role: .cancel) { model.cancelControl() }
-                    .buttonStyle(.bordered)
-            }
-            .disabled(!model.settings.desktopControlEnabled)
-            if !model.settings.desktopControlEnabled {
-                Label("Enable desktop control in Settings before acting.", systemImage: "lock.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(SaysoPalette.muted)
-            }
-            VStack(alignment: .leading, spacing: 12) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    Label("Control status", systemImage: "scope")
-                        .font(.headline)
-                        .foregroundStyle(statusTint)
+                    HStack(spacing: 12) {
+                        Image(systemName: "cursorarrow.click.2")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(SaysoPalette.cobalt, in: RoundedRectangle(cornerRadius: 10))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Desktop control").font(.largeTitle.bold())
+                            Text("Ground. Act. Verify.").foregroundStyle(SaysoPalette.muted)
+                        }
+                    }
                     Spacer()
-                    Text(model.currentSnapshot == nil ? "Awaiting capture" : "Grounded")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(statusTint, in: Capsule())
+                    ModePicker(model: model)
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(model.controlStatus)
-                        .font(.body.weight(.medium))
-                    if let snapshot = model.currentSnapshot {
-                        Label("\(snapshot.applicationName)  •  \(snapshot.windowTitle)", systemImage: "macwindow")
-                            .foregroundStyle(SaysoPalette.muted)
-                        Label(
-                            snapshot.isProtected ? "Protected target, blocked" : "Target eligible for action",
-                            systemImage: snapshot.isProtected ? "xmark.shield" : "checkmark.shield"
-                        )
-                        .foregroundStyle(snapshot.isProtected ? SaysoPalette.crimson : SaysoPalette.amber)
-                        if !snapshot.elements.isEmpty {
-                            Text("Visible controls: \(snapshot.elements.prefix(4).map(\.title).joined(separator: ", "))")
-                                .font(.caption).foregroundStyle(SaysoPalette.muted)
+
+                // TypeSafe / Jev API Key Card
+                SaysoSectionHeader(text: "AI Control Model (Jev-Use)")
+                SaysoApiKeyCard(
+                    providerName: "TypeSafe / Jev",
+                    hasKey: model.hasTypeSafeKey,
+                    apiKeyURL: URL(string: "https://typesafe.ai"),
+                    apiKeyInput: $jevKeyInput,
+                    onSave: {
+                        model.saveTypeSafeKey(jevKeyInput)
+                        jevKeyInput = ""
+                    },
+                    onClear: {
+                        model.removeTypeSafeKey()
+                    }
+                )
+
+                SaysoSectionHeader(text: "Command & Actions")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 12) {
+                            Button {
+                                model.captureDesktop()
+                            } label: {
+                                Label("Capture desktop", systemImage: "viewfinder")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+
+                            Button {
+                                model.runSafeDemoControl()
+                            } label: {
+                                Label("Verify target", systemImage: "checkmark.shield")
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(SaysoPalette.amber)
+                        }
+                        .disabled(!model.settings.desktopControlEnabled)
+
+                        HStack(spacing: 10) {
+                            TextField("e.g. click Settings, scroll down, open Safari...", text: $command)
+                                .onSubmit { model.runControl(command) }
+                                .textFieldStyle(.plain)
+                                .padding(10)
+                                .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(LinearGradient(colors: [Color.black.opacity(0.8), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                                )
+
+                            Button {
+                                model.runControl(command)
+                            } label: {
+                                Label("Run", systemImage: "arrow.up.right")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.cobalt)
+
+                            Button("Cancel", role: .cancel) { model.cancelControl() }
+                                .buttonStyle(.bordered)
+                        }
+                        .disabled(!model.settings.desktopControlEnabled)
+
+                        if !model.settings.desktopControlEnabled {
+                            Label("Enable desktop control in Settings before acting.", systemImage: "lock.fill")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(SaysoPalette.muted)
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(16)
-            .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(statusTint, lineWidth: 1)
-            }
-            if let pending = model.pendingControlStep {
-                HStack(spacing: 12) {
-                    Label("Review required: \(pending.reason)", systemImage: "exclamationmark.shield")
-                        .foregroundStyle(SaysoPalette.amber)
-                    Spacer()
-                    Button("Discard") { model.discardPendingControl() }
-                    Button("Approve") { model.approvePendingControl() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(SaysoPalette.crimson)
-                }
-                .padding(14)
-                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(SaysoPalette.amber, lineWidth: 1)
-                }
-            }
-            if !model.controlEntries.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Recent control actions", systemImage: "checkmark.seal")
-                        .font(.headline)
-                        .foregroundStyle(SaysoPalette.amber)
-                    ForEach(model.controlEntries.prefix(3)) { entry in
-                        Text("\(entry.timestamp.formatted(date: .omitted, time: .shortened))  \(entry.result)")
+
+                SaysoSectionHeader(text: "Control Status")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Status", systemImage: "scope")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(statusTint)
+                            Spacer()
+                            Text(model.currentSnapshot == nil ? "Awaiting capture" : "Grounded")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(statusTint, in: Capsule())
+                        }
+
+                        Text(model.controlStatus)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.white)
+
+                        if let snapshot = model.currentSnapshot {
+                            Divider().background(SaysoPalette.brandNavyContainer)
+                            Label("\(snapshot.applicationName) : \(snapshot.windowTitle)", systemImage: "macwindow")
+                                .font(.subheadline)
+                                .foregroundStyle(SaysoPalette.muted)
+                            Label(
+                                snapshot.isProtected ? "Protected target, blocked" : "Target eligible for action",
+                                systemImage: snapshot.isProtected ? "xmark.shield" : "checkmark.shield"
+                            )
                             .font(.caption)
+                            .foregroundStyle(snapshot.isProtected ? SaysoPalette.crimson : SaysoPalette.amber)
+
+                            if !snapshot.elements.isEmpty {
+                                Text("Visible controls: \(snapshot.elements.prefix(5).map(\.title).filter { !$0.isEmpty }.joined(separator: ", "))")
+                                    .font(.caption).foregroundStyle(SaysoPalette.muted)
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(16)
-                .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+
+                if let pending = model.pendingControlStep {
+                    SaysoCard {
+                        HStack(spacing: 12) {
+                            Label("Review required: \(pending.reason)", systemImage: "exclamationmark.shield")
+                                .foregroundStyle(SaysoPalette.amber)
+                            Spacer()
+                            Button("Discard") { model.discardPendingControl() }
+                            Button("Approve") { model.approvePendingControl() }
+                                .buttonStyle(.borderedProminent)
+                                .tint(SaysoPalette.crimson)
+                        }
+                    }
+                }
+
+                if !model.controlEntries.isEmpty {
+                    SaysoSectionHeader(text: "Recent Actions")
+                    SaysoCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(model.controlEntries.prefix(4)) { entry in
+                                HStack {
+                                    Text(entry.timestamp.formatted(date: .omitted, time: .shortened))
+                                        .font(.caption2)
+                                        .foregroundStyle(SaysoPalette.muted)
+                                    Text(entry.result)
+                                        .font(.caption)
+                                        .foregroundStyle(.white)
+                                }
+                                if entry != model.controlEntries.prefix(4).last {
+                                    Divider().background(SaysoPalette.brandNavyContainer)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.shield")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.muted)
+                    Text("Secure fields, stale targets, and low-confidence plans are rejected safely.")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.muted)
+                }
             }
-            Label("Say “type hello”, “click Send”, “scroll down”, or “open https://…”. Secure fields, stale targets, and low-confidence plans are rejected.", systemImage: "lock.shield")
-                .font(.caption)
-                .foregroundStyle(SaysoPalette.muted)
-            Spacer()
+            .padding(20)
         }
-        .padding(32)
+        .background(SaysoPalette.brandNavyDark)
+        .navigationTitle("Desktop Control")
     }
 
     private var statusTint: Color {
@@ -3132,6 +3320,7 @@ private struct SaysoCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             content
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(
             SaysoPalette.cardSurfaceGradient,
@@ -3754,10 +3943,16 @@ private struct TranscriptionWorkspace: View {
                 SaysoSectionHeader(text: model.settings.language.isIndic ? "Spoken Language & Transliteration" : "Spoken Language")
 
                 SaysoCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Spoken Language")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Spoken Language")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Text("Primary language for speech recognition and acoustic model routing")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+                        Spacer()
                         Picker("Spoken language", selection: $model.settings.language) {
                             ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
                         }
@@ -5335,95 +5530,190 @@ private struct CleanupDirectivesEditor: View {
     }
 }
 
+private struct SaysoSettingItemCard<Content: View>: View {
+    let title: String
+    let description: String
+    let example: String?
+    let content: Content
+
+    init(
+        title: String,
+        description: String,
+        example: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.description = description
+        self.example = example
+        self.content = content()
+    }
+
+    var body: some View {
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    Spacer(minLength: 16)
+                    content
+                }
+                if let example {
+                    HStack(spacing: 6) {
+                        Text("Example:")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(SaysoPalette.brandAmber)
+                        Text(example)
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(LinearGradient(colors: [Color.black.opacity(0.7), Color.white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 1)
+                    )
+                }
+            }
+        }
+    }
+}
+
 private struct SaysoSettingsView: View {
     @ObservedObject var model: SaysoAppModel
     @State private var spoken = ""
     @State private var replacement = ""
+    @State private var jevKeyInput = ""
 
     var body: some View {
-        Form {
-            Section("Notch & Desktop HUD") {
-                Toggle("Show Notch HUD overlay", isOn: Binding(
-                    get: { model.isNotchOverlayVisible },
-                    set: { model.setNotchOverlayVisible($0) }
-                ))
-                Picker("Presentation style", selection: Binding(
-                    get: { model.settings.overlayPresentation },
-                    set: { model.setOverlayPresentation($0) }
-                )) {
-                    ForEach(OverlayPresentation.allCases) { presentation in
-                        Text(presentation.displayName).tag(presentation)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                // Section 1: Notch & Desktop HUD
+                SaysoSectionHeader(text: "Notch & Desktop HUD")
+                SaysoSettingItemCard(
+                    title: "Show Notch HUD overlay",
+                    description: "Displays the floating or notch-docked status overlay on your desktop.",
+                    example: "Quick status pill stays visible near the top of your screen."
+                ) {
+                    Toggle("", isOn: Binding(
+                        get: { model.isNotchOverlayVisible },
+                        set: { model.setNotchOverlayVisible($0) }
+                    ))
+                    .labelsHidden()
                 }
-                HStack(spacing: 12) {
-                    Button(model.isNotchCollapsed ? "Expand HUD" : "Collapse HUD") {
-                        model.toggleNotch()
-                    }
-                    Button("Show HUD") {
-                        model.showNotch()
-                    }
-                    Button("Hide HUD") {
-                        model.hideNotch()
-                    }
-                }
-                Text("Notch mode docks beside the camera cutout or menu bar. Floating mode provides a draggable glass panel on your desktop.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Keyboard Shortcuts & Triggers") {
-                SaysoShortcutRecorderRow(
-                    action: .dictation,
-                    hotKey: Binding(
-                        get: { model.dictationHotKey },
-                        set: { model.setDictationHotKey($0) }
-                    )
-                )
 
-                SaysoShortcutRecorderRow(
-                    action: .control,
-                    hotKey: Binding(
-                        get: { model.controlHotKey },
-                        set: { model.setControlHotKey($0) }
-                    )
-                )
-
-                SaysoShortcutRecorderRow(
-                    action: .toggleNotch,
-                    hotKey: Binding(
-                        get: { model.toggleNotchHotKey },
-                        set: { model.setToggleNotchHotKey($0) }
-                    )
-                )
-
-                if !model.shortcutConflicts.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(model.shortcutConflicts) { conflict in
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(SaysoPalette.amber)
-                                Text(conflict.message)
-                                    .font(.caption)
-                                    .foregroundStyle(SaysoPalette.amber)
-                            }
+                SaysoSettingItemCard(
+                    title: "Presentation style",
+                    description: "Dock alongside MacBook camera cutout or float freely anywhere on the screen.",
+                    example: "Notch docks at top edge; Floating stays where you drag it."
+                ) {
+                    Picker("Presentation style", selection: Binding(
+                        get: { model.settings.overlayPresentation },
+                        set: { model.setOverlayPresentation($0) }
+                    )) {
+                        ForEach(OverlayPresentation.allCases) { presentation in
+                            Text(presentation.displayName).tag(presentation)
                         }
                     }
-                    .padding(8)
-                    .background(SaysoPalette.amber.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                    .labelsHidden()
                 }
 
-                Divider()
-
-                Picker("Dictation activation", selection: $model.settings.hotKeyActivation) {
-                    ForEach(DictationHotKeyActivation.allCases) { activation in
-                        Text(activation.displayName).tag(activation)
+                SaysoCard {
+                    HStack(spacing: 12) {
+                        Button(model.isNotchCollapsed ? "Expand HUD" : "Collapse HUD") {
+                            model.toggleNotch()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(SaysoPalette.cobalt)
+                        Button("Show HUD") {
+                            model.showNotch()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(SaysoPalette.cobalt)
+                        Button("Hide HUD") {
+                            model.hideNotch()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(SaysoPalette.crimson)
                     }
+                    .font(.caption.weight(.semibold))
+                }
+
+                // Section 2: Keyboard Shortcuts & Triggers
+                SaysoSectionHeader(text: "Keyboard Shortcuts & Triggers")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        SaysoShortcutRecorderRow(
+                            action: .dictation,
+                            hotKey: Binding(
+                                get: { model.dictationHotKey },
+                                set: { model.setDictationHotKey($0) }
+                            )
+                        )
+                        Divider().background(SaysoPalette.brandNavyContainer)
+                        SaysoShortcutRecorderRow(
+                            action: .control,
+                            hotKey: Binding(
+                                get: { model.controlHotKey },
+                                set: { model.setControlHotKey($0) }
+                            )
+                        )
+                        Divider().background(SaysoPalette.brandNavyContainer)
+                        SaysoShortcutRecorderRow(
+                            action: .toggleNotch,
+                            hotKey: Binding(
+                                get: { model.toggleNotchHotKey },
+                                set: { model.setToggleNotchHotKey($0) }
+                            )
+                        )
+
+                        if !model.shortcutConflicts.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(model.shortcutConflicts) { conflict in
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(SaysoPalette.amber)
+                                        Text(conflict.message)
+                                            .font(.caption)
+                                            .foregroundStyle(SaysoPalette.amber)
+                                    }
+                                }
+                            }
+                            .padding(8)
+                            .background(SaysoPalette.amber.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                    }
+                }
+
+                SaysoSettingItemCard(
+                    title: "Dictation activation",
+                    description: "Toggle dictation with a single tap or hold down the key while speaking.",
+                    example: "Tap to talk: tap once to record, tap again to paste."
+                ) {
+                    Picker("Dictation activation", selection: $model.settings.hotKeyActivation) {
+                        ForEach(DictationHotKeyActivation.allCases) { activation in
+                            Text(activation.displayName).tag(activation)
+                        }
+                    }
+                    .labelsHidden()
                 }
 
                 if model.settings.hotKeyActivation.usesPressAndHold {
-                    HStack {
-                        Text("Hold threshold: \(model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2)))s")
-                        Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
-                    }
+                    SaysoSliderCard(
+                        title: "Hold threshold",
+                        subtitle: "Minimum duration to hold before dictation begins",
+                        valueDisplay: String(format: "%.2fs", model.settings.hotKeyHoldThresholdSeconds),
+                        value: $model.settings.hotKeyHoldThresholdSeconds,
+                        range: 0.2 ... 1,
+                        step: 0.05
+                    )
                 }
 
                 HStack {
@@ -5432,27 +5722,43 @@ private struct SaysoSettingsView: View {
                         model.resetShortcutsToDefaults()
                     }
                     .buttonStyle(.bordered)
+                    .tint(SaysoPalette.brandAmber)
                     .font(.caption)
                 }
-            }
-            Section("Language") {
-                Picker("Spoken language", selection: $model.settings.language) {
-                    ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
+
+                // Section 3: Spoken Language & Delivery
+                SaysoSectionHeader(text: "Language & Delivery")
+
+                SaysoSettingItemCard(
+                    title: "Spoken language",
+                    description: "Primary language for speech recognition and acoustic model routing.",
+                    example: "Choose English, Hindi, Tamil, Spanish, etc."
+                ) {
+                    Picker("Spoken language", selection: $model.settings.language) {
+                        ForEach(DictationLanguage.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden()
                 }
-                if model.settings.route == .local, model.nativeModelDownloadAvailable(for: model.settings.language) {
-                    Text(model.nativeModelReady(for: model.settings.language)
-                        ? "Selected language runs locally on this Mac."
-                        : "Download the selected local model in Models before dictating.")
-                        .font(.caption)
-                        .foregroundStyle(model.nativeModelReady(for: model.settings.language) ? .secondary : SaysoPalette.crimson)
-                } else {
-                    Text(SpeechCapabilities.supports(model.settings.language) ? "Available on this Mac" : "Unavailable on this Mac, choose another language or cloud route")
-                        .font(.caption).foregroundStyle(SpeechCapabilities.supports(model.settings.language) ? .secondary : SaysoPalette.crimson)
+
+                SaysoSettingItemCard(
+                    title: "Speech route",
+                    description: "Recognition engine to use for transcribing audio.",
+                    example: "Local (On-Device Neural), Apple Speech, or BYOK Cloud."
+                ) {
+                    Picker("Speech route", selection: $model.settings.route) {
+                        ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden()
                 }
-                Picker("Speech route", selection: $model.settings.route) {
-                    ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
+
+                SaysoSettingItemCard(
+                    title: "Translate final text",
+                    description: "Automatically translates your transcribed words into another language.",
+                    example: "Speak in French or Hindi -> text is delivered in English."
+                ) {
+                    Toggle("", isOn: $model.settings.translationEnabled).labelsHidden()
                 }
-                Toggle("Translate final text", isOn: $model.settings.translationEnabled)
+
                 if model.settings.language.isIndic {
                     SaysoTransliterationCard(
                         transliterateToLatin: $model.settings.transliterateIndicToLatin,
@@ -5460,225 +5766,322 @@ private struct SaysoSettingsView: View {
                         onToggle: { _ in model.save() }
                     )
                 }
-                Toggle("Insert final text", isOn: $model.settings.autoInsert)
-                Toggle("Insert partial text live in TextEdit and Notes", isOn: $model.settings.livePartialInsertion)
-                    .disabled(!model.settings.autoInsert)
-                if model.settings.livePartialInsertion {
-                    Text("Live text stays off in browsers, Electron apps and protected fields. Final delivery remains unchanged everywhere else.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                SaysoSettingItemCard(
+                    title: "Insert final text (Automatic paste)",
+                    description: "Pastes finalized text directly into your frontmost active application.",
+                    example: "Cursor in Slack, Notes, or Terminal gets the transcribed text instantly."
+                ) {
+                    Toggle("", isOn: $model.settings.autoInsert).labelsHidden()
                 }
-                Toggle("Restore clipboard after paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
-                    .disabled(!model.settings.autoInsert)
-                Toggle("Hands-free dictation", isOn: $model.settings.handsFree)
-                if model.settings.handsFree {
-                    Toggle("Continue after each delivered phrase", isOn: $model.settings.handsFreeContinuous)
+
+                SaysoSettingItemCard(
+                    title: "Insert partial text live in TextEdit and Notes",
+                    description: "Streams words into document fields as you speak in supported apps.",
+                    example: "Words appear live in Notes before you stop talking."
+                ) {
+                    Toggle("", isOn: $model.settings.livePartialInsertion)
+                        .labelsHidden()
                         .disabled(!model.settings.autoInsert)
-                    HStack {
-                        Text("Stop after \(model.settings.handsFreeSilenceSeconds, format: .number.precision(.fractionLength(1))) seconds of silence")
-                        Slider(value: $model.settings.handsFreeSilenceSeconds, in: 0.5 ... 5, step: 0.1)
-                    }
-                    HStack {
-                        let maximumCaptureSeconds = Int(model.settings.handsFreeMaximumDurationSeconds)
-                        let remainingSeconds = maximumCaptureSeconds % 60
-                        let captureLabel = "\(maximumCaptureSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
-                        Text("Maximum \(captureLabel) phrase")
-                        Slider(value: $model.settings.handsFreeMaximumDurationSeconds, in: 5 ... 3_600, step: 5)
-                    }
-                    if model.settings.handsFreeContinuous {
-                        if model.settings.autoInsert {
-                            HStack {
-                                let maximumSessionSeconds = Int(model.settings.handsFreeMaximumSessionDurationSeconds)
-                                let remainingSeconds = maximumSessionSeconds % 60
-                                let sessionLabel = "\(maximumSessionSeconds / 60):\(remainingSeconds < 10 ? "0\(remainingSeconds)" : "\(remainingSeconds)")"
-                                Text("Maximum \(sessionLabel) continuous session")
-                                Slider(value: $model.settings.handsFreeMaximumSessionDurationSeconds, in: 30 ... 3_600, step: 30)
-                            }
-                            Text("Pins the original app. Ends after this limit or 50 phrases, completing the current phrase safely. Waits up to 8 seconds for the next phrase.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Continuous listening requires Insert final text.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 }
-                Toggle("Play start and stop sounds", isOn: $model.settings.soundCues)
-                Toggle("Save dictation audio in History", isOn: $model.settings.saveSessionAudio)
-                Text("New audio stays on this Mac. Existing History audio remains until deleted.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Microphone") {
-                Picker("Input", selection: $model.settings.preferredAudioInputUID) {
-                    Text("macOS default").tag(nil as AudioInputDeviceUID?)
-                    ForEach(model.audioInputDevices) { device in
-                        Text(device.displayName).tag(Optional(device.uid))
-                    }
+
+                SaysoSettingItemCard(
+                    title: "Restore clipboard after paste fallback",
+                    description: "Restores your prior clipboard contents after Sayso pastes your dictation.",
+                    example: "Previously copied URLs or snippets remain on your clipboard."
+                ) {
+                    Toggle("", isOn: $model.settings.restoreClipboardAfterPaste)
+                        .labelsHidden()
+                        .disabled(!model.settings.autoInsert)
                 }
-                Button("Refresh microphones") { model.refreshAudioInputDevices() }
-                if let selected = model.settings.preferredAudioInputUID,
-                   !model.audioInputDevices.contains(where: { $0.uid == selected }) {
-                    Text("Selected microphone is unavailable. Sayso uses the macOS default until it reconnects.")
-                        .font(.caption)
-                        .foregroundStyle(SaysoPalette.amber)
-                } else {
-                    Text("A selected microphone is used only while dictating, then Sayso restores your prior macOS default.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+                // Section 4: Hands-Free & Silence Detection
+                SaysoSectionHeader(text: "Hands-Free & Silence Detection")
+                SaysoSettingItemCard(
+                    title: "Hands-free dictation",
+                    description: "Automatically finalizes and pastes text when speech pauses without pressing keys.",
+                    example: "Natural pause ends recording automatically."
+                ) {
+                    Toggle("", isOn: $model.settings.handsFree).labelsHidden()
                 }
-            }
-            Section("Permissions") {
-                ForEach(PermissionKind.allCases) { permission in
-                    HStack {
-                        Text(permission.displayName)
-                        Spacer()
-                        Text(label(for: model.permissions.states[permission] ?? .undetermined))
-                        Button("Request") { Task { await model.permissions.request(permission) } }
-                    }
-                }
-            }
-            Section("Privacy") {
-                Toggle("I understand Apple Speech transmits voice data", isOn: $model.settings.cloudConsentGranted)
-                Toggle("I understand BYOK routes transmit data to my configured provider", isOn: $model.settings.byokConsentGranted)
-                Toggle("Allow selected text to go to voice-edit provider", isOn: $model.settings.voiceEditCloudConsent)
-                Toggle("Enable desktop control and local automation", isOn: Binding(
-                    get: { model.settings.desktopControlEnabled },
-                    set: { model.setAutomation($0) }
-                ))
-            }
-            Section("Dictation profile") {
-                TextField("Profile name", text: $model.settings.dictationProfile.name)
-                Toggle("Normalize whitespace", isOn: $model.settings.dictationProfile.normalizesWhitespace)
-                Toggle("Capitalize sentences", isOn: $model.settings.dictationProfile.capitalizesSentences)
-                CleanupDirectivesEditor(
-                    title: "Cleanup directives (comma-separated)",
-                    directives: $model.settings.dictationProfile.cleanupDirectives
-                )
-                Divider()
-                Text("App profiles use these defaults only for the matching app.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach($model.settings.dictationProfileOverrides) { $override in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            TextField("App bundle identifier", text: $override.bundleIdentifier)
-                            Button("Remove", role: .destructive) {
-                                model.settings.dictationProfileOverrides.removeAll { $0.id == override.id }
-                                model.save()
-                            }
-                        }
-                        TextField("App profile name", text: $override.profile.name)
-                        Picker("Spoken language", selection: $override.profile.languageOverride) {
-                            Text("Use global setting").tag(DictationLanguage?.none)
-                            ForEach(DictationLanguage.allCases) { language in
-                                Text(language.displayName).tag(Optional(language))
-                            }
-                        }
-                        Picker("Speech route", selection: $override.profile.routeOverride) {
-                            Text("Use global setting").tag(ProviderRoute?.none)
-                            ForEach(ProviderRoute.dictationRoutes) { route in
-                                Text(route.displayName).tag(Optional(route))
-                            }
-                        }
-                        TextField("Transcription model override", text: Binding(
-                            get: { override.profile.transcriptionModelOverride ?? "" },
-                            set: { override.profile.transcriptionModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                        ))
-                        Picker("Translation", selection: $override.profile.translationEnabledOverride) {
-                            Text("Use global setting").tag(Bool?.none)
-                            Text("On").tag(Optional(true))
-                            Text("Off").tag(Optional(false))
-                        }
-                        Picker("Translation output", selection: $override.profile.outputLanguageOverride) {
-                            Text("Use global setting").tag(DictationLanguage?.none)
-                            ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { language in
-                                Text(language.displayName).tag(Optional(language))
-                            }
-                        }
-                        Picker("Transcript cleanup", selection: $override.profile.cleanupEnabledOverride) {
-                            Text("Use global setting").tag(Bool?.none)
-                            Text("On").tag(Optional(true))
-                            Text("Off").tag(Optional(false))
-                        }
-                        TextField("Cleanup model override", text: Binding(
-                            get: { override.profile.cleanupModelOverride ?? "" },
-                            set: { override.profile.cleanupModelOverride = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                        ))
-                        CleanupDirectivesEditor(
-                            title: "Cleanup directives (comma-separated)",
-                            directives: $override.profile.cleanupDirectives
-                        )
-                        Toggle("Normalize whitespace for this app", isOn: $override.profile.normalizesWhitespace)
-                        Toggle("Capitalize sentences for this app", isOn: $override.profile.capitalizesSentences)
-                    }
-                    .padding(.vertical, 4)
-                }
-                Button("Add active app profile") { model.addDictationProfileOverrideForLastExternalApp() }
-            }
-            Section("Transcript cleanup") {
-                Toggle("Clean final transcripts", isOn: $model.settings.cleanupEnabled)
-                Text("Local cleanup removes blank-audio markers and fixes safe spacing and punctuation.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if model.settings.cleanupEnabled {
-                    Toggle("Use your cloud model for cleanup", isOn: $model.settings.cloudCleanupEnabled)
-                        .disabled(!model.settings.byokConsentGranted)
-                    if model.settings.cloudCleanupEnabled {
-                        TextField("Cleanup model", text: $model.settings.byokCleanupModel)
-                        Text("Transcript text leaves this Mac only with BYOK cloud consent and your stored key.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            Section("Smart corrections") {
-                Toggle("Learn from edits after dictation", isOn: $model.settings.autoCorrectionsEnabled)
-                if model.settings.autoCorrectionsEnabled {
-                    Stepper(
-                        "Promote after \(model.settings.autoCorrectionsPromotionThreshold) edits",
-                        value: $model.settings.autoCorrectionsPromotionThreshold,
-                        in: 2 ... 10
+
+                if model.settings.handsFree {
+                    SaysoSliderCard(
+                        title: "Silence timeout",
+                        subtitle: "Seconds of silence before Sayso finalizes your phrase",
+                        valueDisplay: String(format: "%.1fs", model.settings.handsFreeSilenceSeconds),
+                        value: $model.settings.handsFreeSilenceSeconds,
+                        range: 0.5 ... 5,
+                        step: 0.1
                     )
-                    if model.corrections.isMonitoring {
-                        Label("Watching the last inserted text for an edit", systemImage: "eye")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                    SaysoSettingItemCard(
+                        title: "Continue after each delivered phrase",
+                        description: "Keeps listening for new phrases after delivering each sentence.",
+                        example: "Dictate multiple sentences continuously without re-triggering."
+                    ) {
+                        Toggle("", isOn: $model.settings.handsFreeContinuous)
+                            .labelsHidden()
+                            .disabled(!model.settings.autoInsert)
                     }
                 }
-                HStack {
-                    TextField("Heard", text: $spoken)
-                    TextField("Write", text: $replacement)
-                    Button("Add") {
-                        model.addLexiconCorrection(spoken, replacement: replacement)
-                        spoken = ""; replacement = ""
-                    }
-                }
-                ForEach(model.corrections.rules) { rule in
-                    HStack {
-                        Text(rule.aliases.joined(separator: ", ")).foregroundStyle(.secondary)
-                        Image(systemName: "arrow.right")
-                        Text(rule.canonical)
-                        Spacer()
-                        Button("Remove") { model.removeLexiconCorrection(rule) }
-                    }
-                }
-                if !model.corrections.candidates.isEmpty {
-                    ForEach(model.corrections.candidates) { candidate in
+
+                // Section 5: Audio Hardware & Sound Cues
+                SaysoSectionHeader(text: "Audio Hardware & Cues")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Microphone Input")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
                         HStack {
-                            Label("\(candidate.original) → \(candidate.corrected) · \(candidate.seenCount)x", systemImage: "wand.and.stars")
+                            Picker("Microphone", selection: $model.settings.preferredAudioInputUID) {
+                                Text("macOS default").tag(nil as AudioInputDeviceUID?)
+                                ForEach(model.audioInputDevices) { device in
+                                    Text(device.displayName).tag(Optional(device.uid))
+                                }
+                            }
+                            .labelsHidden()
                             Spacer()
-                            Button("Dismiss") { model.dismissCorrection(candidate) }
-                            Button("Promote") { model.promoteCorrection(candidate) }
+                            Button("Refresh") { model.refreshAudioInputDevices() }
+                                .buttonStyle(.bordered)
+                                .tint(SaysoPalette.brandAmber)
+                                .font(.caption)
                         }
                     }
                 }
+
+                SaysoSettingItemCard(
+                    title: "Audio ducking",
+                    description: "Lowers background media playback volume while dictation is recording.",
+                    example: "Spotify or Apple Music volume dips while you speak."
+                ) {
+                    Toggle("", isOn: $model.settings.audioDuckingEnabled).labelsHidden()
+                }
+
+                SaysoSettingItemCard(
+                    title: "Sound cues",
+                    description: "Plays subtle audio start and stop tones when recording begins and completes.",
+                    example: "Chime confirms microphone is hot and audio is delivered."
+                ) {
+                    Toggle("", isOn: $model.settings.soundCues).labelsHidden()
+                }
+
+                SaysoSettingItemCard(
+                    title: "Save dictation audio in History",
+                    description: "Keeps recorded audio locally on this Mac for playback in the History tab.",
+                    example: "Replay past dictations anytime from the History tab."
+                ) {
+                    Toggle("", isOn: $model.settings.saveSessionAudio).labelsHidden()
+                }
+
+                // Section 6: Dictation Profile & Text Polishing
+                SaysoSectionHeader(text: "Dictation Profile & Text Polishing")
+                SaysoSettingItemCard(
+                    title: "Normalize whitespace",
+                    description: "Collapses duplicate spaces, extra tabs, and redundant blank lines into clean spacing.",
+                    example: "\"Hello    world\" -> \"Hello world\""
+                ) {
+                    Toggle("", isOn: $model.settings.dictationProfile.normalizesWhitespace).labelsHidden()
+                }
+
+                SaysoSettingItemCard(
+                    title: "Capitalize sentences",
+                    description: "Automatically capitalizes the first word of each sentence after periods, question marks, and line breaks.",
+                    example: "\"how are you. i am good\" -> \"How are you. I am good.\""
+                ) {
+                    Toggle("", isOn: $model.settings.dictationProfile.capitalizesSentences).labelsHidden()
+                }
+
+                // Section 7: App Profile Overrides
+                SaysoSectionHeader(text: "App Profile Overrides")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("App-specific dictation profiles override global defaults when the matching app is frontmost.")
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                        ForEach($model.settings.dictationProfileOverrides) { $override in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    TextField("App bundle identifier", text: $override.bundleIdentifier)
+                                        .textFieldStyle(.roundedBorder)
+                                    Button("Remove", role: .destructive) {
+                                        model.settings.dictationProfileOverrides.removeAll { $0.id == override.id }
+                                        model.save()
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(SaysoPalette.crimson)
+                                }
+                                TextField("App profile name", text: $override.profile.name)
+                                    .textFieldStyle(.roundedBorder)
+                                Picker("Spoken language", selection: $override.profile.languageOverride) {
+                                    Text("Use global setting").tag(DictationLanguage?.none)
+                                    ForEach(DictationLanguage.allCases) { language in
+                                        Text(language.displayName).tag(Optional(language))
+                                    }
+                                }
+                                Picker("Speech route", selection: $override.profile.routeOverride) {
+                                    Text("Use global setting").tag(ProviderRoute?.none)
+                                    ForEach(ProviderRoute.dictationRoutes) { route in
+                                        Text(route.displayName).tag(Optional(route))
+                                    }
+                                }
+                                Toggle("Normalize whitespace for this app", isOn: $override.profile.normalizesWhitespace)
+                                Toggle("Capitalize sentences for this app", isOn: $override.profile.capitalizesSentences)
+                            }
+                            .padding(10)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        Button("Add active app profile") { model.addDictationProfileOverrideForLastExternalApp() }
+                            .buttonStyle(.bordered)
+                            .tint(SaysoPalette.brandAmber)
+                            .font(.caption)
+                    }
+                }
+
+                // Section 8: Smart Corrections & Learned Words
+                SaysoSectionHeader(text: "Smart Corrections & Learned Words")
+                SaysoSettingItemCard(
+                    title: "Learn from edits after dictation",
+                    description: "Watches the text box after paste. If you manually fix a misheard word, Sayso learns the correction.",
+                    example: "If you correct \"teh\" to \"the\", Sayso learns to apply it automatically."
+                ) {
+                    Toggle("", isOn: $model.settings.autoCorrectionsEnabled).labelsHidden()
+                }
+
+                if model.settings.autoCorrectionsEnabled {
+                    SaysoCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Stepper(
+                                "Promote after \(model.settings.autoCorrectionsPromotionThreshold) edits",
+                                value: $model.settings.autoCorrectionsPromotionThreshold,
+                                in: 2 ... 10
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(.white)
+
+                            if model.corrections.isMonitoring {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "eye.fill")
+                                        .foregroundStyle(SaysoPalette.brandAmber)
+                                    Text("Watching the last inserted text for edits")
+                                        .font(.caption)
+                                        .foregroundStyle(SaysoPalette.muted)
+                                }
+                            }
+
+                            HStack {
+                                TextField("Heard", text: $spoken)
+                                    .textFieldStyle(.roundedBorder)
+                                TextField("Write", text: $replacement)
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Add") {
+                                    model.addLexiconCorrection(spoken, replacement: replacement)
+                                    spoken = ""; replacement = ""
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(SaysoPalette.cobalt)
+                            }
+
+                            ForEach(model.corrections.rules) { rule in
+                                HStack {
+                                    Text(rule.aliases.joined(separator: ", ")).foregroundStyle(SaysoPalette.muted)
+                                    Image(systemName: "arrow.right").font(.caption).foregroundStyle(SaysoPalette.brandAmber)
+                                    Text(rule.canonical).foregroundStyle(.white).fontWeight(.medium)
+                                    Spacer()
+                                    Button("Remove") { model.removeLexiconCorrection(rule) }
+                                        .buttonStyle(.borderless)
+                                        .foregroundStyle(SaysoPalette.crimson)
+                                }
+                            }
+
+                            if !model.corrections.candidates.isEmpty {
+                                ForEach(model.corrections.candidates) { candidate in
+                                    HStack {
+                                        Label("\(candidate.original) -> \(candidate.corrected) (\(candidate.seenCount)x)", systemImage: "wand.and.stars")
+                                            .font(.caption)
+                                            .foregroundStyle(SaysoPalette.brandAmber)
+                                        Spacer()
+                                        Button("Dismiss") { model.dismissCorrection(candidate) }
+                                            .buttonStyle(.bordered)
+                                            .font(.caption2)
+                                        Button("Promote") { model.promoteCorrection(candidate) }
+                                            .buttonStyle(.borderedProminent)
+                                            .tint(SaysoPalette.emerald)
+                                            .font(.caption2)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Section 9: Privacy & Permissions
+                SaysoSectionHeader(text: "Privacy & Permissions")
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(PermissionKind.allCases) { permission in
+                            HStack {
+                                Text(permission.displayName)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.white)
+                                Spacer()
+                                Text(label(for: model.permissions.states[permission] ?? .undetermined))
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(model.permissions.states[permission] == .granted ? SaysoPalette.emerald : SaysoPalette.amber)
+                                Button("Request") {
+                                    Task { await model.permissions.request(permission) }
+                                }
+                                .buttonStyle(.bordered)
+                                .font(.caption)
+                            }
+                            if permission != PermissionKind.allCases.last {
+                                Divider().background(SaysoPalette.brandNavyContainer)
+                            }
+                        }
+                    }
+                }
+
+                SaysoSettingItemCard(
+                    title: "Desktop control & automation",
+                    description: "Enables hands-free desktop command execution and local automation server.",
+                    example: "Say \"open Safari\" or \"click Submit\"."
+                ) {
+                    Toggle("", isOn: Binding(
+                        get: { model.settings.desktopControlEnabled },
+                        set: { model.setAutomation($0) }
+                    )).labelsHidden()
+                }
+
+                if model.settings.desktopControlEnabled {
+                    SaysoApiKeyCard(
+                        providerName: "TypeSafe / Jev Control",
+                        hasKey: model.hasTypeSafeKey,
+                        apiKeyURL: URL(string: "https://typesafe.ai"),
+                        apiKeyInput: $jevKeyInput,
+                        onSave: {
+                            model.saveTypeSafeKey(jevKeyInput)
+                            jevKeyInput = ""
+                        },
+                        onClear: {
+                            model.removeTypeSafeKey()
+                        }
+                    )
+                }
+
+                SaysoSettingItemCard(
+                    title: "Cloud transcription consent",
+                    description: "Consent to send audio data to configured BYOK provider for speech recognition.",
+                    example: "Required only when using OpenAI, Groq, or Anthropic routes."
+                ) {
+                    Toggle("", isOn: $model.settings.byokConsentGranted).labelsHidden()
+                }
+
+                CloudProviderSettings(model: model)
             }
-            CloudProviderSettings(model: model)
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding()
+        .background(SaysoPalette.brandNavyDark)
+        .navigationTitle("Settings")
         .onChange(of: model.settings) { _, _ in model.save() }
     }
 
