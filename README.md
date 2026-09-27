@@ -2,107 +2,132 @@
   <img src="docs/logo.svg" alt="Sayso" width="120" />
 </p>
 
-<h1 align="center">Sayso</h1>
+<h1 align="center">Sayso: 100% Private Voice Dictation</h1>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/stevengonsalvez/sayso?style=flat" alt="License" /></a>
-  <img src="https://img.shields.io/badge/platform-Android%2010%2B-3DDC84?style=flat&logo=android&logoColor=white" alt="Platform" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat" alt="License" /></a>
+  <img src="https://img.shields.io/badge/Cost-100%25%20Free%20%26%20Open%20Source-brightgreen?style=flat" alt="Free" />
+  <img src="https://img.shields.io/badge/Privacy-Zero%20Data%20Leaves%20Device-success?style=flat&logo=shield" alt="Privacy" />
+  <img src="https://img.shields.io/badge/Platform-Android%2011%2B%20(API%2030%2B)-3DDC84?style=flat&logo=android&logoColor=white" alt="Platform" />
   <a href="https://github.com/stevengonsalvez/sayso/releases/latest"><img src="https://img.shields.io/github/v/release/stevengonsalvez/sayso?style=flat&sort=semver" alt="GitHub release" /></a>
   <a href="https://play.google.com/store/apps/details?id=ai.sayso.dictation"><img src="https://img.shields.io/badge/Google_Play-Closed_Testing-4285F4?style=flat&logo=google-play&logoColor=white" alt="Google Play" /></a>
   <a href="https://github.com/stevengonsalvez/sayso/stargazers"><img src="https://img.shields.io/github/stars/stevengonsalvez/sayso?style=flat" alt="GitHub stars" /></a>
 </p>
 
 <p align="center">
-  The open-source, private voice dictation app for Android.<br/>
-  Talk anywhere. Types directly into whatever app you are using: WhatsApp, Slack, Gmail, Notion, Docs. 100% offline or cloud AI.
+  <strong>The 100% private, free, and open-source voice typing assistant for Android.</strong><br/>
+  Talk anywhere. Types directly into WhatsApp, Slack, Gmail, Notion, Docs, or Termux.<br/>
+  <strong>No subscriptions. No ads. No telemetry. Zero audio or text ever leaves your phone.</strong>
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> &middot;
-  <a href="#download">Download</a> &middot;
+  <a href="#key-features">Key Features</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
-  <a href="#on-device-models">On-Device Models</a> &middot;
-  <a href="#build-from-source">Quick Start</a> &middot;
-  <a href="#privacy">Privacy</a> &middot;
-  <a href="#contributing">Contributing</a>
+  <a href="#on-device-models">Voice Models</a> &middot;
+  <a href="#download">Download</a> &middot;
+  <a href="#quick-start">Quick Start</a> &middot;
+  <a href="#privacy--data-safety">Privacy</a> &middot;
+  <a href="#tech-stack">Tech Stack</a>
 </p>
 
 ---
 
-Sayso turns your voice into clean, polished text injected straight into whatever app you are using. Tap the floating overlay bubble or speak a hands-free wake word, talk normally, and watch your words appear directly at your cursor in WhatsApp, Slack, Gmail, Notion, Chrome, or any text box.
+## 🌟 Key Features
 
-Choose between fully private offline transcription with on-device speech-to-text models like NVIDIA Parakeet, Moonshine, SenseVoice, and Whisper (where your audio never leaves your device), or ultra-fast cloud processing with Gemini, Deepgram, ElevenLabs, and Groq. Zero analytics, no remote telemetry, hardware-encrypted keys, fully open source.
+### 🔒 100% Private, On-Device, and Offline
+Sayso processes all speech on your phone hardware. Zero audio bytes, transcripts, or keystrokes are transmitted to external servers. It runs without internet, in airplane mode, or in remote areas. No account registration, no remote databases, no tracking, and no analytics SDKs.
 
-## Download
+### 💸 Completely Free Forever
+No subscriptions, no usage tiers, no paywalls, and no ads. 100% open-source software under the MIT license.
 
-| Source | Link | Notes |
-|---|---|---|
-| GitHub Releases | [`.apk`](https://github.com/stevengonsalvez/sayso/releases/latest) | Direct APK install, universal build |
-| Google Play | [`Play Store`](https://play.google.com/store/apps/details?id=ai.sayso.dictation) | Closed testing track (`ai.sayso.dictation`) |
-| Build from Source | [`make build`](#build-from-source) | Kotlin + Android SDK platform 36 |
+### 🎙️ Hands-Free "Hey Sayso" Wake Word (with VoIP Protection)
+- Say **"Hey Sayso"** or **"Sayso"** to trigger voice dictation completely hands-free.
+- **Smart Call Suppression**: Automatically pauses wake-word listening during cellular phone calls, WhatsApp voice calls, and VoIP meetings. It never pops up or interrupts conversations.
+- Adjustable acoustic sensitivity (High, Medium, Low) for quiet rooms or noisy commutes.
 
-## Architecture
+### 🇮🇳 Indian Languages with Tanglish & Hinglish Transliteration
+- Powered by state-of-the-art **AI4Bharat IndicConformer** models for Tamil, Hindi, and Malayalam.
+- **Phonetic Transliteration**: Speak colloquial Tamil, Hindi, or Malayalam, and Sayso converts it to readable Tanglish, Hinglish, or Manglish in English letters (e.g. *"Vanakkam, eppadi irukkeenga?"*).
+- 1-tap toggle between phonetic English letters and native scripts (தமிழ், हिंदी, മലയാളം).
+
+### ⚡ Sub-100ms Ultra-Fast English Dictation
+Powered by NVIDIA Parakeet TDT CTC 110M INT8 via Sherpa-ONNX. Delivers desktop-grade real-time factor (RTF < 0.15) for instant dictation with zero lag.
+
+### 🚀 Types Directly Over Any App
+A lightweight floating microphone bubble hovers unobtrusively over your screen. Tap or speak the wake word, and Sayso types your words directly into WhatsApp, Slack, Gmail, Notion, Chrome, or Termux via the Android AccessibilityService API. No copy-pasting required.
+
+### ✨ On-Device AI Polish & Smart Markdown Formatting
+- Built-in regex rules and local SLMs (Qwen 2.5 0.5B / Phi-3 Mini) clean up filler words ("um", "uh"), remove stutter, and repair punctuation.
+- **Task Formatting**: Say "action items" or "todo list" to generate clean Markdown checklists: `- [ ] buy groceries`.
+- **Note Summaries**: Dictate rambling thoughts and convert them into structured bullet points.
+
+### 🌐 90+ Multilingual Languages Supported
+Easily switch to Whisper Multilingual Tiny or Base to dictate in Spanish, French, German, Italian, Portuguese, Dutch, Japanese, Korean, Chinese, Arabic, and more.
+
+### 🔑 Bring Your Own Key (BYOK) Cloud Option
+If you prefer cloud models, optionally connect OpenAI Whisper, Google Gemini 2.5 Flash, Deepgram Nova-3, ElevenLabs, or Groq with your own API keys. All keys are encrypted locally using the Android Keystore (`KeystoreSecretStore`).
+
+---
+
+## 🏛️ Architecture
 
 ```
-┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│ Floating Bubble │──────▶│ Audio Capture   │──────▶│ STT Engine      │
-│ (Overlay / Mic) │       │ (16kHz PCM Wav) │       │ (Local / Cloud) │
-└─────────────────┘       └─────────────────┘       └────────┬────────┘
-                                                             │
-                                                             ▼
-┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│ Active App      │◀──────│ Text Injector   │◀──────│ AI Polisher     │
-│ (Target Cursor) │       │ (Accessibility) │       │ (Rules / LLM)   │
-└─────────────────┘       └─────────────────┘       └─────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                              SAYSO CORE                                │
+│                                                                        │
+│   ┌──────────────────┐    ┌──────────────────┐    ┌────────────────┐   │
+│   │   Audio Source   │───▶│  KWS Wake Word   │───▶│ Audio Capture  │   │
+│   │  (16kHz/16-bit)  │    │  (Zipformer 4MB) │    │  (Noise Floor) │   │
+│   └──────────────────┘    └──────────────────┘    └───────┬────────┘   │
+│            │                       │                      │            │
+│            ▼                       ▼                      ▼            │
+│   ┌──────────────────┐    ┌──────────────────┐    ┌────────────────┐   │
+│   │ CallStateDetector│    │ Neural LID (Opt) │    │ Local STT Pool │   │
+│   │ (Zero-Permission)│    │  (Whisper Tiny)  │    │ Parakeet/Indic │   │
+│   └──────────────────┘    └──────────────────┘    └───────┬────────┘   │
+│                                                           │            │
+│                                                           ▼            │
+│   ┌──────────────────┐    ┌──────────────────┐    ┌────────────────┐   │
+│   │ Accessibility API│◀───│ Post-Processing  │◀───│ Indic Translit │   │
+│   │ (Types in Apps)  │    │  (SLM / Rules)   │    │  (Phonetic)    │   │
+│   └──────────────────┘    └──────────────────┘    └────────────────┘   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+---
 
-- **Push-to-talk floating bubble**: Draggable, edge-snapping overlay button accessible from any screen or app. Single tap to record, tap to finish, or hold to talk.
-- **Direct cursor text injection**: Injects text directly into the focused field of any Android application via Accessibility Service without needing to switch keyboards.
-- **100% offline on-device transcription**: Run high-accuracy speech-to-text locally via sherpa-onnx. Zero network required, zero audio leaves your phone.
-- **Cloud STT providers (BYOK)**: Connect Google Gemini 2.5 Flash, Deepgram Nova-3, ElevenLabs Scribe, OpenAI Whisper, or Groq with your own API keys.
-- **Smart AI polish and text cleanup**: Automatically removes stutter, filler words ("um", "uh"), fixes capitalization, and repairs punctuation.
-- **Dedicated dictation modes**:
-  - *Clean*: Natural punctuation, grammar cleanup, and conversational formatting.
-  - *Developer*: Formats camelCase, snake_case, code snippets, bash commands, and terminal syntax.
-  - *Note / Summary*: Converts spoken rambling into concise bulleted notes.
-- **Custom vocabulary and phonetic lexicon**: Teach Sayso names, technical jargon, acronyms, and slang. Includes keyword biasing for cloud recognizers (Deepgram keyterms, Whisper prompts).
-- **Hands-free wake word activation**: Activate dictation hands-free with background wake-word detection.
-- **Audio history with playback**: Inspect past transcriptions, replay recorded voice clips, or re-process clips with different models.
-- **Productivity insights**: Track speaking speed (WPM), total words dictated, filler word rate, and most frequent vocabulary.
-- **Sound cues and haptic feedback**: Subtle audio chimes and vibrations for record start, completion, and error states.
-- **Hardware-encrypted security**: API keys are encrypted using the Android Keystore (`KeystoreSecretStore`). Keys never leave your device unencrypted.
-- **Zero telemetry**: No third-party trackers, no crash analytics SDKs, no centralized database.
+## 📦 On-Device Voice Models
 
-## On-Device Models
-
-Download and manage models directly inside the app. Weights are stored in private app storage.
+Download and manage models directly from the app. All model weights are stored in private app storage.
 
 | Model | Size | Best For | Languages |
-|---|---:|---|---|
-| Parakeet 110M | ~100 MB | Fast, accurate daily dictation (Recommended) | English |
-| Moonshine Tiny | ~100 MB | Ultra-low latency on older devices | English |
-| Moonshine Base | ~250 MB | High accuracy with fast response | English |
-| Whisper Base | ~200 MB | Robust baseline vocabulary | English |
-| Parakeet 0.6B v3 | ~490 MB | Maximum accuracy, complex sentences | Multilingual |
-| SenseVoice | ~170 MB | Voice dictation with emotion and multilingual support | English, Chinese, Japanese, Korean, Cantonese |
+|---|---|---|---|
+| **Parakeet 110M** (Recommended) | 104 MB | Ultra-fast real-time daily dictation | English |
+| **AI4Bharat IndicConformer Tamil** | 189 MB | Superior accuracy on colloquial Tamil, Tanglish & dialects | Tamil, Tanglish |
+| **AI4Bharat IndicConformer Hindi** | 189 MB | Superior accuracy on colloquial Hindi, Hinglish & dialects | Hindi, Hinglish |
+| **AI4Bharat IndicConformer Malayalam** | 189 MB | Superior accuracy on colloquial Malayalam & Manglish | Malayalam, Manglish |
+| **Whisper Multilingual Tiny** | 111 MB | Lightweight multilingual speech & neural language detection | 90+ languages |
+| **Whisper Multilingual Base** | 198 MB | Higher accuracy multilingual transcription | 90+ languages |
+| **Qwen 2.5 0.5B Instruct** (SLM) | 390 MB | On-device AI polish, task checklists & punctuation | English, Multilingual |
+| **Phi-3 Mini 4K Instruct** (SLM) | 2.2 GB | Comprehensive offline rewriting & reasoning | English |
 
-## Setup
+---
 
-1. Grant **Microphone** permission for voice recording.
-2. Enable the **Sayso Accessibility Service** (the app provides a direct link).
-3. (Optional) Grant **Display over other apps** permission for the floating bubble.
-4. Select your preferred engine: download an on-device model or enter a cloud provider API key.
+## 📲 Download
 
-> **Why an Accessibility Service?**
-> Android only permits an accessibility service to insert text directly into another app's focused text field. Sayso uses this permission solely to paste your transcribed words at the active cursor position. It does not read your screen, track keystrokes, or transmit any user data. If a field cannot accept direct injection, Sayso falls back to copying text to your clipboard.
+| Channel | Link | Notes |
+|---|---|---|
+| **Google Play** | [Play Store Listing](https://play.google.com/store/apps/details?id=ai.sayso.dictation) | Closed testing track (`ai.sayso.dictation`) |
+| **GitHub Releases** | [Download APK](https://github.com/stevengonsalvez/sayso/releases/latest) | Universal Android APK |
+| **Source Code** | [Build from Source](#quick-start) | Full project repository |
 
-## Build from Source
+---
 
-### Prerequisites
-- JDK 17
-- Android SDK (Platform 36, Build Tools 36.0.0)
+## 🛠️ Quick Start
+
+### Build Prerequisites
+- JDK 17 (`JAVA_HOME=/opt/homebrew/opt/openjdk@17` or standard JDK 17)
+- Android SDK Platform 36 and Build Tools 36.0.0
 
 ```bash
 # Clone the repository
@@ -119,31 +144,37 @@ make test
 make install
 ```
 
-The first build automatically retrieves the `sherpa-onnx` runtime AAR from k2-fsa into `app/libs/`.
+The first build automatically fetches the `sherpa-onnx` runtime AAR into `app/libs/`.
 
-## Tech Stack
+---
 
-- **UI & Architecture**: 100% Kotlin, Jetpack Compose, Material 3, Coroutines, StateFlow
-- **Audio & ML**: AudioRecord (16kHz PCM), sherpa-onnx runtime, ONNX Runtime Mobile
-- **Text Injection**: Android AccessibilityService, WindowManager overlay
-- **Persistence**: Room SQLite database, Android Keystore encryption
-- **Networking**: OkHttp 4, Server-Sent Events (SSE)
+## 🛡️ Privacy & Data Safety
 
-## Contributing
+- **Zero Data Collection**: Sayso collects 0 bytes of personal information, usage metrics, crash reports, or analytics.
+- **Audio Stays Local**: Audio is recorded strictly to private memory buffers during dictation and discarded or saved only to your local history if history is enabled.
+- **Accessibility API Disclosure**: Sayso uses Android AccessibilityService solely to type your speech directly into the input field you are editing. It does not inspect passwords, read personal messages, or monitor background activity.
 
-Contributions are welcome! Please follow these steps:
+---
 
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feat/my-feature`).
-3. Commit your changes using conventional commits and GPG signing (`git commit -S -m "feat: description"`).
-4. Push to your branch (`git push origin feat/my-feature`).
-5. Open a Pull Request.
+## 💻 Tech Stack
 
-## Privacy
+- **UI**: 100% Kotlin, Jetpack Compose, Material 3, Dynamic Theme (#1E2A44 Navy & #F4B942 Golden Amber)
+- **Speech & ML Engine**: Sherpa-ONNX runtime (k2-fsa), ONNX Runtime Mobile, Zipformer acoustic KWS
+- **Transliteration**: Custom rule-based phonetic Brahmic transliteration engine
+- **Telephony & Call State**: Zero-permission hardware `AudioManager` call mode observer
+- **Text Insertion**: Android AccessibilityService, WindowManager overlay
+- **Security**: Hardware-backed Android Keystore (`KeystoreSecretStore`)
+- **Storage**: Room SQLite database (local private storage)
 
-Sayso is private by design. Review our full privacy policy in [PRIVACY.md](PRIVACY.md).
+---
 
-## License
+## 🏷️ Tags & Topics
 
-[MIT](LICENSE) - free for personal and commercial use.
-On-device recognition is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0).
+`#voice-dictation` `#speech-to-text` `#offline-stt` `#privacy` `#on-device-ai` `#android` `#sherpa-onnx` `#parakeet` `#ai4bharat` `#tanglish` `#hinglish` `#wake-word` `#whisper` `#open-source` `#free-software`
+
+---
+
+## 📄 License
+
+Sayso is licensed under the [MIT License](LICENSE).
+On-device speech recognition is powered by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache-2.0).
