@@ -114,28 +114,42 @@ final class NotchPanelController {
         } else {
             notchBounds = nil
         }
-        let compactWidth = model?.settings.overlayPresentation == .floating
-            ? 320
+        let isFloating = model?.settings.overlayPresentation == .floating
+        let compactWidth: CGFloat = isFloating
+            ? 170
             : notchBounds.map { $0.upperBound - $0.lowerBound + notchShoulder * 2 } ?? 220
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
-        let expandedWidth: CGFloat = max(compactWidth, minimumExpandedWidth)
+        let expandedWidth: CGFloat = isFloating ? 254 : max(compactWidth, minimumExpandedWidth)
         if abs(state.expandedWidth - expandedWidth) > 0.5 {
             state.expandedWidth = expandedWidth
         }
-        let size = state.isCollapsed
-            ? NSSize(width: state.compactWidth, height: collapsedHeight)
-            : NSSize(width: state.expandedWidth, height: expandedHeight)
+        let size = isFloating
+            ? (state.isCollapsed ? NSSize(width: 170, height: 38) : NSSize(width: 254, height: 198))
+            : (state.isCollapsed
+                ? NSSize(width: state.compactWidth, height: collapsedHeight)
+                : NSSize(width: state.expandedWidth, height: expandedHeight))
         let panelFrame: NSRect
-        if model?.settings.overlayPresentation == .floating {
+        if isFloating {
             let visibleFrame = screen.visibleFrame
-            panelFrame = NSRect(
-                x: visibleFrame.maxX - size.width - 24,
-                y: visibleFrame.maxY - size.height - 24,
-                width: size.width,
-                height: size.height
-            )
+            if panel.frame.origin != .zero && panel.frame.origin.x >= visibleFrame.minX - 50 {
+                let currentOrigin = panel.frame.origin
+                let deltaY = size.height - panel.frame.height
+                panelFrame = NSRect(
+                    x: min(max(currentOrigin.x, visibleFrame.minX), visibleFrame.maxX - size.width),
+                    y: max(currentOrigin.y - deltaY, visibleFrame.minY),
+                    width: size.width,
+                    height: size.height
+                )
+            } else {
+                panelFrame = NSRect(
+                    x: visibleFrame.maxX - size.width - 24,
+                    y: visibleFrame.maxY - size.height - 24,
+                    width: size.width,
+                    height: size.height
+                )
+            }
         } else {
             let notchCenter = notchBounds.map { ($0.lowerBound + $0.upperBound) / 2 } ?? frame.midX
             panelFrame = NSRect(
@@ -150,6 +164,224 @@ final class NotchPanelController {
 }
 
 private struct NotchHUD: View {
+    @ObservedObject var model: SaysoAppModel
+    @ObservedObject var state: NotchPresentationState
+    let toggle: () -> Void
+    let dismiss: () -> Void
+    let openApp: () -> Void
+    let openSettings: () -> Void
+    let togglePresentation: () -> Void
+    let quit: () -> Void
+
+    var body: some View {
+        if model.settings.overlayPresentation == .floating {
+            FloatingHUD(
+                model: model,
+                state: state,
+                toggle: toggle,
+                dismiss: dismiss,
+                openApp: openApp,
+                openSettings: openSettings,
+                togglePresentation: togglePresentation,
+                quit: quit
+            )
+        } else {
+            DockedNotchHUD(
+                model: model,
+                state: state,
+                toggle: toggle,
+                dismiss: dismiss,
+                openApp: openApp,
+                openSettings: openSettings,
+                togglePresentation: togglePresentation,
+                quit: quit
+            )
+        }
+    }
+}
+
+/// Floating HUD inspired by jev-use VoiceWidget: symmetric 22pt rounded rectangle,
+/// dark glass material, audio waveform bars, 2-line transcript, and top-trailing hover controls.
+private struct FloatingHUD: View {
+    @ObservedObject var model: SaysoAppModel
+    @ObservedObject var state: NotchPresentationState
+    @State private var isHovering = false
+    @State private var isGlowPulsing = false
+    let toggle: () -> Void
+    let dismiss: () -> Void
+    let openApp: () -> Void
+    let openSettings: () -> Void
+    let togglePresentation: () -> Void
+    let quit: () -> Void
+
+    private var message: String {
+        if !model.transcriber.partialText.isEmpty {
+            return model.transcriber.partialText
+        }
+        if model.transcriber.phase == .listening {
+            return "Listening..."
+        }
+        if let notice = model.notice {
+            return notice
+        }
+        if model.settings.mode == .control {
+            return model.controlStatus
+        }
+        return "Tap mic to speak"
+    }
+
+    var body: some View {
+        if state.isCollapsed {
+            Button(action: toggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
+                        .foregroundStyle(SaysoPalette.amber)
+                    Text(model.transcriber.phase == .listening ? "Listening" : "Sayso")
+                        .font(.caption.weight(.bold))
+                    if model.transcriber.phase == .listening {
+                        Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7)
+                    }
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .frame(width: 170, height: 38)
+                .background {
+                    RoundedRectangle(cornerRadius: 19).fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 19).fill(Color.black.opacity(0.65)))
+                        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                }
+            }
+            .buttonStyle(.plain)
+        } else {
+            VStack(spacing: 6) {
+                // Waveform / Level indicator
+                WaveformLevelIndicator(
+                    isListening: model.transcriber.phase == .listening,
+                    mode: model.settings.mode
+                )
+                .frame(width: 220, height: 50)
+                .accessibilityHidden(true)
+
+                // 2-line transcript / status message
+                Text(message)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 44)
+                    .help(message)
+
+                // Primary glowing action button
+                let isLive = model.transcriber.canStop || model.transcriber.phase == .listening
+                Button {
+                    model.startOrStopDictation()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isLive ? "stop.fill" : "mic.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(isLive ? "Stop listening" : "Start dictation")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(isLive ? SaysoPalette.crimson : SaysoPalette.brandCobalt)
+                .shadow(color: isLive ? SaysoPalette.crimson.opacity(isGlowPulsing ? 0.95 : 0.4) : .clear, radius: isGlowPulsing ? 10 : 4)
+                .overlay {
+                    if isLive {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(SaysoPalette.crimson.opacity(isGlowPulsing ? 0.9 : 0.5), lineWidth: 1.5)
+                            .shadow(color: SaysoPalette.crimson, radius: isGlowPulsing ? 8 : 4)
+                    }
+                }
+                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+                .onAppear {
+                    withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                        isGlowPulsing = true
+                    }
+                }
+
+                // Subtitle / shortcut hint
+                Text("Option-Space to speak")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(width: 254, height: 198)
+            .background {
+                RoundedRectangle(cornerRadius: 22).fill(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.65)))
+                    .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+            }
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 2) {
+                    Button { openSettings() } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11))
+                            .frame(width: 24, height: 24)
+                    }
+                    .help("Settings")
+
+                    Button { togglePresentation() } label: {
+                        Image(systemName: "menubar.rectangle")
+                            .font(.system(size: 11))
+                            .frame(width: 24, height: 24)
+                    }
+                    .help("Dock to notch")
+
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 24, height: 24)
+                    }
+                    .help("Dismiss")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(8)
+                .opacity(isHovering ? 1 : 0)
+                .allowsHitTesting(isHovering)
+            }
+            .onHover { isHovering = $0 }
+            .preferredColorScheme(.dark)
+        }
+    }
+}
+
+/// Dynamic audio bar visualization reacting to voice activity
+private struct WaveformLevelIndicator: View {
+    let isListening: Bool
+    let mode: SaysoMode
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            HStack(spacing: 6) {
+                ForEach(0..<12) { i in
+                    let h: CGFloat = isListening
+                        ? 10 + 32 * CGFloat(abs(sin(t * 5 + Double(i) * 0.5)))
+                        : 6 + 6 * CGFloat(abs(sin(t * 1.5 + Double(i) * 0.4)))
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(
+                            LinearGradient(
+                                colors: isListening
+                                    ? [SaysoPalette.crimson, SaysoPalette.brandAmber]
+                                    : [SaysoPalette.brandCobalt, SaysoPalette.brandCobalt.opacity(0.4)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 4, height: h)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// Docked Notch HUD designed specifically for conforming to the MacBook display notch
+private struct DockedNotchHUD: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var state: NotchPresentationState
     @State private var isGlowPulsing = false
