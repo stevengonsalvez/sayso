@@ -109,6 +109,15 @@ public enum DictationLanguage: String, Codable, CaseIterable, Identifiable, Send
             false
         }
     }
+
+    public var transliterationTarget: String {
+        switch self {
+        case .hindi: "Hinglish"
+        case .malayalam: "Manglish"
+        case .tamil: "Tanglish"
+        default: "Tanglish / Hinglish"
+        }
+    }
 }
 
 public enum ProviderRoute: String, Codable, CaseIterable, Identifiable, Sendable {
