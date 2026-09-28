@@ -125,4 +125,42 @@ struct ModelCatalogParityTests {
         #expect(decoded.selectedLocalSlmModelId == "local-slm/qwen2.5-0.5b")
         #expect(decoded.selectedLocalAsrModelId == "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8")
     }
+
+    @Test("LocalModelCatalog maps languages to dedicated neural models and recommendations")
+    func localModelCatalogLanguageMapping() {
+        let englishModels = LocalModelCatalog.models(for: .english)
+        #expect(!englishModels.isEmpty)
+        #expect(englishModels.contains { $0.id == "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8" })
+        #expect(LocalModelCatalog.recommendedModel(for: .english).id == "sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8")
+
+        let tamilModels = LocalModelCatalog.models(for: .tamil)
+        #expect(!tamilModels.isEmpty)
+        #expect(tamilModels.contains { $0.id == "ai4bharat-indicconformer-ta" })
+        #expect(LocalModelCatalog.recommendedModel(for: .tamil).id == "ai4bharat-indicconformer-ta")
+
+        let hindiModels = LocalModelCatalog.models(for: .hindi)
+        #expect(!hindiModels.isEmpty)
+        #expect(hindiModels.contains { $0.id == "ai4bharat-indicconformer-hi" })
+        #expect(LocalModelCatalog.recommendedModel(for: .hindi).id == "ai4bharat-indicconformer-hi")
+
+        let malayalamModels = LocalModelCatalog.models(for: .malayalam)
+        #expect(!malayalamModels.isEmpty)
+        #expect(malayalamModels.contains { $0.id == "ai4bharat-indicconformer-ml" })
+        #expect(LocalModelCatalog.recommendedModel(for: .malayalam).id == "ai4bharat-indicconformer-ml")
+
+        let punjabiModels = LocalModelCatalog.models(for: .punjabi)
+        #expect(!punjabiModels.isEmpty)
+        #expect(punjabiModels.contains { $0.id == "ai4bharat-indicconformer-pa" })
+        #expect(LocalModelCatalog.recommendedModel(for: .punjabi).id == "ai4bharat-indicconformer-pa")
+    }
+
+    @Test("DictationLanguage Indic detection and parity with Android featured languages")
+    func indicLanguageParity() {
+        #expect(DictationLanguage.tamil.isIndic)
+        #expect(DictationLanguage.hindi.isIndic)
+        #expect(DictationLanguage.malayalam.isIndic)
+        #expect(DictationLanguage.punjabi.isIndic)
+        #expect(!DictationLanguage.english.isIndic)
+        #expect(!DictationLanguage.automatic.isIndic)
+    }
 }

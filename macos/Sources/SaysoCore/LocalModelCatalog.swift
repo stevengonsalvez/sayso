@@ -272,6 +272,11 @@ public enum LocalModelCatalog {
         }
     }
 
+    public static func models(for language: DictationLanguage) -> [LocalModelManifest] {
+        if language == .automatic { return all }
+        return all.filter { $0.supports(language) }
+    }
+
     public static func state(
         for model: LocalModelManifest,
         in modelsDirectory: URL,
