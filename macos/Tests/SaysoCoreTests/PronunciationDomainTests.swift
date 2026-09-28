@@ -159,3 +159,37 @@ import Testing
     #expect(decoded.pronunciations.count == 1)
     #expect(decoded.pronunciations.first?.word == "Neovim")
 }
+
+@Test func indicLanguagePropertiesAndCleanupPolicySystemPrompt() {
+    let indicLanguages: [DictationLanguage] = [
+        .hindi, .tamil, .malayalam, .bengali, .gujarati,
+        .kannada, .marathi, .punjabi, .telugu, .urdu
+    ]
+    for lang in indicLanguages {
+        #expect(lang.isIndic == true)
+        #expect(!lang.languageCode.isEmpty)
+    }
+    #expect(DictationLanguage.english.isIndic == false)
+    #expect(DictationLanguage.automatic.isIndic == false)
+
+    #expect(DictationLanguage.tamil.languageCode == "ta")
+    #expect(DictationLanguage.hindi.languageCode == "hi")
+    #expect(DictationLanguage.malayalam.languageCode == "ml")
+    #expect(DictationLanguage.english.languageCode == "en")
+
+    let promptWithTransliteration = CleanupPolicy.systemPrompt(
+        enableSmartDictation: true,
+        transliterateIndicToLatin: true
+    )
+    #expect(promptWithTransliteration.contains("Transliteration directive:"))
+    #expect(promptWithTransliteration.contains("Tanglish, Hinglish, Manglish"))
+    #expect(promptWithTransliteration.contains("Smart dictation & task formatting:"))
+
+    let promptWithoutTransliteration = CleanupPolicy.systemPrompt(
+        enableSmartDictation: false,
+        transliterateIndicToLatin: false
+    )
+    #expect(!promptWithoutTransliteration.contains("Transliteration directive:"))
+    #expect(!promptWithoutTransliteration.contains("Smart dictation & task formatting:"))
+}
+

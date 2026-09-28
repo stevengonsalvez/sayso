@@ -10,6 +10,16 @@ public enum LocalModelArchitecture: String, Codable, CaseIterable, Sendable {
     case indicConformerCTC
     case moonshine
     case senseVoice
+
+    public var displayName: String {
+        switch self {
+        case .nemoTransducer: "Neural Transducer"
+        case .whisperEncoderDecoder: "Whisper Encoder"
+        case .indicConformerCTC: "Indic Conformer CTC"
+        case .moonshine: "Moonshine"
+        case .senseVoice: "SenseVoice"
+        }
+    }
 }
 
 public enum LocalModelHostArchitecture: String, Codable, CaseIterable, Sendable {
@@ -270,6 +280,11 @@ public enum LocalModelCatalog {
             model(id: "sherpa-onnx-whisper-tiny")!
         case .english: recommendedEnglishModel
         }
+    }
+
+    public static func models(for language: DictationLanguage) -> [LocalModelManifest] {
+        if language == .automatic { return all }
+        return all.filter { $0.supports(language) }
     }
 
     public static func state(

@@ -166,4 +166,46 @@ public enum CleanupPolicy {
         }
         return preset.promptText
     }
+
+    public static func systemPrompt(
+        base: String = basePrompt,
+        outputLanguage: String? = nil,
+        appContext: AppContextCategory? = nil,
+        enableSmartDictation: Bool = false,
+        transliterateIndicToLatin: Bool = false
+    ) -> String {
+        var sections = [base.trimmingCharacters(in: .whitespacesAndNewlines)]
+
+        if enableSmartDictation {
+            sections.append("""
+            Smart dictation & task formatting:
+
+            - If the speaker dictates tasks, to-dos, or action items (or says "action items", "tasks", "todo list"), format each item as a Markdown checklist item: `- [ ] <task>`.
+            - If the speaker asks to "summarize", "in bullets", or "key points", extract the core points and format as concise bullet points starting with `- `.
+            - If the speaker dictates a shell or CLI command, output the exact clean command on its own line without surrounding fluff.
+            - Respect explicit formatting instructions from the speaker (e.g. "new line", "bullet points", "number one", "quote").
+            """)
+        }
+
+        if transliterateIndicToLatin {
+            sections.append("""
+            Transliteration directive:
+            - If the input transcript contains Indic characters (Tamil, Devanagari/Hindi, Malayalam), phonetically transliterate them into English letters (Tanglish, Hinglish, Manglish).
+            - Preserve conversational grammar, loanwords, and pronunciation faithfully; do not translate words into English definitions.
+            - Keep any existing English words in English letters.
+            """)
+        }
+
+        if let appContext, appContext != .general {
+            sections.append("Application context: \(appContext.directive)")
+        }
+
+        if let outputLanguage = outputLanguage?.trimmingCharacters(in: .whitespacesAndNewlines), !outputLanguage.isEmpty {
+            sections.append("Output language context: use \(outputLanguage) spelling and punctuation conventions.")
+        }
+
+        sections.append("Return only the cleaned transcript text.")
+        return sections.joined(separator: "\n\n")
+    }
 }
+

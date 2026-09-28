@@ -127,7 +127,8 @@ public final class PermissionCenter: ObservableObject {
             break
         case .accessibility:
             // Registers Sayso in the Accessibility list; the grant itself is manual.
-            AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
         case .inputMonitoring:
             _ = CGRequestListenEventAccess()
         }
