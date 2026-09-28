@@ -10,6 +10,16 @@ public enum LocalModelArchitecture: String, Codable, CaseIterable, Sendable {
     case indicConformerCTC
     case moonshine
     case senseVoice
+
+    public var displayName: String {
+        switch self {
+        case .nemoTransducer: "Neural Transducer"
+        case .whisperEncoderDecoder: "Whisper Encoder"
+        case .indicConformerCTC: "Indic Conformer CTC"
+        case .moonshine: "Moonshine"
+        case .senseVoice: "SenseVoice"
+        }
+    }
 }
 
 public enum LocalModelHostArchitecture: String, Codable, CaseIterable, Sendable {
