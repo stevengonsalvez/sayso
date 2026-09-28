@@ -8762,7 +8762,7 @@ private struct StepThreePermissionsView: View {
                 Button(action: {
                     Task { await model.permissions.request(kind) }
                 }) {
-                    Text(kind == .microphone ? "Grant" : "Open Settings")
+                    Text(kind == .microphone || model.permissions.states[kind] == .undetermined ? "Grant" : "Open Settings")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
