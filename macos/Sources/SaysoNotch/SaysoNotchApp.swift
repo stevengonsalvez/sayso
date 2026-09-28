@@ -181,8 +181,10 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isClearingHistory = false
     @Published private(set) var isHistoryAudioTaskRunning = false
     @Published var onboardingDeferredThisLaunch = false
+    @Published var isShowingOnboardingWizard = false
     @Published private(set) var isOnboardingTestActive = false
     @Published private(set) var onboardingTestTranscriptID: UUID?
+    @Published private(set) var onboardingTestTranscriptText: String?
     @Published private(set) var audioInputDevices: [AudioInputDevice] = []
     @Published private(set) var hasBYOKKey = false
     @Published var slmStates: [String: LocalSlmState] = [:]
@@ -613,6 +615,7 @@ final class SaysoAppModel: ObservableObject {
     func clearOnboardingTestResult() {
         guard !isOnboardingTestActive else { return }
         onboardingTestTranscriptID = nil
+        onboardingTestTranscriptText = nil
     }
 
     @discardableResult
@@ -1267,6 +1270,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func finishOnboardingTest(_ transcript: Transcript, session: RecordingSession) async {
         onboardingTestTranscriptID = transcript.id
+        onboardingTestTranscriptText = transcript.text
         onboardingTestSessionID = nil
         isOnboardingTestActive = false
         var completed = session
@@ -2662,8 +2666,8 @@ private struct SettingsHome: View {
         }
         .animation(.easeInOut(duration: 0.2), value: model.notice)
         .sheet(isPresented: Binding(
-            get: { !model.settings.onboardingCompleted && !model.onboardingDeferredThisLaunch },
-            set: { _ in }
+            get: { (!model.settings.onboardingCompleted && !model.onboardingDeferredThisLaunch) || model.isShowingOnboardingWizard },
+            set: { if !$0 { model.isShowingOnboardingWizard = false } }
         )) {
             OnboardingWizard(model: model)
         }
@@ -7224,7 +7228,41 @@ private struct SaysoSettingsView: View {
                     )
                 }
 
-                // Section 3: App Profile Overrides
+                // Section 3: Setup & Onboarding Tour
+                SaysoSectionHeader(text: "Setup & Onboarding")
+                SaysoCard {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles.rectangle.stack.fill")
+                            .font(.title2)
+                            .foregroundStyle(SaysoPalette.brandAmber)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Replay Onboarding Tour")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("Review primary language, on-device models, AI cleanup, and test dictation.")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+                        Spacer()
+                        Button(action: {
+                            model.isShowingOnboardingWizard = true
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.caption.weight(.bold))
+                                Text("Launch Tour")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(SaysoPalette.blueButtonGradient, in: RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                // Section 4: App Profile Overrides
                 SaysoSectionHeader(text: "App Profile Overrides")
                 SaysoCard {
                     VStack(alignment: .leading, spacing: 10) {
@@ -7528,294 +7566,213 @@ private struct CloudProviderSettings: View {
 private struct OnboardingWizard: View {
     @ObservedObject var model: SaysoAppModel
     @State private var page = 0
-    @State private var byokAPIKey = ""
+    @State private var showOtherModelsDialog = false
     @Environment(\.dismiss) private var dismiss
 
-    private enum WizardStep: Equatable {
-        case language
-        case engine
-        case cloud
-        case delivery
-        case shortcut
-        case permissions
-    }
-
-    private var steps: [String] {
-        if model.settings.route == .byok {
-            return ["Language", "Engine", "Cloud", "Delivery", "Shortcut", "Permissions"]
-        } else {
-            return ["Language", "Engine", "Delivery", "Shortcut", "Permissions"]
-        }
-    }
-
-    private var currentStep: WizardStep {
-        if model.settings.route == .byok {
-            switch page {
-            case 0: return .language
-            case 1: return .engine
-            case 2: return .cloud
-            case 3: return .delivery
-            case 4: return .shortcut
-            default: return .permissions
-            }
-        } else {
-            switch page {
-            case 0: return .language
-            case 1: return .engine
-            case 2: return .delivery
-            case 3: return .shortcut
-            default: return .permissions
-            }
-        }
-    }
+    private let stepTitles = [
+        "Language & Script",
+        "Speech Engine",
+        "AI Cleanup & Polish",
+        "Permissions & Test"
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundStyle(SaysoPalette.cobalt)
-                VStack(alignment: .leading) {
-                    Text("Sayso").font(.title2.bold())
-                    Text("Private voice, right where you look.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            // Top Header: Logo + Title + Step Indicator + Finish Later
+            headerView
+                .padding(.horizontal, 28)
+                .padding(.top, 24)
+                .padding(.bottom, 16)
+
+            // Step Progress Bars (4 segments)
+            progressBarView
+                .padding(.horizontal, 28)
+                .padding(.bottom, 18)
+
+            Divider()
+                .background(SaysoPalette.brandNavyContainer)
+
+            // Scrollable Content per Step
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    switch page {
+                    case 0:
+                        StepZeroLanguagesView(model: model)
+                    case 1:
+                        StepOneSttEngineView(
+                            model: model,
+                            onOpenOtherModels: { showOtherModelsDialog = true }
+                        )
+                    case 2:
+                        StepTwoPostProcessingView(model: model)
+                    case 3:
+                        StepThreePermissionsView(model: model)
+                    default:
+                        EmptyView()
+                    }
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Step \(page + 1) of \(steps.count)")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(SaysoPalette.cobalt)
-                    Button("Finish later") { deferSetup() }
-                        .buttonStyle(.plain)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 20)
             }
-            HStack(spacing: 6) {
-                ForEach(steps.indices, id: \.self) { index in
-                    Capsule()
-                        .fill(index <= page ? SaysoPalette.cobalt : SaysoPalette.outline)
-                        .frame(height: 4)
-                }
-            }
-            Group {
-                switch currentStep {
-                case .language:
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Your words, your script.").font(.title2.bold())
-                        Text("Choose the spoken language. An explicit language keeps recognition focused.")
-                            .foregroundStyle(.secondary)
-                        Picker("Spoken language", selection: $model.settings.language) {
-                            ForEach(DictationLanguage.allCases.filter { $0 != .automatic }) { Text($0.displayName).tag($0) }
-                        }
-                        .pickerStyle(.menu)
-                        Label("Indian languages included: Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Punjabi, Telugu, and Urdu.", systemImage: "character.bubble")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                case .engine:
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Choose your engine.").font(.title2.bold())
-                        Text("On-device keeps recognition local. Download the selected Sayso model before starting, choose Apple Speech to use Apple’s recognizer, or bring your own OpenAI-compatible endpoint.")
-                            .foregroundStyle(.secondary)
-                        Picker("Speech route", selection: $model.settings.route) {
-                            ForEach(ProviderRoute.dictationRoutes) { Text($0.displayName).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        if model.settings.route == .appleSpeech {
-                            Toggle("I understand Apple Speech may transmit voice data", isOn: $model.settings.cloudConsentGranted)
-                        }
-                        if model.settings.route == .byok {
-                            Text("Connect an OpenAI-compatible speech endpoint. You will configure your provider in the next step.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if model.settings.route == .local,
-                           model.nativeModelDownloadAvailable(for: model.settings.language),
-                           !model.nativeModelReady(for: model.settings.language) {
-                            Button("Download selected local model") {
-                                Task {
-                                    if model.settings.language == .punjabi {
-                                        await model.localPunjabiModel.install()
-                                    } else {
-                                        await model.localEnglishModel.install(language: model.settings.language)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(SaysoPalette.cobalt)
-                        }
-                        if !engineReady && model.settings.route != .byok {
-                            Label(engineReadinessMessage, systemImage: "exclamationmark.circle")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.crimson)
-                        }
-                    }
-                case .cloud:
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Configure your provider.").font(.title2.bold())
-                        Text("Connect an OpenAI-compatible audio transcription endpoint. Your API key is stored securely in the macOS Keychain and never leaves your Mac except to authenticate requests.")
-                            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                        Toggle("I understand BYOK transcription transmits voice data to my provider", isOn: $model.settings.byokConsentGranted)
+            Divider()
+                .background(SaysoPalette.brandNavyContainer)
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Base URL").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            TextField("Base URL", text: $model.settings.byokBaseURL)
-                                .textFieldStyle(.roundedBorder)
-                            if !model.isBYOKBaseURLValid {
-                                Text("BYOK provider must use HTTPS, except localhost HTTP.")
-                                    .font(.caption)
-                                    .foregroundStyle(SaysoPalette.crimson)
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Transcription model").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            TextField("Transcription model", text: $model.settings.byokTranscriptionModel)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("API key").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            HStack {
-                                SecureField("API key", text: $byokAPIKey)
-                                    .textFieldStyle(.roundedBorder)
-                                Button(model.hasBYOKKey ? "Update key" : "Store key") {
-                                    if model.saveBYOKKey(byokAPIKey) {
-                                        byokAPIKey = ""
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(SaysoPalette.cobalt)
-                                .disabled(byokAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.isBYOKBaseURLValid)
-                            }
-                            if model.hasBYOKKey {
-                                Label("API key stored in Keychain.", systemImage: "checkmark.circle.fill")
-                                    .font(.caption)
-                                    .foregroundStyle(SaysoPalette.cobalt)
-                            } else {
-                                Label("API key is required to use your provider.", systemImage: "exclamationmark.circle")
-                                    .font(.caption)
-                                    .foregroundStyle(SaysoPalette.crimson)
-                            }
-                        }
-
-                        if !engineReady {
-                            Label(engineReadinessMessage, systemImage: "exclamationmark.circle")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.crimson)
-                        }
-                    }
-                case .delivery:
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Choose where words land.").font(.title2.bold())
-                        Text("Sayso first tries to insert safely into your active app. If macOS blocks that, it can paste while preserving your clipboard.")
-                            .foregroundStyle(.secondary)
-                        Toggle("Insert final text into active app", isOn: $model.settings.autoInsert)
-                        Toggle("Restore clipboard after a paste fallback", isOn: $model.settings.restoreClipboardAfterPaste)
-                            .disabled(!model.settings.autoInsert)
-                        Text(model.settings.autoInsert
-                             ? "Turn restoration off only when you want the transcript left on your clipboard."
-                             : "With insertion off, final transcripts copy to your clipboard.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                case .shortcut:
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("Choose your shortcut.").font(.title2.bold())
-                        Text("Use it once to start or stop dictation. Double-tap with selected text to voice edit.")
-                            .foregroundStyle(.secondary)
-                        HotKeyRecorder("Start or stop dictation", hotKey: Binding(
-                            get: { model.dictationHotKey },
-                            set: { model.setDictationHotKey($0) }
-                        ))
-                        Picker("Activation", selection: $model.settings.hotKeyActivation) {
-                            ForEach(DictationHotKeyActivation.allCases) { activation in
-                                Text(activation.displayName).tag(activation)
-                            }
-                        }
-                        if model.settings.hotKeyActivation.usesPressAndHold {
-                            HStack {
-                                Text("Hold for \(model.settings.hotKeyHoldThresholdSeconds, format: .number.precision(.fractionLength(2))) seconds")
-                                Slider(value: $model.settings.hotKeyHoldThresholdSeconds, in: 0.2 ... 1, step: 0.05)
-                            }
-                        }
-                        Text("Default: ⌥ Space. You can change this later in Settings.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                case .permissions:
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Grant only what you use.").font(.title2.bold())
-                        Text(requiresSpeechRecognition
-                            ? "Microphone powers dictation. Speech Recognition is required for this setup. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey."
-                            : "Microphone powers dictation. Accessibility enables safe text insertion. Input Monitoring is only for the global hotkey.")
-                            .foregroundStyle(.secondary)
-                        ForEach(displayedPermissions) { permission in
-                            HStack(spacing: 12) {
-                                Image(systemName: model.permissions.states[permission] == .granted ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(model.permissions.states[permission] == .granted ? SaysoPalette.cobalt : .secondary)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(permission.displayName).fontWeight(.semibold)
-                                    Text(permissionDetail(permission))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button(permissionAction(permission)) {
-                                    Task { await model.permissions.request(permission) }
-                                }
-                            }
-                            .padding(.vertical, 3)
-                        }
-                        if !requiredPermissionsGranted {
-                            Label("Grant the required permissions before testing dictation.", systemImage: "exclamationmark.circle")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.crimson)
-                        } else if model.onboardingTestTranscriptID == nil {
-                            Label(
-                                model.isOnboardingTestActive
-                                    ? "Say a short sentence, then stop the test to verify your first transcript."
-                                    : "Start a short test dictation to verify your setup.",
-                                systemImage: "checkmark.seal"
-                            )
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        } else {
-                            Label("First transcript received. Your setup is ready.", systemImage: "checkmark.seal.fill")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.cobalt)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            HStack {
-                Button("Back") { page = max(0, page - 1) }.disabled(page == 0)
-                Spacer()
-                Button(primaryActionTitle) {
-                    if page == steps.count - 1 {
-                        performFinalStep()
-                    } else {
-                        page += 1
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canAdvance)
-            }
+            // Bottom Navigation Bar
+            bottomBarView
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
+                .background(SaysoPalette.brandNavyDark)
         }
-        .padding(32)
-        .frame(width: 560, height: 500)
-        .onChange(of: model.settings.language) { _, _ in model.clearOnboardingTestResult() }
-        .onChange(of: model.settings.route) { _, newRoute in
-            page = min(page, steps.count - 1)
+        .frame(width: 720, height: 680)
+        .background(SaysoPalette.brandNavyBase)
+        .sheet(isPresented: $showOtherModelsDialog) {
+            otherModelsSheet
+        }
+        .onAppear {
             model.clearOnboardingTestResult()
-            guard newRoute == .local, model.settings.language == .automatic else { return }
-            model.settings.language = .english
+            if model.settings.language == .automatic {
+                model.settings.language = .english
+                model.settings.selectedLocalAsrModelId = LocalModelCatalog.recommendedModel(for: .english).id
+                model.save()
+            }
         }
-        .onChange(of: model.settings) { _, _ in model.save() }
-        .onAppear { model.refreshBYOKKeyStatus() }
+    }
+
+    private var headerView: some View {
+        HStack(spacing: 14) {
+            // Sayso Bubble Gradient Icon
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [SaysoPalette.brandCobalt, SaysoPalette.brandAmber],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 38, height: 38)
+                    .shadow(color: SaysoPalette.brandCobalt.opacity(0.35), radius: 6)
+
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Welcome to Sayso")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Step \(page + 1) of 4 · \(stepTitles[page])")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(SaysoPalette.brandAmber)
+            }
+
+            Spacer()
+
+            Button("Finish later") {
+                deferSetup()
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(SaysoPalette.muted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+
+    private var progressBarView: some View {
+        HStack(spacing: 6) {
+            ForEach(0..<4, id: \.self) { index in
+                Capsule()
+                    .fill(
+                        index == page
+                            ? SaysoPalette.brandAmber
+                            : (index < page ? SaysoPalette.brandCobalt : SaysoPalette.brandNavyContainer)
+                    )
+                    .frame(height: 4)
+                    .shadow(
+                        color: index == page ? SaysoPalette.brandAmber.opacity(0.5) : .clear,
+                        radius: 3
+                    )
+            }
+        }
+    }
+
+    private var bottomBarView: some View {
+        HStack {
+            if page > 0 {
+                Button(action: {
+                    model.clearOnboardingTestResult()
+                    page -= 1
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.left")
+                            .font(.caption.weight(.bold))
+                        Text("Back")
+                            .font(.caption.weight(.bold))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            if page < 3 {
+                Button(action: {
+                    advanceStep()
+                }) {
+                    HStack(spacing: 6) {
+                        Text(nextButtonTitle)
+                            .font(.caption.weight(.bold))
+                        Image(systemName: "arrow.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .background(SaysoPalette.blueButtonGradient, in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button(action: {
+                    complete()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                        Text("Finish Setup")
+                            .font(.caption.weight(.bold))
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 8)
+                    .background(SaysoPalette.emerald, in: RoundedRectangle(cornerRadius: 8))
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var nextButtonTitle: String {
+        "Continue"
+    }
+
+    private func advanceStep() {
+        if page == 0 {
+            let lang = model.settings.language
+            let recModel = LocalModelCatalog.recommendedModel(for: lang)
+            model.settings.selectedLocalAsrModelId = recModel.id
+            model.settings.route = .local
+            model.save()
+        }
+        page = min(3, page + 1)
     }
 
     private func complete() {
@@ -7829,124 +7786,966 @@ private struct OnboardingWizard: View {
         dismiss()
     }
 
-    private var requiresSpeechRecognition: Bool {
-        model.transcriber.requiresSpeechRecognition(
-            language: model.settings.language,
-            route: model.settings.route
+    private var otherModelsSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Select On-Device Speech Model")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button("Done") {
+                    showOtherModelsDialog = false
+                }
+                .buttonStyle(.bordered)
+            }
+            Text("Choose any installed or available on-device model from the local catalog.")
+                .font(.caption)
+                .foregroundStyle(SaysoPalette.muted)
+
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(LocalModelCatalog.all) { manifest in
+                        let isSelected = model.settings.selectedLocalAsrModelId == manifest.id
+                        Button(action: {
+                            model.settings.selectedLocalAsrModelId = manifest.id
+                            model.settings.route = .local
+                            if let singleLang = manifest.supportedLanguages.first, manifest.supportedLanguages.count == 1 {
+                                model.settings.language = singleLang
+                            }
+                            model.save()
+                            showOtherModelsDialog = false
+                        }) {
+                            HStack(spacing: 12) {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 6) {
+                                        Text(manifest.displayName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.white)
+                                        if manifest.isRecommended {
+                                            Text("Recommended")
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(SaysoPalette.brandCobalt.opacity(0.3), in: Capsule())
+                                                .foregroundStyle(SaysoPalette.brandAmber)
+                                        }
+                                    }
+                                    Text("\(manifest.summary) · \(manifest.expectedSizeBytes / 1_000_000) MB")
+                                        .font(.caption)
+                                        .foregroundStyle(SaysoPalette.muted)
+                                }
+                                Spacer()
+                            }
+                            .padding(12)
+                            .background(
+                                isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(
+                                        isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                                        lineWidth: isSelected ? 1.5 : 1
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 520, height: 460)
+        .background(SaysoPalette.brandNavyBase)
+    }
+}
+
+private struct StepZeroLanguagesView: View {
+    @ObservedObject var model: SaysoAppModel
+
+    private struct PrimaryLanguageOption: Identifiable {
+        let id: String
+        let language: DictationLanguage
+        let name: String
+        let nativeScript: String
+        let badge: String
+        let isIndic: Bool
+    }
+
+    private let options = [
+        PrimaryLanguageOption(
+            id: "en",
+            language: .english,
+            name: "English",
+            nativeScript: "English",
+            badge: "★ Recommended for English (Parakeet 110M: fast, high accuracy)",
+            isIndic: false
+        ),
+        PrimaryLanguageOption(
+            id: "ta",
+            language: .tamil,
+            name: "Tamil",
+            nativeScript: "தமிழ்",
+            badge: "★ Recommended: AI4Bharat is superior for Tamil & Tanglish",
+            isIndic: true
+        ),
+        PrimaryLanguageOption(
+            id: "hi",
+            language: .hindi,
+            name: "Hindi",
+            nativeScript: "हिंदी",
+            badge: "★ Recommended: AI4Bharat is superior for Hindi & Hinglish",
+            isIndic: true
+        ),
+        PrimaryLanguageOption(
+            id: "ml",
+            language: .malayalam,
+            name: "Malayalam",
+            nativeScript: "മലയാളം",
+            badge: "★ Recommended: AI4Bharat is superior for Malayalam",
+            isIndic: true
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Primary Language & Script")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Each language activates its dedicated on-device neural model.")
+                    .font(.subheadline)
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+
+            // 4 Language Cards
+            VStack(spacing: 8) {
+                ForEach(options) { opt in
+                    let isSelected = model.settings.language == opt.language
+                    Button(action: {
+                        model.settings.language = opt.language
+                        let rec = LocalModelCatalog.recommendedModel(for: opt.language)
+                        model.settings.selectedLocalAsrModelId = rec.id
+                        model.save()
+                    }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(opt.name)
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(.white)
+                                    Text("(\(opt.nativeScript))")
+                                        .font(.caption)
+                                        .foregroundStyle(SaysoPalette.muted)
+                                }
+                                Text(opt.badge)
+                                    .font(.caption2.weight(isSelected ? .bold : .medium))
+                                    .foregroundStyle(
+                                        isSelected && opt.isIndic
+                                            ? SaysoPalette.brandAmber
+                                            : SaysoPalette.muted
+                                    )
+                            }
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(
+                            isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                            in: RoundedRectangle(cornerRadius: 12)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(
+                                    isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                                    lineWidth: isSelected ? 1.5 : 1
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // More Languages Box
+            HStack(alignment: .top, spacing: 10) {
+                Text("🌐").font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("More languages in Transcription Settings")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("Need Spanish, French, German, Italian, Portuguese, Japanese, or other languages? Select them in Transcription Settings using Whisper Multilingual or Cloud providers.")
+                        .font(.caption2)
+                        .foregroundStyle(SaysoPalette.muted)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SaysoPalette.brandNavySurface.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(SaysoPalette.brandNavyContainer.opacity(0.5), lineWidth: 1)
+            )
+
+            // Transliteration Section for Indian Languages
+            if model.settings.language.isIndic {
+                transliterationSection
+            }
+
+            // Recommended Model Card
+            recommendedModelCard
+        }
+    }
+
+    private var transliterationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("How should Indian text appear?")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+            Text("Choose whether your speech appears in English letters or native script.")
+                .font(.caption)
+                .foregroundStyle(SaysoPalette.muted)
+
+            let isLatin = model.settings.transliterateIndicToLatin
+            let targetName = model.settings.language.transliterationTarget
+            let (exampleLatin, exampleNative): (String, String) = switch model.settings.language {
+            case .hindi: ("Namaste, aap kaise hain?", "नमस्ते, आप कैसे हैं?")
+            case .malayalam: ("Namaskaram, sugamano?", "നമസ്കാരം, സുഖമാണോ?")
+            default: ("Vanakkam, eppadi irukkeenga?", "வணக்கம், எப்படி இருக்கீங்க?")
+            }
+
+            HStack(spacing: 10) {
+                // Card 1: Latin letters (Tanglish / Hinglish / Manglish)
+                Button(action: {
+                    model.settings.transliterateIndicToLatin = true
+                    model.save()
+                }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: isLatin ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isLatin ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                            Text(targetName)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                        }
+                        Text("English letters")
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Example:")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                            Text("\"\(exampleLatin)\"")
+                                .font(.caption.italic())
+                                .foregroundStyle(.white)
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .background(
+                        isLatin ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                isLatin ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                                lineWidth: isLatin ? 1.5 : 1
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+
+                // Card 2: Native Script
+                Button(action: {
+                    model.settings.transliterateIndicToLatin = false
+                    model.save()
+                }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: !isLatin ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(!isLatin ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                            Text("Native Script")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.white)
+                        }
+                        Text("Original script")
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Example:")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                            Text("\"\(exampleNative)\"")
+                                .font(.caption.italic())
+                                .foregroundStyle(.white)
+                        }
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .background(
+                        !isLatin ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                        in: RoundedRectangle(cornerRadius: 10)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(
+                                !isLatin ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                                lineWidth: !isLatin ? 1.5 : 1
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var recommendedModelCard: some View {
+        let rec = LocalModelCatalog.recommendedModel(for: model.settings.language)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(model.settings.language.isIndic ? "★ RECOMMENDED: AI4BHARAT" : "★ RECOMMENDED MODEL")
+                    .font(.system(size: 9, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(SaysoPalette.brandAmber, in: RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(SaysoPalette.brandNavyBase)
+
+                Text("Dedicated On-Device Speech Model")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+            }
+
+            Text("\(rec.displayName) (\(rec.expectedSizeBytes / 1_000_000) MB)")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+
+            Text(
+                model.settings.language.isIndic
+                    ? "AI4Bharat IndicConformer is the most superior on-device model for Indian dialects and conversational speech."
+                    : rec.summary
+            )
+            .font(.caption)
+            .foregroundStyle(SaysoPalette.muted)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(SaysoPalette.brandAmber.opacity(0.5), lineWidth: 1)
         )
     }
+}
 
-    private var displayedPermissions: [PermissionKind] {
-        if requiresSpeechRecognition {
-            return PermissionKind.allCases
+private struct StepOneSttEngineView: View {
+    @ObservedObject var model: SaysoAppModel
+    let onOpenOtherModels: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Choose Your Speech Engine")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Transcribe voice into text with on-device AI or private cloud.")
+                    .font(.subheadline)
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+
+            // Card 1: On-Device Model (★ RECOMMENDED)
+            let isLocal = model.settings.route == .local
+            let recModel = LocalModelCatalog.recommendedModel(for: model.settings.language)
+            let isInstalled = model.nativeModelReady(for: model.settings.language)
+            let isDownloading: Bool = {
+                if model.settings.language == .english {
+                    return model.localEnglishModel.state == .installing
+                } else if model.settings.language == .punjabi {
+                    return model.localPunjabiModel.state == .installing
+                } else {
+                    return model.localEnglishModel.multilingualState == .installing
+                }
+            }()
+            let downloadProgress: Double = {
+                if model.settings.language == .english {
+                    return model.localEnglishModel.downloadProgress
+                } else if model.settings.language == .punjabi {
+                    return 0.5
+                } else {
+                    return model.localEnglishModel.multilingualDownloadProgress
+                }
+            }()
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: isLocal ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(isLocal ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("On-Device Neural Model")
+                                .font(.headline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("RECOMMENDED")
+                                .font(.system(size: 9, weight: .bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.emerald.opacity(0.25), in: Capsule())
+                                .foregroundStyle(SaysoPalette.emerald)
+                        }
+
+                        Text(recModel.displayName)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.brandAmber)
+
+                        Text("Private and instant. Runs locally on Apple Neural Engine and CPU. Zero audio or text ever leaves your Mac.")
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                            .lineSpacing(2)
+
+                        HStack(spacing: 8) {
+                            Text("\(recModel.expectedSizeBytes / 1_000_000) MB")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(.white)
+
+                            Text("⚡ Instant (50ms)")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.brandAmber.opacity(0.2), in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+
+                            Spacer()
+
+                            Button("See other models") {
+                                onOpenOtherModels()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(SaysoPalette.brandCobalt)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
+                // Download / Installed Status Card
+                if isInstalled {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(SaysoPalette.emerald)
+                        Text("\(recModel.displayName) installed & ready")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(SaysoPalette.emerald)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SaysoPalette.emerald.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                } else if isDownloading {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Downloading neural weights (\(Int(downloadProgress * 100))%)...")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                        }
+                        ProgressView(value: max(0.05, downloadProgress))
+                            .tint(SaysoPalette.brandAmber)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                } else {
+                    Button(action: {
+                        model.settings.route = .local
+                        model.save()
+                        Task {
+                            if model.settings.language == .punjabi {
+                                await model.localPunjabiModel.install()
+                            } else {
+                                await model.localEnglishModel.install(language: model.settings.language)
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.caption.weight(.bold))
+                            Text("Download \(recModel.displayName) (\(recModel.expectedSizeBytes / 1_000_000) MB)")
+                                .font(.caption.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(SaysoPalette.blueButtonGradient, in: RoundedRectangle(cornerRadius: 8))
+                        .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(16)
+            .background(
+                isLocal ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(
+                        isLocal ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                        lineWidth: isLocal ? 1.5 : 1
+                    )
+            )
+            .onTapGesture {
+                model.settings.route = .local
+                model.save()
+            }
+
+            // Card 2: Cloud Speech (BYOK)
+            let isCloud = model.settings.route == .byok
+            Button(action: {
+                model.settings.route = .byok
+                model.save()
+            }) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: isCloud ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(isCloud ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Cloud Speech (BYOK)")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white)
+
+                        Text("Groq Whisper, OpenAI Whisper, Deepgram, Cerebras")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.muted)
+
+                        Text("Ultra-accurate cloud transcription with your own API key. Low memory and CPU usage.")
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                            .lineSpacing(2)
+                    }
+                    Spacer()
+                }
+                .padding(16)
+                .background(
+                    isCloud ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                    in: RoundedRectangle(cornerRadius: 14)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .strokeBorder(
+                            isCloud ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                            lineWidth: isCloud ? 1.5 : 1
+                        )
+                )
+            }
+            .buttonStyle(.plain)
         }
-        return PermissionKind.allCases.filter { $0 != .speechRecognition }
+    }
+}
+
+private struct StepTwoPostProcessingView: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("AI Cleanup & Post-Processing")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Choose how your speech is formatted, punctuated, and polished.")
+                    .font(.subheadline)
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+
+            // Transformation Example Card
+            VStack(alignment: .leading, spacing: 8) {
+                Text("TRANSFORMATION EXAMPLE")
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(SaysoPalette.brandAmber)
+                    .tracking(0.8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RAW SPOKEN")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    Text("\"uh hey can you like schedule the meeting for tomorrow at 2 pm question mark\"")
+                        .font(.caption.italic())
+                        .foregroundStyle(SaysoPalette.muted)
+                }
+
+                HStack(spacing: 8) {
+                    Rectangle().fill(SaysoPalette.brandNavyContainer).frame(height: 1)
+                    Image(systemName: "wand.and.stars")
+                        .font(.caption2)
+                        .foregroundStyle(SaysoPalette.brandAmber)
+                    Rectangle().fill(SaysoPalette.brandNavyContainer).frame(height: 1)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("POLISHED OUTPUT")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(SaysoPalette.emerald)
+                    Text("\"Hey, can you schedule the meeting for tomorrow at 2:00 PM?\"")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(SaysoPalette.brandAmber.opacity(0.4), lineWidth: 1)
+            )
+
+            // 4 Polish Options
+            VStack(spacing: 10) {
+                // 1. Smart Rules Cleanup
+                polishRow(
+                    mode: .rules,
+                    title: "Smart Rules Cleanup",
+                    badge: "RECOMMENDED",
+                    badgeColor: SaysoPalette.emerald,
+                    subtitle: "Instant on-device syntax cleanup, spoken punctuation, capitalization, and filler word removal. Zero memory or latency overhead."
+                )
+
+                // 2. On-Device SLM
+                let slm = LocalSlmCatalog.defaultModel
+                let slmStatus = model.checkSlmStatus(slm)
+                let isDownloading = model.slmDownloadProgress[slm.id] != nil
+                polishRow(
+                    mode: .localSLM,
+                    title: "On-Device SLM (Qwen 2.5 / SmolLM)",
+                    badge: "OFFLINE AI",
+                    badgeColor: SaysoPalette.brandCobalt,
+                    subtitle: "Local Small Language Model runs entirely on Apple Silicon. Fixes grammar, formats action items, and rewrites context without internet.",
+                    extraContent: {
+                        if model.settings.cleanupMode == .localSLM {
+                            if slmStatus == .installed {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(SaysoPalette.emerald)
+                                    Text("\(slm.displayName) installed & ready")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(SaysoPalette.emerald)
+                                }
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(SaysoPalette.emerald.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                            } else if isDownloading {
+                                let pct = Int((model.slmDownloadProgress[slm.id] ?? 0.05) * 100)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Downloading \(slm.displayName) (\(pct)%)...")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(SaysoPalette.brandAmber)
+                                    ProgressView(value: model.slmDownloadProgress[slm.id] ?? 0.05)
+                                        .tint(SaysoPalette.brandAmber)
+                                }
+                                .padding(8)
+                                .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
+                            } else {
+                                Button(action: {
+                                    Task { await model.installSlm(slm) }
+                                }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.down.circle.fill")
+                                        Text("Download \(slm.displayName) (\(slm.sizeDisplay))")
+                                    }
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(SaysoPalette.brandCobalt, in: RoundedRectangle(cornerRadius: 6))
+                                    .foregroundStyle(.white)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                )
+
+                // 3. Cloud LLM
+                polishRow(
+                    mode: .cloudLLM,
+                    title: "Cloud LLM (BYOK)",
+                    badge: nil,
+                    badgeColor: .clear,
+                    subtitle: "Advanced cleanup via OpenAI GPT-4o mini, Anthropic Claude 3.5 Haiku, or Groq Llama 3."
+                )
+            }
+        }
     }
 
-    private var engineReady: Bool {
-        OnboardingReadiness.engineIsReady(
-            route: model.settings.route,
-            language: model.settings.language,
-            hasLocalModel: model.nativeModelReady(for: model.settings.language),
-            routeConsentGranted: model.settings.hasConsent(for: model.settings.route),
-            byokConfigured: model.isBYOKConfigured
+    private func polishRow(
+        mode: CleanupMode,
+        title: String,
+        badge: String?,
+        badgeColor: Color,
+        subtitle: String,
+        @ViewBuilder extraContent: () -> some View = { EmptyView() }
+    ) -> some View {
+        let isSelected = model.settings.cleanupMode == mode
+        return Button(action: {
+            model.settings.cleanupMode = mode
+            model.save()
+        }) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.subheadline)
+                        .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                        .padding(.top, 2)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            if let badge = badge {
+                                Text(badge)
+                                    .font(.system(size: 8, weight: .bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(badgeColor.opacity(0.25), in: Capsule())
+                                    .foregroundStyle(badgeColor)
+                            }
+                        }
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                            .lineSpacing(2)
+                    }
+                    Spacer()
+                }
+
+                extraContent()
+            }
+            .padding(12)
+            .background(
+                isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer,
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct StepThreePermissionsView: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Permissions & Verification")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Grant required system access and verify your setup with a test dictation.")
+                    .font(.subheadline)
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+
+            // Permission Rows
+            VStack(spacing: 8) {
+                permissionRow(
+                    kind: .microphone,
+                    title: "Microphone Access",
+                    desc: "Required to record audio when you trigger dictation."
+                )
+                permissionRow(
+                    kind: .accessibility,
+                    title: "Accessibility Service",
+                    desc: "Required to type and insert your dictated text directly into other apps (Slack, Notes, Cursor, WhatsApp) without copy-pasting."
+                )
+                permissionRow(
+                    kind: .inputMonitoring,
+                    title: "Input Monitoring",
+                    desc: "Required to listen for global hotkeys (⌥ Space) across all applications."
+                )
+            }
+
+            // Live Dictation Test Card
+            VStack(alignment: .leading, spacing: 10) {
+                Text("TEST YOUR SETUP")
+                    .font(.system(size: 9, weight: .black))
+                    .foregroundStyle(SaysoPalette.brandAmber)
+                    .tracking(0.8)
+
+                if model.permissions.states[.microphone] != .granted {
+                    Label("Grant Microphone permission above before testing dictation.", systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.crimson)
+                } else if model.isOnboardingTestActive {
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(SaysoPalette.crimson)
+                            .frame(width: 12, height: 12)
+                            .shadow(color: SaysoPalette.crimson, radius: 4)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Listening... speak now")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("Say a short sentence like 'Hey Sayso, this is my first test'.")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            model.startOrStopDictation()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "stop.circle.fill")
+                                Text("Stop Test")
+                            }
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(SaysoPalette.crimson, in: RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 10))
+                } else if let testText = model.onboardingTestTranscriptText, !testText.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(SaysoPalette.emerald)
+                            Text("First Transcript Received!")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(SaysoPalette.emerald)
+                            Spacer()
+                            Button("Test Again") {
+                                model.startOnboardingTest()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(SaysoPalette.brandCobalt)
+                        }
+
+                        Text("\"\(testText)\"")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .padding(12)
+                    .background(SaysoPalette.emerald.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start a short test dictation")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("Verifies your microphone capture and on-device transcription engine.")
+                                .font(.caption)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            model.startOnboardingTest()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "mic.fill")
+                                Text("Start Test")
+                            }
+                            .font(.caption.weight(.bold))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(SaysoPalette.blueButtonGradient, in: RoundedRectangle(cornerRadius: 8))
+                            .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1)
+            )
+        }
+    }
+
+    private func permissionRow(kind: PermissionKind, title: String, desc: String) -> some View {
+        let isGranted = model.permissions.states[kind] == .granted
+        return HStack(spacing: 12) {
+            Image(systemName: isGranted ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(isGranted ? SaysoPalette.emerald : SaysoPalette.muted)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                Text(desc)
+                    .font(.caption)
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+
+            Spacer()
+
+            if isGranted {
+                Text("Granted")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(SaysoPalette.emerald)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(SaysoPalette.emerald.opacity(0.15), in: Capsule())
+            } else {
+                Button(action: {
+                    Task { await model.permissions.request(kind) }
+                }) {
+                    Text(kind == .microphone ? "Grant" : "Open Settings")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(SaysoPalette.brandCobalt, in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .background(SaysoPalette.brandNavySurface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1)
         )
-    }
-
-    private var engineReadinessMessage: String {
-        switch model.settings.route {
-        case .local:
-            if model.settings.language == .automatic {
-                return "Choose a spoken language for On-device dictation."
-            }
-            return "Download the selected local model before continuing."
-        case .appleSpeech:
-            return "Confirm the Apple Speech data path before continuing."
-        case .byok:
-            if !model.settings.byokConsentGranted {
-                return "Confirm cloud data transmission before continuing."
-            }
-            if !model.isBYOKBaseURLValid {
-                return "BYOK provider must use HTTPS, except localhost HTTP."
-            }
-            if model.settings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return "Enter a transcription model before continuing."
-            }
-            if !model.hasBYOKKey {
-                return "Store an API key in Keychain before continuing."
-            }
-            return "Configure your provider before continuing."
-        }
-    }
-
-    private var requiredPermissionsGranted: Bool {
-        OnboardingReadiness.hasRequiredPermissions(
-            route: model.settings.route,
-            microphoneGranted: model.permissions.states[.microphone] == .granted,
-            speechRecognitionGranted: model.permissions.states[.speechRecognition] == .granted,
-            requiresSpeechRecognition: requiresSpeechRecognition
-        )
-    }
-
-    private var primaryActionTitle: String {
-        guard page == steps.count - 1 else { return "Continue" }
-        if model.isOnboardingTestActive {
-            if model.isStartingDictation { return "Cancel test start" }
-            if model.transcriber.canStop { return "Stop test" }
-            return "Verifying test"
-        }
-        if model.isStartingDictation { return "Dictation is starting" }
-        if model.transcriber.canStop { return "Stop active dictation" }
-        if model.onboardingTestTranscriptID != nil { return "Finish setup" }
-        return "Start test dictation"
-    }
-
-    private var canAdvance: Bool {
-        switch currentStep {
-        case .language:
-            return true
-        case .engine:
-            if model.settings.route == .byok {
-                return true
-            }
-            return engineReady
-        case .cloud:
-            return engineReady
-        case .delivery, .shortcut:
-            return true
-        case .permissions:
-            if model.isOnboardingTestActive {
-                return model.isStartingDictation || model.transcriber.canStop
-            }
-            return requiredPermissionsGranted
-        }
-    }
-
-    private func performFinalStep() {
-        if model.isOnboardingTestActive {
-            if model.isStartingDictation || model.transcriber.canStop {
-                model.startOrStopDictation()
-            }
-        } else if model.isStartingDictation || model.transcriber.canStop {
-            model.notice = "Stop active dictation before testing setup."
-        } else if model.onboardingTestTranscriptID != nil {
-            complete()
-        } else {
-            model.startOnboardingTest()
-        }
-    }
-
-    private func permissionAction(_ permission: PermissionKind) -> String {
-        model.permissions.states[permission] == .granted ? "Granted" : "Request"
-    }
-
-    private func permissionDetail(_ permission: PermissionKind) -> String {
-        switch permission {
-        case .microphone: "Required to hear dictation."
-        case .speechRecognition: "Required to turn voice into text."
-        case .accessibility: "Required to insert text into other apps."
-        case .inputMonitoring: "Required only for the global hotkey."
-        }
     }
 }
 
@@ -8006,6 +8805,7 @@ enum SaysoPalette {
     static let muted = Color(red: 148 / 255.0, green: 163 / 255.0, blue: 184 / 255.0)
 
     static let brandNavyDark = Color(red: 0x0C / 255.0, green: 0x13 / 255.0, blue: 0x22 / 255.0)
+    static let brandNavyBase = brandNavyDark
     static let brandNavySurface = Color(red: 0x15 / 255.0, green: 0x1F / 255.0, blue: 0x33 / 255.0)
     static let brandNavySurfaceTop = Color(red: 0x1A / 255.0, green: 0x27 / 255.0, blue: 0x40 / 255.0)
     static let brandNavySurfaceBottom = Color(red: 0x11 / 255.0, green: 0x1A / 255.0, blue: 0x2B / 255.0)
