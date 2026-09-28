@@ -19,3 +19,6 @@ macos/dev-sayso-app.log
 logs/
 macos/.swiftpm/xcode/xcuserdata/
 *.xcuserstate
+.codex/
+.gemini/
+handover*.md
