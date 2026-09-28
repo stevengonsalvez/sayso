@@ -26,6 +26,8 @@
     <string>Sayso captures your voice for dictation.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Sayso converts your voice into text.</string>
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>Sayso requires Input Monitoring to detect global shortcuts and hotkeys across all applications.</string>
     <key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
     <false/>
 </dict>

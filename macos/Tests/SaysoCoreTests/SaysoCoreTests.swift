@@ -750,6 +750,8 @@ private func openOutcome(
         #expect(!PermissionCenter.needsSystemPrompt(kind, state: .denied))
         #expect(PermissionCenter.interaction(for: kind, state: .denied) == .systemSettings)
     }
+    #expect(PermissionCenter.needsSystemPrompt(.inputMonitoring, state: .undetermined))
+    #expect(PermissionCenter.interaction(for: .inputMonitoring, state: .undetermined) == .nativePrompt)
 }
 
 @Test func controlPlannerGroundsTypeAgainstCurrentTarget() throws {

@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import IOKit.hid
 import Speech
 
 public enum PermissionKind: String, CaseIterable, Identifiable, Sendable {
@@ -93,7 +94,17 @@ public final class PermissionCenter: ObservableObject {
         states[.accessibility] = AXIsProcessTrusted() ? .granted : .denied
         // Report the Input Monitoring grant itself, not a capability implied by
         // another permission, so each row reflects its own System Settings toggle.
-        states[.inputMonitoring] = CGPreflightListenEventAccess() ? .granted : .denied
+        if CGPreflightListenEventAccess() {
+            states[.inputMonitoring] = .granted
+        } else {
+            let access = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+            states[.inputMonitoring] = switch access {
+            case kIOHIDAccessTypeGranted: .granted
+            case kIOHIDAccessTypeDenied: .denied
+            case kIOHIDAccessTypeUnknown: .undetermined
+            default: .undetermined
+            }
+        }
     }
 
     /// Resolves a permission for a flow that is already underway, such as
@@ -118,7 +129,8 @@ public final class PermissionCenter: ObservableObject {
             return
         case .nativePrompt:
             await prompt(kind)
-            return
+            if states[kind] == .granted { return }
+            break
         case .systemSettings:
             break
         }
@@ -130,7 +142,7 @@ public final class PermissionCenter: ObservableObject {
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
         case .inputMonitoring:
-            _ = CGRequestListenEventAccess()
+            Self.registerInputMonitoringEventTap()
         }
         openSettings(for: kind)
         // Settings grants happen outside Sayso and may not reactivate it, so
@@ -141,10 +153,10 @@ public final class PermissionCenter: ObservableObject {
     nonisolated static func interaction(for kind: PermissionKind, state: PermissionState?) -> PermissionInteraction {
         if case .granted? = state { return .none }
         switch kind {
-        case .microphone, .speechRecognition:
+        case .microphone, .speechRecognition, .inputMonitoring:
             if case .undetermined? = state { return .nativePrompt }
             return .systemSettings
-        case .accessibility, .inputMonitoring:
+        case .accessibility:
             return .systemSettings
         }
     }
@@ -164,11 +176,32 @@ public final class PermissionCenter: ObservableObject {
             _ = await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
             }
-        case .accessibility, .inputMonitoring:
+        case .accessibility:
             return
+        case .inputMonitoring:
+            Self.registerInputMonitoringEventTap()
         }
         // TCC can report the prior state briefly after its sheet closes.
         await pollUntil(kind, attempts: 20) { $0 != .undetermined }
+    }
+
+    @discardableResult
+    public static func registerInputMonitoringEventTap() -> Bool {
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        _ = CGRequestListenEventAccess()
+        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: { _, _, event, _ in Unmanaged.passRetained(event) },
+            userInfo: nil
+        ) else {
+            return false
+        }
+        CFMachPortInvalidate(tap)
+        return true
     }
 
     private func pollUntil(_ kind: PermissionKind, attempts: Int, _ done: (PermissionState?) -> Bool) async {
