@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Sayso" width="120" />
+  <img src="assets/logo.svg" alt="Sayso" width="120" />
 </p>
 
 <h1 align="center">Sayso: 100% Private Voice Dictation</h1>
