@@ -49,6 +49,7 @@ final class NotchPanelController {
             dismiss: { [weak self] in self?.dismiss() },
             openApp: { model.showMainWindow() },
             openSettings: { model.openSettings() },
+            openOnboarding: { model.openOnboardingWizard() },
             togglePresentation: {
                 model.setOverlayPresentation(
                     model.settings.overlayPresentation == .notch ? .floating : .notch
@@ -170,6 +171,7 @@ private struct NotchHUD: View {
     let dismiss: () -> Void
     let openApp: () -> Void
     let openSettings: () -> Void
+    let openOnboarding: () -> Void
     let togglePresentation: () -> Void
     let quit: () -> Void
 
@@ -182,6 +184,7 @@ private struct NotchHUD: View {
                 dismiss: dismiss,
                 openApp: openApp,
                 openSettings: openSettings,
+                openOnboarding: openOnboarding,
                 togglePresentation: togglePresentation,
                 quit: quit
             )
@@ -193,6 +196,7 @@ private struct NotchHUD: View {
                 dismiss: dismiss,
                 openApp: openApp,
                 openSettings: openSettings,
+                openOnboarding: openOnboarding,
                 togglePresentation: togglePresentation,
                 quit: quit
             )
@@ -211,6 +215,7 @@ private struct FloatingHUD: View {
     let dismiss: () -> Void
     let openApp: () -> Void
     let openSettings: () -> Void
+    let openOnboarding: () -> Void
     let togglePresentation: () -> Void
     let quit: () -> Void
 
@@ -316,6 +321,13 @@ private struct FloatingHUD: View {
             }
             .overlay(alignment: .topTrailing) {
                 HStack(spacing: 2) {
+                    Button { openOnboarding() } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11))
+                            .frame(width: 24, height: 24)
+                    }
+                    .help("Onboarding tour")
+
                     Button { openSettings() } label: {
                         Image(systemName: "gearshape")
                             .font(.system(size: 11))
@@ -389,6 +401,7 @@ private struct DockedNotchHUD: View {
     let dismiss: () -> Void
     let openApp: () -> Void
     let openSettings: () -> Void
+    let openOnboarding: () -> Void
     let togglePresentation: () -> Void
     let quit: () -> Void
 
@@ -427,6 +440,7 @@ private struct DockedNotchHUD: View {
                         action: togglePresentation
                     )
                     NotchIconButton("macwindow", label: "Open Sayso", action: openApp)
+                    NotchIconButton("sparkles", label: "Onboarding tour", action: openOnboarding)
                     NotchIconButton("gearshape", label: "Open settings", action: openSettings)
                     NotchIconButton("chevron.up", label: "Collapse notch", action: toggle)
                     NotchIconButton("xmark", label: "Hide notch", action: dismiss)

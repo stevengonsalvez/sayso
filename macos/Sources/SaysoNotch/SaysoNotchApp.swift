@@ -40,6 +40,19 @@ struct SaysoNotchApp: App {
                 .frame(minWidth: 1000, minHeight: 680)
         }
         .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Onboarding Tour...") {
+                    model.openOnboardingWizard()
+                }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+            }
+            CommandGroup(replacing: .help) {
+                Button("Sayso Onboarding Tour") {
+                    model.openOnboardingWizard()
+                }
+            }
+        }
     }
 
     private static func activateExistingInstance() {
@@ -1395,6 +1408,11 @@ final class SaysoAppModel: ObservableObject {
         mainWindow = window
     }
 
+    func openOnboardingWizard() {
+        isShowingOnboardingWizard = true
+        showMainWindow()
+    }
+
     func openSettings() {
         selectedTab = 10
         showMainWindow()
@@ -2357,6 +2375,8 @@ private struct MenuContent: View {
             Button("Vocabulary Dictionary") { model.openVocabularySettings() }
             Button("Notch & HUD Display") { model.openNotchSettings() }
             Button("Keyboard Shortcuts") { model.openShortcutsSettings() }
+            Divider()
+            Button("Onboarding Tour...") { model.openOnboardingWizard() }
             Button("Open Sayso") { model.showMainWindow() }
             Button("Open Settings") { model.openSettings() }
             Divider()
@@ -2621,6 +2641,18 @@ private struct SettingsHome: View {
                     Text(model.transcriber.phase == .listening ? "Listening" : "Ready")
                         .font(.caption.weight(.semibold))
                     Spacer()
+                    Button {
+                        model.openOnboardingWizard()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "sparkles")
+                            Text("Onboarding")
+                        }
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(SaysoPalette.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open onboarding tour")
                 }
                 .padding(16)
             }
