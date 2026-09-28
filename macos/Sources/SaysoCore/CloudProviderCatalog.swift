@@ -72,6 +72,29 @@ public struct CloudModelOption: Identifiable, Codable, Equatable, Sendable {
         self.isRecommended = isRecommended
         self.tags = tags
     }
+
+    public var speedBadge: String {
+        if let latency = estimatedLatencyMs {
+            if latency <= 180 {
+                return "⚡ Instant (\(latency)ms)"
+            } else if latency <= 450 {
+                return "⚡ Fast (\(latency)ms)"
+            } else if tags.contains(where: { $0.contains("Reasoning") }) {
+                return "🧠 Reasoning (\(latency)ms)"
+            } else {
+                return "🎯 Accurate (\(latency)ms)"
+            }
+        }
+        return latencyTier.badgeText
+    }
+
+    public var isFast: Bool {
+        latencyTier == .instant || latencyTier == .fast
+    }
+
+    public var isAccurate: Bool {
+        tags.contains(where: { $0.contains("Accurate") || $0.contains("Quality") || $0.contains("Flagship") }) || latencyTier == .medium
+    }
 }
 
 /// A provider offering cloud STT and/or LLM cleanup services.
@@ -189,7 +212,7 @@ public enum CloudProviderCatalog {
                 latencyTier: .fast,
                 estimatedLatencyMs: 350,
                 isRecommended: false,
-                tags: ["Accurate", "Multilingual"]
+                tags: ["🎯 Accurate", "Multilingual", "High Fidelity"]
             )
         ],
         cleanupModels: [
@@ -247,7 +270,7 @@ public enum CloudProviderCatalog {
                 latencyTier: .medium,
                 estimatedLatencyMs: 750,
                 isRecommended: false,
-                tags: ["Standard", "Multilingual"]
+                tags: ["🎯 Accurate", "Standard", "99+ Languages"]
             )
         ],
         cleanupModels: [
@@ -276,7 +299,7 @@ public enum CloudProviderCatalog {
                 latencyTier: .medium,
                 estimatedLatencyMs: 650,
                 isRecommended: false,
-                tags: ["Quality", "Flagship"]
+                tags: ["🎯 Accurate", "Flagship", "Complex Edits"]
             )
         ]
     )
@@ -306,7 +329,7 @@ public enum CloudProviderCatalog {
                 latencyTier: .medium,
                 estimatedLatencyMs: 750,
                 isRecommended: false,
-                tags: ["Quality", "Developer"]
+                tags: ["🎯 Accurate", "Developer", "Nuance"]
             )
         ]
     )
@@ -336,7 +359,7 @@ public enum CloudProviderCatalog {
                 latencyTier: .slow,
                 estimatedLatencyMs: 1200,
                 isRecommended: false,
-                tags: ["Reasoning", "Technical"]
+                tags: ["🧠 Reasoning", "Technical", "CoT"]
             )
         ]
     )

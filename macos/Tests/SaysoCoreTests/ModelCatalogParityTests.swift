@@ -163,4 +163,62 @@ struct ModelCatalogParityTests {
         #expect(!DictationLanguage.english.isIndic)
         #expect(!DictationLanguage.automatic.isIndic)
     }
+
+    @Test("CloudModelOption speedBadge and speed/accuracy flags")
+    func cloudModelOptionBadges() {
+        let distilWhisper = CloudModelOption(
+            id: "distil-whisper",
+            displayName: "Distil Whisper",
+            summary: "Fast STT",
+            latencyTier: .instant,
+            estimatedLatencyMs: 140,
+            tags: ["⚡ Instant", "English"]
+        )
+        #expect(distilWhisper.speedBadge == "⚡ Instant (140ms)")
+        #expect(distilWhisper.isFast)
+        #expect(!distilWhisper.isAccurate)
+
+        let accurateModel = CloudModelOption(
+            id: "whisper-large",
+            displayName: "Whisper Large",
+            summary: "Accurate STT",
+            latencyTier: .medium,
+            estimatedLatencyMs: 750,
+            tags: ["🎯 Accurate", "Standard"]
+        )
+        #expect(accurateModel.speedBadge == "🎯 Accurate (750ms)")
+        #expect(!accurateModel.isFast)
+        #expect(accurateModel.isAccurate)
+
+        let reasoningModel = CloudModelOption(
+            id: "deepseek-r1",
+            displayName: "DeepSeek R1",
+            summary: "Reasoner",
+            latencyTier: .slow,
+            estimatedLatencyMs: 1200,
+            tags: ["🧠 Reasoning", "Technical"]
+        )
+        #expect(reasoningModel.speedBadge == "🧠 Reasoning (1200ms)")
+        #expect(!reasoningModel.isFast)
+    }
+
+    @Test("SaysoSettings decouples STT and LLM cleanup BYOK endpoints")
+    func decoupledByokEndpoints() throws {
+        var settings = SaysoSettings()
+        settings.byokBaseURL = "https://api.groq.com/openai/v1"
+        settings.byokTranscriptionModel = "distil-whisper-large-v3-en"
+        settings.byokCleanupBaseURL = "https://api.anthropic.com/v1"
+        settings.byokCleanupModel = "claude-3-5-haiku-latest"
+
+        #expect(settings.normalizedBYOKBaseURL?.absoluteString == "https://api.groq.com/openai/v1")
+        #expect(settings.normalizedBYOKCleanupBaseURL?.absoluteString == "https://api.anthropic.com/v1")
+
+        let encoded = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(SaysoSettings.self, from: encoded)
+
+        #expect(decoded.byokBaseURL == "https://api.groq.com/openai/v1")
+        #expect(decoded.byokCleanupBaseURL == "https://api.anthropic.com/v1")
+        #expect(decoded.byokTranscriptionModel == "distil-whisper-large-v3-en")
+        #expect(decoded.byokCleanupModel == "claude-3-5-haiku-latest")
+    }
 }

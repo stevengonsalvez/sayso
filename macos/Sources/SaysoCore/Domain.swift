@@ -254,6 +254,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokRewriteModel = "gpt-4.1-mini"
     public var cleanupEnabled = false
     public var cloudCleanupEnabled = false
+    public var byokCleanupBaseURL = "https://api.groq.com/openai/v1"
     public var byokCleanupModel = "gpt-4.1-mini"
     public var lexicon: [String: String] = [:]
     public var legacyLexiconMigrated = false
@@ -299,6 +300,10 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         Self.normalizedBaseURL(byokBaseURL)
     }
 
+    public var normalizedBYOKCleanupBaseURL: URL? {
+        Self.normalizedBaseURL(byokCleanupBaseURL)
+    }
+
     public func hasConsent(for route: ProviderRoute) -> Bool {
         switch route {
         case .local:
@@ -321,7 +326,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled
-        case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupModel
+        case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
         case hints, autoLanguageRouting, transliterateIndicToLatin, silenceTimeoutSeconds, maxRecordingSeconds, audioDuckingEnabled
@@ -390,6 +395,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
         cleanupEnabled = decoded(Bool.self, .cleanupEnabled, fallback: cleanupEnabled)
         cloudCleanupEnabled = decoded(Bool.self, .cloudCleanupEnabled, fallback: cloudCleanupEnabled)
+        byokCleanupBaseURL = decoded(String.self, .byokCleanupBaseURL, fallback: byokCleanupBaseURL)
         byokCleanupModel = decoded(String.self, .byokCleanupModel, fallback: byokCleanupModel)
         lexicon = decoded([String: String].self, .lexicon, fallback: lexicon)
         legacyLexiconMigrated = decoded(Bool.self, .legacyLexiconMigrated, fallback: legacyLexiconMigrated)
