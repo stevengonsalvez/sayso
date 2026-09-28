@@ -497,6 +497,7 @@ import Testing
         action: .scroll(lines: 1, expectedFingerprint: "target"), confidence: 0.60, reason: "grounded"
     )
     #expect(ControlPolicy.canAutoRun(step))
+    #expect(step.planningSource == .deterministic)
 }
 
 @Test func controlPolicyForegroundsOnlyInteractiveTargetActions() {
@@ -721,21 +722,40 @@ private func openOutcome(
     let entry = ControlAuditEntry(
         action: .activate(bundleIdentifier: "com.apple.Safari"),
         beforeFingerprint: "before", afterFingerprint: nil,
-        effect: .notObserved, executionMethod: .pointerClick, result: "observed target active"
+        effect: .notObserved, planningSource: .jev,
+        executionMethod: .pointerClick, result: "observed target active"
     )
     let encoded = try JSONEncoder().encode(entry)
     #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).effect == .notObserved)
+    #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).planningSource == .jev)
     #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).executionMethod == .pointerClick)
 
     var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     legacy["effect"] = nil
+    legacy["planningSource"] = nil
     legacy["executionMethod"] = nil
     let decoded = try JSONDecoder().decode(
         ControlAuditEntry.self, from: JSONSerialization.data(withJSONObject: legacy)
     )
     #expect(decoded.effect == .unknown)
+    #expect(decoded.planningSource == .unknown)
     #expect(decoded.executionMethod == .unspecified)
     #expect(decoded.result == "observed target active")
+}
+
+@Test func controlPlanStepDecodesLegacyEntriesAsDeterministic() throws {
+    let step = ControlPlanStep(
+        action: .scroll(lines: 1, expectedFingerprint: "target"),
+        confidence: 0.9,
+        reason: "Exact scroll command"
+    )
+    let encoded = try JSONEncoder().encode(step)
+    var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    legacy["planningSource"] = nil
+    let decoded = try JSONDecoder().decode(
+        ControlPlanStep.self, from: JSONSerialization.data(withJSONObject: legacy)
+    )
+    #expect(decoded.planningSource == .deterministic)
 }
 
 @Test func permissionInteractionsKeepDecidedDictationInTargetAndRefreshSettingsGrants() {

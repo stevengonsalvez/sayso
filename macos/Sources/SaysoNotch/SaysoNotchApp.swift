@@ -3152,6 +3152,9 @@ private struct ControlWorkspace: View {
                                     Text(entry.timestamp.formatted(date: .omitted, time: .shortened))
                                         .font(.caption2)
                                         .foregroundStyle(SaysoPalette.muted)
+                                    Text(entry.planningSource.rawValue.capitalized)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(entry.planningSource == .jev ? SaysoPalette.amber : SaysoPalette.muted)
                                     Text(entry.result)
                                         .font(.caption)
                                         .foregroundStyle(.white)
@@ -8890,4 +8893,3 @@ enum SaysoPalette {
         )
     }
 }
-

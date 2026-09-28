@@ -74,6 +74,7 @@ public enum JevControlBridge {
                 action: .press(elementID: targetId, expectedFingerprint: snapshot.fingerprint),
                 confidence: decision.answers["action"]?.confidence ?? 0.85,
                 reason: "Jev: Click \(candidate.label)",
+                planningSource: .jev,
                 candidateTitle: element?.title ?? candidate.label
             )
         case "focus":
@@ -82,6 +83,7 @@ public enum JevControlBridge {
                 action: .focus(elementID: targetId, expectedFingerprint: snapshot.fingerprint),
                 confidence: decision.answers["action"]?.confidence ?? 0.85,
                 reason: "Jev: Focus \(candidate.label)",
+                planningSource: .jev,
                 candidateTitle: element?.title ?? candidate.label
             )
         case "select":
@@ -90,6 +92,7 @@ public enum JevControlBridge {
                 action: .select(elementID: targetId, expectedFingerprint: snapshot.fingerprint),
                 confidence: decision.answers["action"]?.confidence ?? 0.85,
                 reason: "Jev: Select \(candidate.label)",
+                planningSource: .jev,
                 candidateTitle: element?.title ?? candidate.label
             )
         case "key":
@@ -105,27 +108,31 @@ public enum JevControlBridge {
             return ControlPlanStep(
                 action: .key(key, expectedFingerprint: snapshot.fingerprint),
                 confidence: decision.answers["action"]?.confidence ?? 0.9,
-                reason: "Jev: Press \(key.rawValue)"
+                reason: "Jev: Press \(key.rawValue)",
+                planningSource: .jev
             )
         case "scroll":
             let lines = targetId == "up" ? 6 : -6
             return ControlPlanStep(
                 action: .scroll(lines: lines, expectedFingerprint: snapshot.fingerprint),
                 confidence: decision.answers["action"]?.confidence ?? 0.9,
-                reason: "Jev: Scroll \(targetId)"
+                reason: "Jev: Scroll \(targetId)",
+                planningSource: .jev
             )
         case "open":
             if let app = installedApplications?.first(where: { $0.bundleIdentifier == targetId }) {
                 return ControlPlanStep(
                     action: .activateApplication(bundleIdentifier: targetId, applicationURL: app.applicationURL),
                     confidence: decision.answers["action"]?.confidence ?? 0.9,
-                    reason: "Jev: Open \(app.name)"
+                    reason: "Jev: Open \(app.name)",
+                    planningSource: .jev
                 )
             } else {
                 return ControlPlanStep(
                     action: .activate(bundleIdentifier: targetId),
                     confidence: decision.answers["action"]?.confidence ?? 0.85,
-                    reason: "Jev: Open \(targetId)"
+                    reason: "Jev: Open \(targetId)",
+                    planningSource: .jev
                 )
             }
         default:

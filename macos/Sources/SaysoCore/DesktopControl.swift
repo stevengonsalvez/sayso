@@ -392,17 +392,25 @@ public enum DesktopAction: Codable, Equatable, Sendable {
     }
 }
 
+public enum ControlPlanningSource: String, Codable, Equatable, Sendable {
+    case unknown
+    case deterministic
+    case jev
+}
+
 public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public let action: DesktopAction
     public let confidence: Double
     public let reason: String
+    public let planningSource: ControlPlanningSource
     /// AX title captured with a press action. Never recover this from its opaque element ID.
     public let candidateTitle: String?
     public let requiresConfirmation: Bool
 
     public init(
         id: UUID = UUID(), action: DesktopAction, confidence: Double, reason: String,
+        planningSource: ControlPlanningSource = .deterministic,
         candidateTitle: String? = nil,
         requiresConfirmation: Bool = false
     ) {
@@ -410,8 +418,20 @@ public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
         self.action = action
         self.confidence = confidence
         self.reason = reason
+        self.planningSource = planningSource
         self.candidateTitle = candidateTitle
         self.requiresConfirmation = requiresConfirmation
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        action = try container.decode(DesktopAction.self, forKey: .action)
+        confidence = try container.decode(Double.self, forKey: .confidence)
+        reason = try container.decode(String.self, forKey: .reason)
+        planningSource = try container.decodeIfPresent(ControlPlanningSource.self, forKey: .planningSource) ?? .deterministic
+        candidateTitle = try container.decodeIfPresent(String.self, forKey: .candidateTitle)
+        requiresConfirmation = try container.decode(Bool.self, forKey: .requiresConfirmation)
     }
 }
 
@@ -422,6 +442,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
     public let beforeFingerprint: String
     public let afterFingerprint: String?
     public let effect: ControlEffect
+    public let planningSource: ControlPlanningSource
     public let executionMethod: ControlExecutionMethod
     /// Human-readable description of `effect`. Never parse it; branch on `effect`.
     public let result: String
@@ -429,6 +450,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
     public init(
         id: UUID = UUID(), timestamp: Date = .now, action: DesktopAction,
         beforeFingerprint: String, afterFingerprint: String?, effect: ControlEffect,
+        planningSource: ControlPlanningSource = .unknown,
         executionMethod: ControlExecutionMethod = .unspecified, result: String
     ) {
         self.id = id
@@ -437,6 +459,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
         self.beforeFingerprint = beforeFingerprint
         self.afterFingerprint = afterFingerprint
         self.effect = effect
+        self.planningSource = planningSource
         self.executionMethod = executionMethod
         self.result = result
     }
@@ -450,6 +473,7 @@ public struct ControlAuditEntry: Codable, Equatable, Identifiable, Sendable {
         afterFingerprint = try container.decodeIfPresent(String.self, forKey: .afterFingerprint)
         // Entries written before typed effects carry only prose; do not infer from it.
         effect = try container.decodeIfPresent(ControlEffect.self, forKey: .effect) ?? .unknown
+        planningSource = try container.decodeIfPresent(ControlPlanningSource.self, forKey: .planningSource) ?? .unknown
         executionMethod = try container.decodeIfPresent(ControlExecutionMethod.self, forKey: .executionMethod) ?? .unspecified
         result = try container.decode(String.self, forKey: .result)
     }
@@ -1316,6 +1340,7 @@ public final class AXDesktopController: @unchecked Sendable {
             beforeFingerprint: before.fingerprint,
             afterFingerprint: observation.snapshot?.fingerprint,
             effect: observation.effect,
+            planningSource: step.planningSource,
             executionMethod: executionMethod,
             result: observation.result
         )

@@ -74,6 +74,7 @@ struct JevClientTests {
         #expect(step.candidateTitle == "Search")
         #expect(step.confidence == 0.95)
         #expect(step.reason.contains("Click Search"))
+        #expect(step.planningSource == .jev)
         if case let .press(elementID, _) = step.action {
             #expect(elementID == "elem-search")
         } else {
@@ -107,6 +108,7 @@ struct JevClientTests {
         let decision = try JSONDecoder().decode(JevDecision.self, from: answerData)
 
         let step = try JevControlBridge.planStep(from: decision, candidates: candidates, snapshot: snapshot)
+        #expect(step.planningSource == .jev)
         if case let .key(key, _) = step.action {
             #expect(key == .return)
         } else {
