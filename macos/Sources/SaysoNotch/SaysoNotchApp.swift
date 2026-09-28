@@ -1073,9 +1073,12 @@ final class SaysoAppModel: ObservableObject {
         }
 
         guard currentSettings.cleanupMode == .cloudLLM || currentSettings.cloudCleanupEnabled,
-              currentSettings.byokConsentGranted,
-              let key = secrets.secret(named: "byok-api-key"),
-              let baseURL = currentSettings.normalizedBYOKBaseURL,
+              currentSettings.byokConsentGranted else {
+            return local
+        }
+        let cleanupProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
+        guard let key = keyForProvider(cleanupProvider),
+              let baseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL,
               !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return local
         }
@@ -1524,6 +1527,26 @@ final class SaysoAppModel: ObservableObject {
         notice = "\(provider.displayName) key removed from Keychain."
     }
 
+    func keyForProvider(_ provider: CloudProvider) -> String? {
+        if provider.id == "ollama" { return "local-ollama" }
+        if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if provider.id == "openai" || provider.id == "custom" {
+            if let key = secrets.secret(named: "byok-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return key.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
+    func keyForProvider(id: String) -> String? {
+        guard let p = CloudProviderCatalog.provider(for: id) else {
+            return secrets.secret(named: "byok-api-key")
+        }
+        return keyForProvider(p)
+    }
+
     var hasTypeSafeKey: Bool {
         if let key = secrets.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
@@ -1645,10 +1668,11 @@ final class SaysoAppModel: ObservableObject {
     }
 
     var isBYOKConfigured: Bool {
-        OnboardingReadiness.isBYOKConfigured(
+        let sttProvider = CloudProviderCatalog.provider(for: settings.selectedCloudProviderId) ?? CloudProviderCatalog.groq
+        return OnboardingReadiness.isBYOKConfigured(
             baseURLString: settings.byokBaseURL,
             transcriptionModel: settings.byokTranscriptionModel,
-            hasAPIKey: hasBYOKKey
+            hasAPIKey: hasKey(for: sttProvider) || hasBYOKKey
         )
     }
 
@@ -1656,8 +1680,11 @@ final class SaysoAppModel: ObservableObject {
         for currentSettings: SaysoSettings
     ) -> OpenAICompatibleAudioTranscriptionConfiguration? {
         guard currentSettings.route == .byok,
-              currentSettings.byokConsentGranted,
-              let apiKey = secrets.secret(named: "byok-api-key"),
+              currentSettings.byokConsentGranted else {
+            return nil
+        }
+        let sttProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudProviderId) ?? CloudProviderCatalog.groq
+        guard let apiKey = keyForProvider(sttProvider),
               let baseURL = currentSettings.normalizedBYOKBaseURL else {
             return nil
         }
@@ -2018,8 +2045,30 @@ final class SaysoAppModel: ObservableObject {
         return true
     }
 
+    func relaunchApp() {
+        let bundleURL = Bundle.main.bundleURL
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-n", bundleURL.path]
+        try? process.run()
+        NSApplication.shared.terminate(nil)
+    }
+
+    func promptAccessibilityPermission() {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     func captureDesktop() {
         guard desktopControlEnabled() else { return }
+        if !AXIsProcessTrusted() {
+            promptAccessibilityPermission()
+            controlStatus = "Accessibility permission needed. If enabled in System Settings, relaunch Sayso Notch to activate."
+            return
+        }
         do {
             currentSnapshot = try controller.capture(application: controlTarget())
             controlStatus = "Grounded \(currentSnapshot?.applicationName ?? "desktop")"
@@ -2982,6 +3031,47 @@ private struct ControlWorkspace: View {
                         Text(model.controlStatus)
                             .font(.body.weight(.medium))
                             .foregroundStyle(.white)
+
+                        if !AXIsProcessTrusted() {
+                            Divider().background(SaysoPalette.brandNavyContainer)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(SaysoPalette.brandAmber)
+                                    Text("Accessibility Permission Required")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(SaysoPalette.brandAmber)
+                                }
+
+                                Text("macOS requires Accessibility access to inspect and control visible UI elements. If you just toggled this on in System Settings, you must relaunch Sayso Notch for macOS to activate the permission.")
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.muted)
+
+                                HStack(spacing: 10) {
+                                    Button {
+                                        model.promptAccessibilityPermission()
+                                    } label: {
+                                        Label("Open Accessibility Settings ↗", systemImage: "gearshape")
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(SaysoPalette.brandAmber)
+                                    .font(.caption.weight(.semibold))
+
+                                    Button {
+                                        model.relaunchApp()
+                                    } label: {
+                                        Label("Relaunch Sayso Notch", systemImage: "arrow.clockwise")
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(SaysoPalette.cobalt)
+                                    .font(.caption.weight(.semibold))
+                                }
+                            }
+                            .padding(10)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandAmber.opacity(0.3), lineWidth: 1))
+                        }
 
                         if let snapshot = model.currentSnapshot {
                             Divider().background(SaysoPalette.brandNavyContainer)
@@ -4320,7 +4410,7 @@ private struct TranscriptionWorkspace: View {
                                         HStack {
                                             Text(opt.displayName)
                                             Spacer()
-                                            Text(opt.latencyTier.badgeText)
+                                            Text(opt.speedBadge)
                                         }
                                         .tag(opt.id)
                                     }
@@ -4761,6 +4851,132 @@ private struct LocalSlmRowCard: View {
     }
 }
 
+private struct SaysoProviderPill: View {
+    let name: String
+    let isSelected: Bool
+    let speedHint: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Text(name)
+                    .font(.caption.weight(isSelected ? .bold : .medium))
+                    .foregroundStyle(isSelected ? .white : SaysoPalette.muted)
+                if let speedHint {
+                    Text(speedHint)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted.opacity(0.8))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer, lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SaysoCloudModelRowCard: View {
+    let model: CloudModelOption
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(model.displayName)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+
+                        Text(model.speedBadge)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                model.isFast ? Color.yellow.opacity(0.2) : (model.tags.contains(where: { $0.contains("Reasoning") }) ? Color.purple.opacity(0.2) : Color.teal.opacity(0.2)),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(
+                                model.isFast ? Color.yellow : (model.tags.contains(where: { $0.contains("Reasoning") }) ? Color.purple : Color.teal)
+                            )
+
+                        if model.isRecommended {
+                            Text("Recommended")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.cobalt.opacity(0.18), in: Capsule())
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        }
+                    }
+
+                    Text(model.summary)
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if !model.tags.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(model.tags, id: \.self) { tag in
+                                Text(tag)
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1.5)
+                                    .background(SaysoPalette.brandNavyWell, in: Capsule())
+                                    .foregroundStyle(SaysoPalette.muted)
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+
+                Spacer()
+
+                if isSelected {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                        Text("Active")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(SaysoPalette.brandAmber)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(SaysoPalette.brandAmber.opacity(0.15), in: Capsule())
+                } else {
+                    Text("Select")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(SaysoPalette.muted)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(SaysoPalette.brandNavyWell, in: Capsule())
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface,
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isSelected ? SaysoPalette.brandAmber.opacity(0.8) : SaysoPalette.brandNavyContainer, lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct AICleanupWorkspace: View {
     @ObservedObject var model: SaysoAppModel
     @State private var apiKey = ""
@@ -4881,7 +5097,7 @@ private struct AICleanupWorkspace: View {
                     set: { newId in
                         model.settings.selectedCloudCleanupProviderId = newId
                         if let p = CloudProviderCatalog.provider(for: newId) {
-                            model.settings.byokBaseURL = p.defaultBaseURL
+                            model.settings.byokCleanupBaseURL = p.defaultBaseURL
                             if let firstModel = p.cleanupModels.first {
                                 model.settings.selectedCloudCleanupModelId = firstModel.id
                                 model.settings.byokCleanupModel = firstModel.id
@@ -4913,7 +5129,7 @@ private struct AICleanupWorkspace: View {
                             HStack {
                                 Text(opt.displayName)
                                 Spacer()
-                                Text(opt.latencyTier.badgeText)
+                                Text(opt.speedBadge)
                             }
                             .tag(opt.id)
                         }
@@ -4922,7 +5138,7 @@ private struct AICleanupWorkspace: View {
                 }
 
                 if currentProvider.id == "custom" {
-                    TextField("Base URL", text: $model.settings.byokBaseURL)
+                    TextField("Base URL", text: $model.settings.byokCleanupBaseURL)
                         .textFieldStyle(.roundedBorder)
                     TextField("Model name", text: $model.settings.byokCleanupModel)
                         .textFieldStyle(.roundedBorder)
@@ -5389,25 +5605,71 @@ private struct AddEditPronunciationSheet: View {
         VStack(spacing: 16) {
             Text(existingID == nil ? "Add Vocabulary Entry" : "Edit Vocabulary Entry")
                 .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
 
-            Form {
-                TextField("Canonical word / target output", text: $word)
-                TextField("Spoken phonetic trigger (e.g. 'eye OS')", text: $pronunciation)
-                TextField("Optional replacement text (leave blank to use word)", text: $replacement)
-
-                Picker("Category", selection: $category) {
-                    ForEach(PronunciationCategory.allCases) { cat in
-                        Text(cat.displayName).tag(cat)
+            SaysoCard {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Canonical Word / Target Output")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.muted)
+                        TextField("e.g. Kubernetes, TypeScript", text: $word)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                            .foregroundStyle(.white)
                     }
-                }
 
-                Toggle("Match as regular expression", isOn: $isRegex)
-                Toggle("Case sensitive matching", isOn: $caseSensitive)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Spoken Phonetic Trigger")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.muted)
+                        TextField("e.g. koober-netties", text: $pronunciation)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                            .foregroundStyle(.white)
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Optional Replacement Text")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.muted)
+                        TextField("Leave blank to use canonical word", text: $replacement)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                            .foregroundStyle(.white)
+                    }
+
+                    HStack {
+                        Text("Category")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.muted)
+                        Spacer()
+                        Picker("Category", selection: $category) {
+                            ForEach(PronunciationCategory.allCases) { cat in
+                                Text(cat.displayName).tag(cat)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    Divider().background(SaysoPalette.brandNavyContainer)
+
+                    Toggle("Match as regular expression", isOn: $isRegex)
+                        .font(.caption)
+                    Toggle("Case sensitive matching", isOn: $caseSensitive)
+                        .font(.caption)
+                }
             }
-            .formStyle(.grouped)
 
             HStack {
                 Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
                 Spacer()
                 Button("Save") {
                     let entry = SaysoPronunciationEntry(
@@ -5422,13 +5684,15 @@ private struct AddEditPronunciationSheet: View {
                     onSave(entry)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(SaysoPalette.brandAmber)
                 .disabled(word.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 8)
         }
-        .frame(minWidth: 420, minHeight: 340)
-        .padding(16)
+        .frame(minWidth: 440, minHeight: 380)
+        .padding(20)
+        .background(SaysoPalette.brandNavyDark)
     }
 }
 
@@ -5437,7 +5701,10 @@ private struct ModelsWorkspace: View {
     @ObservedObject private var localEnglishModel: FluidAudioLocalModelManager
     @ObservedObject private var localPunjabiModel: SherpaPunjabiModelManager
     @State private var selectedCategory = 0
-    @State private var providerApiKey = ""
+    @State private var sttApiKey = ""
+    @State private var cleanupApiKey = ""
+    @State private var showSttKey = false
+    @State private var showCleanupKey = false
 
     init(model: SaysoAppModel) {
         self.model = model
@@ -5446,18 +5713,15 @@ private struct ModelsWorkspace: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Category", selection: $selectedCategory) {
-                Text("On-Device Speech").tag(0)
-                Text("On-Device SLMs").tag(1)
-                Text("Cloud Providers & BYOK").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                // Neomorphic Category Switcher
+                HStack(spacing: 10) {
+                    categoryTabButton(title: "On-Device Speech", icon: "waveform", tag: 0)
+                    categoryTabButton(title: "On-Device SLMs", icon: "cpu", tag: 1)
+                    categoryTabButton(title: "Cloud Providers & BYOK", icon: "cloud.fill", tag: 2)
+                }
 
-            Form {
                 switch selectedCategory {
                 case 0:
                     onDeviceSpeechSection
@@ -5467,43 +5731,109 @@ private struct ModelsWorkspace: View {
                     cloudProvidersSection
                 }
             }
-            .formStyle(.grouped)
+            .padding(20)
         }
+        .background(SaysoPalette.brandNavyDark)
         .navigationTitle("Models & Downloads")
         .onChange(of: model.settings) { _, _ in model.save() }
     }
 
     @ViewBuilder
-    private var onDeviceSpeechSection: some View {
-        Section("Speech Route") {
-            Picker("Active speech route", selection: $model.settings.route) {
-                ForEach(ProviderRoute.dictationRoutes) { route in
-                    Text(route.displayName).tag(route)
-                }
+    private func categoryTabButton(title: String, icon: String, tag: Int) -> some View {
+        let isSelected = selectedCategory == tag
+        Button {
+            selectedCategory = tag
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(isSelected ? SaysoPalette.brandAmber : SaysoPalette.muted)
+                Text(title)
+                    .font(.caption.weight(isSelected ? .bold : .medium))
+                    .foregroundStyle(isSelected ? .white : SaysoPalette.muted)
             }
-            Text("Select 'On-device' for 100% private transcription without internet.")
-                .font(.caption).foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? SaysoPalette.brandNavyWell : SaysoPalette.brandNavySurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isSelected ? SaysoPalette.brandAmber : SaysoPalette.brandNavyContainer, lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var onDeviceSpeechSection: some View {
+        SaysoSectionHeader(text: "Speech Route")
+
+        HStack(spacing: 10) {
+            SaysoModeOptionCard(
+                title: "On-Device",
+                subtitle: "Private & Local",
+                systemImage: "arrow.down.circle.fill",
+                isSelected: model.settings.route == .local
+            ) {
+                model.settings.route = .local
+                model.save()
+            }
+
+            SaysoModeOptionCard(
+                title: "Cloud LLM / ASR",
+                subtitle: "BYOK Providers",
+                systemImage: "cloud.fill",
+                isSelected: model.settings.route == .byok
+            ) {
+                model.settings.route = .byok
+                model.save()
+            }
+
+            SaysoModeOptionCard(
+                title: "Apple Speech",
+                subtitle: "macOS Built-in",
+                systemImage: "waveform",
+                isSelected: model.settings.route == .appleSpeech
+            ) {
+                model.settings.route = .appleSpeech
+                model.save()
+            }
         }
 
-        Section("Native Streaming Models (Apple Silicon CoreML)") {
-            // English FluidAudio
-            VStack(alignment: .leading, spacing: 6) {
+        SaysoSectionHeader(text: "Native Streaming Models (Apple Silicon CoreML)")
+
+        // English FluidAudio
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
-                            Text(FluidAudioLocalModelManager.displayName).fontWeight(.semibold)
-                            Text("⚡ Instant").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.yellow.opacity(0.2), in: Capsule())
+                            Text(FluidAudioLocalModelManager.displayName).fontWeight(.semibold).foregroundStyle(.white)
+                            Text("⚡ Instant (50ms)")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.yellow.opacity(0.2), in: Capsule())
+                                .foregroundStyle(Color.yellow)
                             if localEnglishModel.state.isInstalled && model.settings.route == .local && model.settings.language == .english {
-                                Text("Active Engine").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(SaysoPalette.cobalt.opacity(0.2), in: Capsule()).foregroundStyle(SaysoPalette.cobalt)
+                                Text("Active Engine")
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(SaysoPalette.cobalt.opacity(0.2), in: Capsule())
+                                    .foregroundStyle(SaysoPalette.cobalt)
                             }
                         }
                         Text("On-device English streaming. Apple silicon only. 430 MB.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(SaysoPalette.muted)
                     }
                     Spacer()
                     Text(localModelStatus)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(localEnglishModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        .foregroundStyle(localEnglishModel.state.isInstalled ? SaysoPalette.emerald : SaysoPalette.muted)
                 }
 
                 if case .installing = localEnglishModel.state {
@@ -5533,28 +5863,35 @@ private struct ModelsWorkspace: View {
                     } else {
                         Button("Download English model") { Task { await localEnglishModel.install() } }
                             .buttonStyle(.borderedProminent)
-                            .tint(SaysoPalette.cobalt)
+                            .tint(SaysoPalette.brandCobalt)
                             .font(.caption)
                     }
                     Spacer()
                 }
             }
+        }
 
-            // Indian Language FluidAudio
-            VStack(alignment: .leading, spacing: 6) {
+        // Indian Language FluidAudio
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
-                            Text(FluidAudioLocalModelManager.multilingualDisplayName).fontWeight(.semibold)
-                            Text("⚡ Fast").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.teal.opacity(0.2), in: Capsule())
+                            Text(FluidAudioLocalModelManager.multilingualDisplayName).fontWeight(.semibold).foregroundStyle(.white)
+                            Text("⚡ Fast (180ms)")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.teal.opacity(0.2), in: Capsule())
+                                .foregroundStyle(Color.teal)
                         }
                         Text("Hindi, Tamil, Malayalam, Bengali, Gujarati, Kannada, Marathi, Telugu and Urdu. 1.5 GB.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(SaysoPalette.muted)
                     }
                     Spacer()
                     Text(multilingualModelStatus)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(localEnglishModel.multilingualState.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        .foregroundStyle(localEnglishModel.multilingualState.isInstalled ? SaysoPalette.emerald : SaysoPalette.muted)
                 }
 
                 if case .installing = localEnglishModel.multilingualState {
@@ -5584,7 +5921,7 @@ private struct ModelsWorkspace: View {
                     } else {
                         Button("Download Indian language model") { Task { await localEnglishModel.install(language: .hindi) } }
                             .buttonStyle(.borderedProminent)
-                            .tint(SaysoPalette.cobalt)
+                            .tint(SaysoPalette.brandCobalt)
                             .font(.caption)
                     }
                     Spacer()
@@ -5592,23 +5929,25 @@ private struct ModelsWorkspace: View {
             }
         }
 
-        Section("Offline Indic & Sherpa-ONNX Catalog") {
-            // Punjabi model
-            VStack(alignment: .leading, spacing: 6) {
+        SaysoSectionHeader(text: "Offline Indic & Sherpa-ONNX Catalog")
+
+        // Punjabi Model
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
-                            Text(SherpaPunjabiModelManager.displayName).fontWeight(.semibold)
-                            Text("⚡ Fast").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.teal.opacity(0.2), in: Capsule())
-                            Text("★ Best for Punjabi").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange.opacity(0.2), in: Capsule())
+                            Text(SherpaPunjabiModelManager.displayName).fontWeight(.semibold).foregroundStyle(.white)
+                            Text("⚡ Fast").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.teal.opacity(0.2), in: Capsule()).foregroundStyle(Color.teal)
+                            Text("★ Best for Punjabi").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange.opacity(0.2), in: Capsule()).foregroundStyle(Color.orange)
                         }
                         Text("Offline Punjabi final transcription. Apache-2.0. 198 MB.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(SaysoPalette.muted)
                     }
                     Spacer()
                     Text(punjabiModelStatus)
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(localPunjabiModel.state.isInstalled ? SaysoPalette.cobalt : SaysoPalette.muted)
+                        .foregroundStyle(localPunjabiModel.state.isInstalled ? SaysoPalette.emerald : SaysoPalette.muted)
                 }
 
                 if case .installing = localPunjabiModel.state {
@@ -5633,288 +5972,477 @@ private struct ModelsWorkspace: View {
                     } else {
                         Button("Download Punjabi model") { Task { await localPunjabiModel.install() } }
                             .buttonStyle(.borderedProminent)
-                            .tint(SaysoPalette.cobalt)
+                            .tint(SaysoPalette.brandCobalt)
                             .font(.caption)
                     }
                     Spacer()
                 }
             }
+        }
 
-            // Sherpa-ONNX models
-            ForEach(LocalModelCatalog.all) { manifest in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(manifest.displayName).fontWeight(.semibold)
-                                if manifest.isRecommended {
-                                    Text("Recommended").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(SaysoPalette.cobalt.opacity(0.15), in: Capsule()).foregroundStyle(SaysoPalette.cobalt)
+        // Sherpa-ONNX Models
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(LocalModelCatalog.all) { manifest in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(manifest.displayName).fontWeight(.semibold).foregroundStyle(.white)
+                                    if manifest.isRecommended {
+                                        Text("Recommended").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(SaysoPalette.cobalt.opacity(0.15), in: Capsule()).foregroundStyle(SaysoPalette.cobalt)
+                                    }
+                                    if manifest.id == model.settings.selectedLocalAsrModelId && model.settings.route == .local {
+                                        Text("Selected").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.green.opacity(0.2), in: Capsule()).foregroundStyle(Color.green)
+                                    }
                                 }
-                                if manifest.id == model.settings.selectedLocalAsrModelId && model.settings.route == .local {
-                                    Text("Selected").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Color.green.opacity(0.2), in: Capsule()).foregroundStyle(Color.green)
-                                }
+                                Text("\(manifest.summary) Size: \(manifest.expectedSizeBytes / 1_000_000) MB. License: \(manifest.license.displayName).")
+                                    .font(.caption).foregroundStyle(SaysoPalette.muted)
                             }
-                            Text("\(manifest.summary) Size: \(manifest.expectedSizeBytes / 1_000_000) MB. License: \(manifest.license.displayName).")
-                                .font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            if manifest.id != model.settings.selectedLocalAsrModelId {
+                                Button("Use for Dictation") {
+                                    model.settings.selectedLocalAsrModelId = manifest.id
+                                    model.settings.route = .local
+                                    model.save()
+                                }
+                                .buttonStyle(.bordered)
+                                .font(.caption)
+                            }
                         }
-                        Spacer()
                     }
-                    HStack {
-                        if manifest.id != model.settings.selectedLocalAsrModelId {
-                            Button("Use for Dictation") {
-                                model.settings.selectedLocalAsrModelId = manifest.id
-                                model.settings.route = .local
-                                model.save()
-                            }
-                            .buttonStyle(.bordered)
-                            .font(.caption)
-                        }
-                        Spacer()
+                    if manifest.id != LocalModelCatalog.all.last?.id {
+                        Divider().background(SaysoPalette.brandNavyContainer)
                     }
                 }
-                .padding(.vertical, 3)
             }
         }
     }
 
     @ViewBuilder
     private var onDeviceSlmSection: some View {
-        Section("On-Device Small Language Models") {
-            Text("Small Language Models (SLMs) run locally on CPU and Apple Neural Engine. They polish transcripts, format lists, and fix grammar without sending text to any cloud server.")
-                .font(.caption).foregroundStyle(.secondary)
+        SaysoSectionHeader(text: "On-Device Small Language Models")
+
+        SaysoCard {
+            HStack(spacing: 12) {
+                Image(systemName: "cpu.fill")
+                    .font(.title2)
+                    .foregroundStyle(SaysoPalette.brandAmber)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Zero Network Polish")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Text("Small Language Models (SLMs) run locally on Apple Neural Engine and CPU. They polish transcripts, format lists, and fix grammar without sending text to any cloud server.")
+                        .font(.caption)
+                        .foregroundStyle(SaysoPalette.muted)
+                }
+            }
         }
 
-        Section("SLM Catalog (Qwen & SmolLM)") {
+        SaysoSectionHeader(text: "Local SLM Catalog (Qwen & SmolLM)")
+
+        VStack(spacing: 10) {
             ForEach(LocalSlmCatalog.all) { slm in
-                let status = model.checkSlmStatus(slm)
-                let isSelected = model.settings.selectedLocalSlmModelId == slm.id
-
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(slm.displayName).fontWeight(.semibold)
-                                Text(slm.latencyTier.badgeText)
-                                    .font(.caption2.bold())
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(slm.latencyTier == .instant ? Color.yellow.opacity(0.2) : Color.teal.opacity(0.2), in: Capsule())
-
-                                if slm.isRecommended {
-                                    Text("Recommended")
-                                        .font(.caption2.bold())
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(SaysoPalette.cobalt.opacity(0.15), in: Capsule())
-                                        .foregroundStyle(SaysoPalette.cobalt)
-                                }
-
-                                if isSelected {
-                                    Text("Active SLM")
-                                        .font(.caption2.bold())
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.green.opacity(0.2), in: Capsule())
-                                        .foregroundStyle(Color.green)
-                                }
-                            }
-
-                            Text("\(slm.summary) Parameters: \(slm.parameterCount). Quantized: \(slm.sizeDisplay).")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-
-                        if status.isInstalled {
-                            Text("Ready")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(SaysoPalette.cobalt)
-                        } else if case .installing = status {
-                            let pct = Int((model.slmDownloadProgress[slm.id] ?? 0.05) * 100)
-                            Text("Downloading \(pct)%")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(SaysoPalette.brandAmber)
-                        } else {
-                            Text("Not downloaded")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(SaysoPalette.muted)
-                        }
+                LocalSlmRowCard(
+                    slm: slm,
+                    isSelected: model.settings.selectedLocalSlmModelId == slm.id,
+                    status: model.checkSlmStatus(slm),
+                    progress: model.slmDownloadProgress[slm.id],
+                    onSelect: {
+                        model.settings.selectedLocalSlmModelId = slm.id
+                        model.settings.cleanupMode = .localSLM
+                        model.save()
+                    },
+                    onDownload: {
+                        Task { await model.installSlm(slm) }
                     }
-
-                    if case .installing = status {
-                        let p = model.slmDownloadProgress[slm.id] ?? 0.05
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                ProgressView().controlSize(.small)
-                                Text("Downloading \(slm.displayName)... \(Int(p * 100))%")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(SaysoPalette.brandAmber)
-                            }
-                            ProgressView(value: p)
-                                .tint(SaysoPalette.brandAmber)
-                        }
-                    }
-
-                    HStack {
-                        if status.isInstalled {
-                            if !isSelected {
-                                Button("Select as Active") {
-                                    model.settings.selectedLocalSlmModelId = slm.id
-                                    model.settings.cleanupMode = .localSLM
-                                    model.save()
-                                }
-                                .buttonStyle(.bordered)
-                                .font(.caption)
-                            }
-
-                            Button("Delete", role: .destructive) {
-                                model.deleteSlm(slm)
-                            }
-                            .font(.caption)
-                        } else if case .installing = status {
-                            let pct = Int((model.slmDownloadProgress[slm.id] ?? 0.05) * 100)
-                            Button("Downloading (\(pct)%)...") {}
-                                .buttonStyle(.borderedProminent)
-                                .tint(SaysoPalette.brandAmber)
-                                .font(.caption)
-                                .disabled(true)
-                        } else {
-                            Button("Download \(slm.displayName)") {
-                                Task { await model.installSlm(slm) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(SaysoPalette.cobalt)
-                            .font(.caption)
-                        }
-                        Spacer()
-                    }
-                }
-                .padding(.vertical, 4)
+                )
             }
         }
     }
 
     @ViewBuilder
     private var cloudProvidersSection: some View {
-        let providers = CloudProviderCatalog.all
-        let selectedProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudProviderId) ?? CloudProviderCatalog.saysoCloud
+        let sttProviders = CloudProviderCatalog.transcriptionProviders
+        let currentSttProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudProviderId) ?? CloudProviderCatalog.saysoCloud
 
-        Section("Select Cloud Provider") {
-            Picker("Provider", selection: Binding(
-                get: { model.settings.selectedCloudProviderId },
-                set: { newId in
-                    model.settings.selectedCloudProviderId = newId
-                    if let p = CloudProviderCatalog.provider(for: newId) {
-                        model.settings.byokBaseURL = p.defaultBaseURL
-                        if let firstStt = p.transcriptionModels.first {
-                            model.settings.selectedCloudModelId = firstStt.id
-                            model.settings.byokTranscriptionModel = firstStt.id
-                        }
-                        if let firstLlm = p.cleanupModels.first {
-                            model.settings.selectedCloudCleanupModelId = firstLlm.id
-                            model.settings.byokCleanupModel = firstLlm.id
-                        }
-                    }
-                    model.save()
-                }
-            )) {
-                ForEach(providers) { p in
-                    Text(p.displayName).tag(p.id)
-                }
-            }
+        let cleanupProviders = CloudProviderCatalog.cleanupProviders
+        let currentCleanupProvider = CloudProviderCatalog.provider(for: model.settings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
 
-            HStack {
-                Text("Default endpoint: \(selectedProvider.defaultBaseURL)")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if let url = selectedProvider.apiKeyURL {
-                    Link("Get API Key ↗", destination: url)
-                        .font(.caption)
-                }
-            }
-        }
+        // Speech-to-Text (STT) Cloud BYOK
+        SaysoSectionHeader(text: "Speech-to-Text (STT) Cloud BYOK")
 
-        Section("Provider Configuration") {
-            TextField("API Base URL", text: $model.settings.byokBaseURL)
-
-            if selectedProvider.supportsTranscription {
-                if !selectedProvider.transcriptionModels.isEmpty {
-                    Picker("Transcription model (STT)", selection: Binding(
-                        get: { model.settings.selectedCloudModelId },
-                        set: {
-                            model.settings.selectedCloudModelId = $0
-                            model.settings.byokTranscriptionModel = $0
-                            model.save()
-                        }
-                    )) {
-                        ForEach(selectedProvider.transcriptionModels) { opt in
-                            HStack {
-                                Text(opt.displayName)
-                                Spacer()
-                                Text(opt.latencyTier.badgeText)
-                            }
-                            .tag(opt.id)
-                        }
-                    }
-                } else {
-                    TextField("Transcription model (STT)", text: $model.settings.byokTranscriptionModel)
-                }
-            }
-
-            if selectedProvider.supportsCleanup {
-                if !selectedProvider.cleanupModels.isEmpty {
-                    Picker("Cleanup model (LLM)", selection: Binding(
-                        get: { model.settings.selectedCloudCleanupModelId },
-                        set: {
-                            model.settings.selectedCloudCleanupModelId = $0
-                            model.settings.byokCleanupModel = $0
-                            model.save()
-                        }
-                    )) {
-                        ForEach(selectedProvider.cleanupModels) { opt in
-                            HStack {
-                                Text(opt.displayName)
-                                Spacer()
-                                Text(opt.latencyTier.badgeText)
-                            }
-                            .tag(opt.id)
-                        }
-                    }
-                } else {
-                    TextField("Cleanup model (LLM)", text: $model.settings.byokCleanupModel)
-                }
-            }
-
-            TextField("Translation model", text: $model.settings.byokTranslationModel)
-            TextField("Voice edit rewrite model", text: $model.settings.byokRewriteModel)
-        }
-
-        Section("API Key & Keychain Security") {
-            let hasKey = model.hasKey(for: selectedProvider)
-            HStack {
-                Label(hasKey ? "API Key stored securely in Keychain" : "No API key stored for \(selectedProvider.displayName)",
-                      systemImage: hasKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(hasKey ? SaysoPalette.cobalt : SaysoPalette.crimson)
-                Spacer()
-                if hasKey && selectedProvider.id != "ollama" {
-                    Button("Remove key", role: .destructive) {
-                        model.removeProviderKey(for: selectedProvider)
-                    }
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Select Cloud STT Provider")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text("Audio is streamed directly to this provider when Speech Route is set to Cloud LLM / ASR.")
                     .font(.caption)
-                }
-            }
+                    .foregroundStyle(SaysoPalette.muted)
 
-            if selectedProvider.id != "ollama" {
-                SecureField("Enter API key", text: $providerApiKey)
-                Button("Store in Keychain") {
-                    if model.saveProviderKey(providerApiKey, for: selectedProvider) {
-                        providerApiKey = ""
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(sttProviders) { p in
+                            let hint: String? = {
+                                if p.id == "groq" { return "⚡ ~140ms" }
+                                if p.id == "sayso" { return "⚡ ~250ms" }
+                                if p.id == "openai" { return "🎯 ~380ms" }
+                                return nil
+                            }()
+                            SaysoProviderPill(
+                                name: p.displayName,
+                                isSelected: model.settings.selectedCloudProviderId == p.id,
+                                speedHint: hint
+                            ) {
+                                model.settings.selectedCloudProviderId = p.id
+                                model.settings.byokBaseURL = p.defaultBaseURL
+                                if let first = p.transcriptionModels.first {
+                                    model.settings.selectedCloudModelId = first.id
+                                    model.settings.byokTranscriptionModel = first.id
+                                }
+                                model.save()
+                            }
+                        }
                     }
                 }
-                .disabled(providerApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            } else {
-                Text("Ollama runs locally on http://localhost:11434 and does not require an API key.")
-                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(currentSttProvider.displayName) STT Configuration")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                        Text("Default endpoint: \(currentSttProvider.defaultBaseURL)")
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    Spacer()
+                    if let url = currentSttProvider.apiKeyURL {
+                        Link("Get API Key ↗", destination: url)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.brandAmber)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("API Base URL")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    HStack {
+                        TextField("API Base URL", text: $model.settings.byokBaseURL)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                            .foregroundStyle(.white)
+
+                        if model.settings.byokBaseURL != currentSttProvider.defaultBaseURL {
+                            Button("Reset") {
+                                model.settings.byokBaseURL = currentSttProvider.defaultBaseURL
+                                model.save()
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        }
+                    }
+                }
+
+                // STT API Key
+                let hasSttKey = model.hasKey(for: currentSttProvider)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label(
+                            hasSttKey ? "API Key stored securely in Keychain" : "No API key stored for \(currentSttProvider.displayName)",
+                            systemImage: hasSttKey ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(hasSttKey ? SaysoPalette.emerald : SaysoPalette.amber)
+
+                        Spacer()
+
+                        if hasSttKey && currentSttProvider.id != "ollama" {
+                            Button("Remove key", role: .destructive) {
+                                model.removeProviderKey(for: currentSttProvider)
+                            }
+                            .font(.caption)
+                        }
+                    }
+
+                    if currentSttProvider.id != "ollama" {
+                        HStack(spacing: 8) {
+                            Group {
+                                if showSttKey {
+                                    TextField("Enter \(currentSttProvider.displayName) API key...", text: $sttApiKey)
+                                } else {
+                                    SecureField("Enter \(currentSttProvider.displayName) API key...", text: $sttApiKey)
+                                }
+                            }
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+
+                            Button {
+                                showSttKey.toggle()
+                            } label: {
+                                Image(systemName: showSttKey ? "eye.slash" : "eye")
+                                    .foregroundStyle(SaysoPalette.muted)
+                                    .frame(width: 32, height: 32)
+                                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+
+                            Button("Save Key") {
+                                if model.saveProviderKey(sttApiKey, for: currentSttProvider) {
+                                    sttApiKey = ""
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.brandAmber)
+                            .disabled(sttApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+            }
+        }
+
+        SaysoSectionHeader(text: "\(currentSttProvider.displayName) STT Models")
+
+        if !currentSttProvider.transcriptionModels.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(currentSttProvider.transcriptionModels) { opt in
+                    SaysoCloudModelRowCard(
+                        model: opt,
+                        isSelected: model.settings.selectedCloudModelId == opt.id
+                    ) {
+                        model.settings.selectedCloudModelId = opt.id
+                        model.settings.byokTranscriptionModel = opt.id
+                        model.save()
+                    }
+                }
+            }
+        } else {
+            SaysoCard {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Custom STT Model Identifier")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    TextField("e.g. whisper-large-v3", text: $model.settings.byokTranscriptionModel)
+                        .textFieldStyle(.plain)
+                        .padding(8)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                }
+            }
+        }
+
+        // AI Cleanup & Formatting (LLM) Cloud BYOK
+        SaysoSectionHeader(text: "AI Cleanup & Formatting (LLM) BYOK")
+
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Select Cloud Cleanup LLM Provider")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text("Polishes text, removes fillers, and formats paragraphs without altering your STT provider.")
+                    .font(.caption)
+                    .foregroundStyle(SaysoPalette.muted)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(cleanupProviders) { p in
+                            let hint: String? = {
+                                if p.id == "groq" { return "⚡ ~110ms" }
+                                if p.id == "anthropic" { return "🎯 ~290ms" }
+                                if p.id == "deepseek" { return "🧠 ~350ms" }
+                                if p.id == "openai" { return "⚡ ~320ms" }
+                                if p.id == "ollama" { return "Offline" }
+                                return nil
+                            }()
+                            SaysoProviderPill(
+                                name: p.displayName,
+                                isSelected: model.settings.selectedCloudCleanupProviderId == p.id,
+                                speedHint: hint
+                            ) {
+                                model.settings.selectedCloudCleanupProviderId = p.id
+                                model.settings.byokCleanupBaseURL = p.defaultBaseURL
+                                if let first = p.cleanupModels.first {
+                                    model.settings.selectedCloudCleanupModelId = first.id
+                                    model.settings.byokCleanupModel = first.id
+                                }
+                                model.save()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(currentCleanupProvider.displayName) LLM Configuration")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                        Text("Default endpoint: \(currentCleanupProvider.defaultBaseURL)")
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    Spacer()
+                    if let url = currentCleanupProvider.apiKeyURL {
+                        Link("Get API Key ↗", destination: url)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(SaysoPalette.brandAmber)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("API Base URL")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    HStack {
+                        TextField("API Base URL", text: $model.settings.byokCleanupBaseURL)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                            .foregroundStyle(.white)
+
+                        if model.settings.byokCleanupBaseURL != currentCleanupProvider.defaultBaseURL {
+                            Button("Reset") {
+                                model.settings.byokCleanupBaseURL = currentCleanupProvider.defaultBaseURL
+                                model.save()
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        }
+                    }
+                }
+
+                // Cleanup API Key
+                let hasCleanupKey = model.hasKey(for: currentCleanupProvider)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label(
+                            hasCleanupKey ? "API Key stored securely in Keychain" : (currentCleanupProvider.id == "ollama" ? "Local server (no API key required)" : "No API key stored for \(currentCleanupProvider.displayName)"),
+                            systemImage: hasCleanupKey ? "checkmark.seal.fill" : (currentCleanupProvider.id == "ollama" ? "server.rack" : "exclamationmark.triangle.fill")
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(hasCleanupKey ? SaysoPalette.emerald : (currentCleanupProvider.id == "ollama" ? SaysoPalette.cobalt : SaysoPalette.amber))
+
+                        Spacer()
+
+                        if hasCleanupKey && currentCleanupProvider.id != "ollama" {
+                            Button("Remove key", role: .destructive) {
+                                model.removeProviderKey(for: currentCleanupProvider)
+                            }
+                            .font(.caption)
+                        }
+                    }
+
+                    if currentCleanupProvider.id != "ollama" {
+                        HStack(spacing: 8) {
+                            Group {
+                                if showCleanupKey {
+                                    TextField("Enter \(currentCleanupProvider.displayName) API key...", text: $cleanupApiKey)
+                                } else {
+                                    SecureField("Enter \(currentCleanupProvider.displayName) API key...", text: $cleanupApiKey)
+                                }
+                            }
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+
+                            Button {
+                                showCleanupKey.toggle()
+                            } label: {
+                                Image(systemName: showCleanupKey ? "eye.slash" : "eye")
+                                    .foregroundStyle(SaysoPalette.muted)
+                                    .frame(width: 32, height: 32)
+                                    .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+
+                            Button("Save Key") {
+                                if model.saveProviderKey(cleanupApiKey, for: currentCleanupProvider) {
+                                    cleanupApiKey = ""
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(SaysoPalette.brandAmber)
+                            .disabled(cleanupApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .font(.caption.weight(.semibold))
+                        }
+                    }
+                }
+            }
+        }
+
+        SaysoSectionHeader(text: "\(currentCleanupProvider.displayName) Cleanup Models")
+
+        if !currentCleanupProvider.cleanupModels.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(currentCleanupProvider.cleanupModels) { opt in
+                    SaysoCloudModelRowCard(
+                        model: opt,
+                        isSelected: model.settings.selectedCloudCleanupModelId == opt.id
+                    ) {
+                        model.settings.selectedCloudCleanupModelId = opt.id
+                        model.settings.byokCleanupModel = opt.id
+                        model.save()
+                    }
+                }
+            }
+        } else {
+            SaysoCard {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Custom Cleanup Model Identifier")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    TextField("e.g. gpt-4o-mini", text: $model.settings.byokCleanupModel)
+                        .textFieldStyle(.plain)
+                        .padding(8)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                }
+            }
+        }
+
+        // Advanced Overrides
+        SaysoSectionHeader(text: "Advanced Routing Overrides")
+
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Translation Model")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    TextField("e.g. gpt-4o-mini", text: $model.settings.byokTranslationModel)
+                        .textFieldStyle(.plain)
+                        .padding(8)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Voice Edit Rewrite Model")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(SaysoPalette.muted)
+                    TextField("e.g. gpt-4.1-mini", text: $model.settings.byokRewriteModel)
+                        .textFieldStyle(.plain)
+                        .padding(8)
+                        .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(SaysoPalette.brandNavyContainer, lineWidth: 1))
+                        .foregroundStyle(.white)
+                }
             }
         }
     }
