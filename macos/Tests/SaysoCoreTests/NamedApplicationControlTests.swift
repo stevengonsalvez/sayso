@@ -88,6 +88,46 @@ private func installedApplication(
     #expect(DesktopApplicationResolver.resolve("Safari", in: [duplicate, primary]) == .resolved(primary))
 }
 
+@Test func controlTryNowAcceptsOnlyItsExactCommandAndJevCalculatorPlan() {
+    #expect(ControlTryNowPolicy.acceptsTranscript("Open Calculator."))
+    #expect(!ControlTryNowPolicy.acceptsTranscript("Open Safari"))
+
+    let calculator = ControlPlanStep(
+        action: .activateApplication(
+            bundleIdentifier: "com.apple.calculator",
+            applicationURL: URL(fileURLWithPath: "/System/Applications/Calculator.app")
+        ),
+        confidence: 0.99,
+        reason: "Jev: Open Calculator",
+        planningSource: .jev,
+        requiresConfirmation: true
+    )
+    #expect(ControlTryNowPolicy.canApprove(calculator))
+
+    let deterministic = ControlPlanStep(
+        action: calculator.action,
+        confidence: 0.99,
+        reason: "Open Calculator",
+        requiresConfirmation: true
+    )
+    #expect(!ControlTryNowPolicy.canApprove(deterministic))
+
+    let safari = ControlPlanStep(
+        action: .activate(bundleIdentifier: "com.apple.Safari"),
+        confidence: 0.99,
+        reason: "Jev: Open Safari",
+        planningSource: .jev,
+        requiresConfirmation: true
+    )
+    #expect(!ControlTryNowPolicy.canApprove(safari))
+
+    let applications = ControlTryNowPolicy.candidateApplications(from: [
+        installedApplication("Safari", bundleIdentifier: "com.apple.Safari", path: "/Applications/Safari.app"),
+        installedApplication("Calculator", bundleIdentifier: "com.apple.calculator", path: "/System/Applications/Calculator.app")
+    ])
+    #expect(applications.map(\.bundleIdentifier) == ["com.apple.calculator"])
+}
+
 @Test func namedApplicationCommandsRejectAmbiguousAndNonExactNames() {
     let safari = installedApplication(
         "Safari",

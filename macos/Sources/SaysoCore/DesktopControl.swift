@@ -39,11 +39,13 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     public let focusedRole: String
     public let focusedValue: String
     public let isProtected: Bool
+    public let observations: [String]
     public let elements: [DesktopElement]
 
     public init(
         processIdentifier: Int32, applicationName: String, windowTitle: String,
         focusedRole: String, focusedValue: String, isProtected: Bool,
+        observations: [String] = [],
         elements: [DesktopElement] = []
     ) {
         self.processIdentifier = processIdentifier
@@ -52,6 +54,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
         self.focusedRole = focusedRole
         self.focusedValue = focusedValue
         self.isProtected = isProtected
+        self.observations = observations
         self.elements = elements
     }
 
@@ -63,7 +66,7 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
                 .joined(separator: "\u{1F}")
         }
             .joined(separator: "\u{1E}")
-        return [String(processIdentifier), applicationName, windowTitle, focusedRole, focusedValue, isProtected.description, visibleControls]
+        return [String(processIdentifier), applicationName, windowTitle, focusedRole, focusedValue, isProtected.description, observations.joined(separator: "\u{1D}"), visibleControls]
             .joined(separator: "|")
     }
 }
@@ -346,6 +349,7 @@ public enum DesktopApplicationResolver {
 
 public enum DesktopAction: Codable, Equatable, Sendable {
     case type(text: String, expectedFingerprint: String)
+    case typeInto(elementID: String, text: String, expectedFingerprint: String)
     case open(url: URL)
     case openFolder(url: URL)
     case activate(bundleIdentifier: String)
@@ -364,8 +368,17 @@ public enum DesktopAction: Codable, Equatable, Sendable {
         switch self {
         case let .activate(bundleIdentifier), let .activateApplication(bundleIdentifier, _):
             Self.validatedBundleIdentifier(bundleIdentifier)
-        case .type, .open, .openFolder, .quit, .scroll, .press, .focus, .select, .clickAt, .key:
+        case .type, .typeInto, .open, .openFolder, .quit, .scroll, .press, .focus, .select, .clickAt, .key:
             nil
+        }
+    }
+
+    public var mayMoveControlTarget: Bool {
+        switch self {
+        case .open, .openFolder, .activate, .activateApplication:
+            true
+        case .type, .typeInto, .quit, .scroll, .press, .focus, .select, .clickAt, .key:
+            false
         }
     }
 
@@ -396,6 +409,33 @@ public enum ControlPlanningSource: String, Codable, Equatable, Sendable {
     case unknown
     case deterministic
     case jev
+}
+
+public enum ControlTryNowPolicy {
+    public static let expectedCommand = "open calculator"
+    public static let calculatorBundleIdentifier = "com.apple.calculator"
+
+    public static func acceptsTranscript(_ transcript: String) -> Bool {
+        transcript.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .joined(separator: " ") == expectedCommand
+    }
+
+    public static func candidateApplications(
+        from applications: [InstalledDesktopApplication]
+    ) -> [InstalledDesktopApplication] {
+        applications.filter { $0.bundleIdentifier == calculatorBundleIdentifier }
+    }
+
+    public static func canApprove(_ step: ControlPlanStep) -> Bool {
+        guard step.planningSource == .jev else { return false }
+        switch step.action {
+        case let .activate(bundleIdentifier), let .activateApplication(bundleIdentifier, _):
+            return bundleIdentifier == calculatorBundleIdentifier
+        case .type, .typeInto, .open, .openFolder, .quit, .scroll, .press, .focus, .select, .clickAt, .key:
+            return false
+        }
+    }
 }
 
 public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
@@ -515,7 +555,7 @@ public enum ControlPolicy {
     /// Text and UI interactions must not be sent to a background app.
     public static func requiresActiveTarget(for action: DesktopAction) -> Bool {
         switch action {
-        case .type, .scroll, .press, .focus, .select, .clickAt, .key:
+        case .type, .typeInto, .scroll, .press, .focus, .select, .clickAt, .key:
             true
         case .open, .openFolder, .activate, .activateApplication, .quit:
             false
@@ -553,6 +593,47 @@ public enum ControlPolicy {
     }
 }
 
+public enum ControlSubmissionPolicy {
+    public static func authorizesSubmission(in command: String) -> Bool {
+        let words = command.lowercased().split { !$0.isLetter }.map(String.init)
+        guard let send = words.firstIndex(of: "send") else { return false }
+        if send > 0, ["the", "a", "my", "your"].contains(words[send - 1]) { return false }
+        return true
+    }
+}
+
+public enum ControlCycleApproval {
+    public static func canAutoApprove(_ step: ControlPlanStep, goal: String) -> Bool {
+        guard step.planningSource == .jev, step.confidence >= ControlPolicy.minimumConfidence else { return false }
+        let words = Set(goal.lowercased().split { !$0.isLetter }.map(String.init))
+        switch step.action {
+        case .key(.return, _):
+            return ControlSubmissionPolicy.authorizesSubmission(in: goal) || words.contains("search")
+        case .press, .select:
+            guard ControlSubmissionPolicy.authorizesSubmission(in: goal),
+                  let title = step.candidateTitle?.lowercased() else { return false }
+            return ["send", "post", "submit"].contains { title.split { !$0.isLetter }.contains(Substring($0)) }
+        default:
+            return false
+        }
+    }
+}
+
+public enum ControlCycleCompletion {
+    public static func shouldComplete(after action: DesktopAction, effect: ControlEffect, goal: String) -> Bool {
+        guard effect == .observed else { return false }
+        switch action {
+        case .type, .typeInto:
+            let words = Set(goal.lowercased().split { !$0.isLetter }.map(String.init))
+            guard !ControlSubmissionPolicy.authorizesSubmission(in: goal),
+                  !words.isDisjoint(with: ["type", "write", "enter"]) else { return false }
+            return words.isDisjoint(with: ["click", "press", "select", "submit", "post", "search"])
+        default:
+            return false
+        }
+    }
+}
+
 public enum ControlOutcome {
     public static func effect(
         for action: DesktopAction,
@@ -561,10 +642,17 @@ public enum ControlOutcome {
         externalEffect: ControlEffect = .unknown
     ) -> ControlEffect {
         switch action {
-        case .type:
+        case .type, .typeInto:
             guard let after else { return .unknown }
             return after.focusedValue != before.focusedValue ? .observed : .notObserved
-        case .press, .focus, .scroll, .clickAt:
+        case .press:
+            guard let after else { return .unknown }
+            // AXPress success proves dispatch, but many controls change content outside this snapshot.
+            return after.fingerprint != before.fingerprint ? .observed : .unknown
+        case .focus:
+            guard let after else { return .unknown }
+            return after.fingerprint != before.fingerprint ? .observed : .alreadySatisfied
+        case .scroll, .clickAt:
             guard let after else { return .unknown }
             return after.fingerprint != before.fingerprint ? .observed : .notObserved
         case .select:
@@ -590,7 +678,7 @@ public enum ControlOutcome {
         }
         let observed = effect == .observed
         switch action {
-        case .type:
+        case .type, .typeInto:
             return observed ? "observed text change" : "no observed text change"
         case .press, .scroll:
             return observed ? "observed interface change" : "no observed interface change"
@@ -730,6 +818,22 @@ public enum ControlObservation {
     }
 }
 
+public struct CalculatorControlTask: Equatable, Sendable {
+    public let commands: [String]
+    public let expectedResult: String
+
+    public init(commands: [String], expectedResult: String) {
+        self.commands = commands
+        self.expectedResult = expectedResult
+    }
+
+    public func resultIsVisible(in observations: [String]) -> Bool {
+        observations.contains { observation in
+            String(observation.filter { $0.isNumber || $0 == "-" }) == expectedResult
+        }
+    }
+}
+
 public enum ControlPlanner {
     public static func commands(
         from command: String,
@@ -738,6 +842,12 @@ public enum ControlPlanner {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw SaysoError.invalidAction("Say a control command.") }
         if trimmed.lowercased().hasPrefix("type ") { return [trimmed] }
+        if let calculation = calculatorTask(from: trimmed) {
+            guard calculation.commands.count <= max(1, maximumSteps) else {
+                throw SaysoError.invalidAction("Control supports at most \(max(1, maximumSteps)) steps per command.")
+            }
+            return calculation.commands
+        }
         let normalized = trimmed.lowercased()
         guard !normalized.hasPrefix("then "), !normalized.hasSuffix(" then") else {
             throw SaysoError.invalidAction("Separate control steps with a command on both sides of 'then'.")
@@ -767,6 +877,43 @@ public enum ControlPlanner {
             throw SaysoError.invalidAction("Control supports at most \(max(1, maximumSteps)) steps per command.")
         }
         return commands
+    }
+
+    public static func calculatorTask(from command: String) -> CalculatorControlTask? {
+        let normalized = command
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            .lowercased()
+        let prefixes = ["open calculator and find ", "open calculator and calculate "]
+        guard let prefix = prefixes.first(where: normalized.hasPrefix) else { return nil }
+        let expression = String(normalized.dropFirst(prefix.count))
+        let separators = [" times ", " multiplied by ", " x ", "×"]
+        guard let separator = separators.compactMap({ expression.range(of: $0) }).min(by: {
+            $0.lowerBound < $1.lowerBound
+        }) else { return nil }
+        guard let left = calculatorDigits(String(expression[..<separator.lowerBound])),
+              let right = calculatorDigits(String(expression[separator.upperBound...])) else { return nil }
+        guard let leftValue = Int(left), let rightValue = Int(right) else { return nil }
+        let product = leftValue.multipliedReportingOverflow(by: rightValue)
+        guard !product.overflow else { return nil }
+        let commands = ["open Calculator"]
+            + left.map { "click \($0)" }
+            + ["click Multiply"]
+            + right.map { "click \($0)" }
+            + ["click Equals"]
+        return CalculatorControlTask(commands: commands, expectedResult: String(product.partialValue))
+    }
+
+    private static func calculatorDigits(_ operand: String) -> String? {
+        let trimmed = operand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed.allSatisfy(\.isNumber), Int(trimmed) != nil { return trimmed }
+        guard !trimmed.contains(" ") else { return nil }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.numberStyle = .spellOut
+        guard let number = formatter.number(from: trimmed),
+              number.doubleValue >= 0,
+              number.doubleValue == Double(number.intValue) else { return nil }
+        return String(number.intValue)
     }
 
     public static func plan(
@@ -1142,6 +1289,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 subrole: focusedSubrole
             ),
             isProtected: isProtected,
+            observations: candidateSnapshot.observations,
             elements: candidateSnapshot.candidates.filter {
                 $0.state.isTargetable || $0.state.isSelectable || $0.state.isSelectionTarget
             }.map {
@@ -1189,7 +1337,14 @@ public final class AXDesktopController: @unchecked Sendable {
         switch step.action {
         case let .type(text, expectedFingerprint):
             guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
-            try setFocusedText(text, in: before.processIdentifier)
+            try await setFocusedText(text, in: before.processIdentifier)
+        case let .typeInto(elementID, text, expectedFingerprint):
+            guard before.fingerprint == expectedFingerprint else { throw SaysoError.staleTarget }
+            guard let target = NSRunningApplication(processIdentifier: before.processIdentifier) else {
+                throw SaysoError.staleTarget
+            }
+            try candidateCapture.focus(candidateID: .init(rawValue: elementID), application: target)
+            try await setFocusedText(text, in: before.processIdentifier)
         case let .open(url):
             guard let targetApplicationURL = NSWorkspace.shared.urlForApplication(toOpen: url),
                   let targetBundleIdentifier = Bundle(url: targetApplicationURL)?.bundleIdentifier else {
@@ -1356,15 +1511,14 @@ public final class AXDesktopController: @unchecked Sendable {
         return current
     }
 
-    private func setFocusedText(_ text: String, in processIdentifier: Int32) throws {
-        let application = AXUIElementCreateApplication(processIdentifier)
-        guard let focused = copyElement(kAXFocusedUIElementAttribute as CFString, from: application) else {
-            throw SaysoError.unavailable("Focused text field")
+    private func setFocusedText(_ text: String, in processIdentifier: Int32) async throws {
+        let result = await MainActor.run {
+            TextOutput.insertOrCopy(
+                text,
+                destination: TextOutput.captureDestination(targetProcessIdentifier: processIdentifier)
+            )
         }
-        let role = copyAttribute(kAXRoleAttribute as CFString, from: focused) as? String ?? ""
-        let subrole = copyAttribute(kAXSubroleAttribute as CFString, from: focused) as? String ?? ""
-        guard !AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole) else { throw SaysoError.protectedTarget }
-        guard AXUIElementSetAttributeValue(focused, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
+        guard case .delivered = result else {
             throw SaysoError.invalidAction("Text field rejected insertion")
         }
     }
@@ -1373,6 +1527,7 @@ public final class AXDesktopController: @unchecked Sendable {
         processIdentifier: Int32,
         applicationName: String
     ) async throws {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier { return }
         guard let target = NSRunningApplication(processIdentifier: processIdentifier), !target.isTerminated else {
             throw SaysoError.staleTarget
         }
@@ -1445,7 +1600,7 @@ public final class AXDesktopController: @unchecked Sendable {
         openBeforeURL: URL?
     ) async throws -> ActionObservation {
         switch action {
-        case .type, .press, .focus, .scroll, .clickAt:
+        case .type, .typeInto, .press, .focus, .scroll, .clickAt:
             let observation = try await ControlObservation.observe(
                 maximumAttempts: Self.observationAttempts,
                 interval: Self.observationInterval,

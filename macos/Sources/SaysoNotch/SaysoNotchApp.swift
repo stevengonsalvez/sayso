@@ -123,20 +123,30 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private final class ControlCommandRun {
-        let commands: [String]
+        var cycle: JevControlRunState
         var target: NSRunningApplication
         let installedApplications: [InstalledDesktopApplication]
-        var nextCommandIndex = 0
+        let isTryNow: Bool
+        let calculatorTask: CalculatorControlTask?
         var hasStarted = false
+        var waitCount = 0
+        var previous: String?
+        var awaitingClarification = false
+        var calculatorWasCleared = false
+        var nextCalculatorCommandIndex = 1
 
         init(
-            commands: [String],
+            cycle: JevControlRunState,
             target: NSRunningApplication,
-            installedApplications: [InstalledDesktopApplication]
+            installedApplications: [InstalledDesktopApplication],
+            isTryNow: Bool,
+            calculatorTask: CalculatorControlTask?
         ) {
-            self.commands = commands
+            self.cycle = cycle
             self.target = target
             self.installedApplications = installedApplications
+            self.isTryNow = isTryNow
+            self.calculatorTask = calculatorTask
         }
     }
 
@@ -169,6 +179,7 @@ final class SaysoAppModel: ObservableObject {
     @Published var currentSnapshot: DesktopSnapshot?
     @Published var controlEntries: [ControlAuditEntry] = []
     @Published var pendingControlStep: ControlPlanStep?
+    private var pendingControlFinishes = false
     @Published var selectedTab = 0
     @Published var notice: String? {
         didSet {
@@ -243,6 +254,7 @@ final class SaysoAppModel: ObservableObject {
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
     private var controlPreparationID: UUID?
+    private var controlTryNowArmed = false
     private var historyAudioTask: Task<Void, Never>?
     private var noticeDismissalTask: Task<Void, Never>?
     private var nextNoticeIsPersistent = false
@@ -274,9 +286,10 @@ final class SaysoAppModel: ObservableObject {
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
         hasBYOKKey = secrets.secret(named: "byok-api-key") != nil
-        dictationHotKey = Self.loadHotKey(for: .dictation)
-        controlHotKey = Self.loadHotKey(for: .control)
-        toggleNotchHotKey = Self.loadHotKey(for: .toggleNotch)
+        let shortcutBindings = Self.loadShortcutBindings()
+        dictationHotKey = shortcutBindings.dictation
+        controlHotKey = shortcutBindings.control
+        toggleNotchHotKey = shortcutBindings.toggleNotch
         hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
         notch = NotchPanelController()
         isNotchOverlayVisible = notch.isVisible
@@ -287,23 +300,26 @@ final class SaysoAppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
-            self?.handleTapDictationShortcut()
+            self?.handleMonitoredHotKeyGesture(.singleTap)
         }
         hotKeyEngine.register(gesture: .doubleTap) { [weak self] in
-            self?.startOrStopVoiceEdit()
+            self?.handleMonitoredHotKeyGesture(.doubleTap)
+        }
+        hotKeyEngine.register(gesture: .tripleTap) { [weak self] in
+            self?.handleMonitoredHotKeyGesture(.tripleTap)
         }
         hotKeyEngine.register(gesture: .holdStart) { [weak self] in
+            guard self?.monitoredHotKey == self?.dictationHotKey else { return }
             self?.startHoldDictation()
         }
         hotKeyEngine.register(gesture: .holdEnd) { [weak self] in
+            guard self?.monitoredHotKey == self?.dictationHotKey else { return }
             self?.stopHoldDictation()
         }
-        hotKeyEngine.start(for: dictationHotKey)
-        shortcutManager.register(action: .control, hotKey: controlHotKey)
-        shortcutManager.register(action: .toggleNotch, hotKey: toggleNotchHotKey)
         shortcutManager.onActionTriggered = { [weak self] action, isKeyDown in
             self?.handleShortcutAction(action, isKeyDown: isKeyDown)
         }
+        refreshShortcutRegistrations()
         reopenObserver = DistributedNotificationCenter.default().addObserver(
             forName: saysoReopenNotification,
             object: nil,
@@ -352,13 +368,13 @@ final class SaysoAppModel: ObservableObject {
     func setDictationHotKey(_ hotKey: HotKey) {
         dictationHotKey = hotKey
         Self.saveHotKey(hotKey, for: .dictation)
-        hotKeyEngine.start(for: hotKey)
+        refreshShortcutRegistrations()
     }
 
     func setControlHotKey(_ hotKey: HotKey) {
         controlHotKey = hotKey
         Self.saveHotKey(hotKey, for: .control)
-        shortcutManager.register(action: .control, hotKey: hotKey)
+        refreshShortcutRegistrations()
     }
 
     func setToggleNotchHotKey(_ hotKey: HotKey) {
@@ -379,6 +395,39 @@ final class SaysoAppModel: ObservableObject {
             control: controlHotKey,
             toggleNotch: toggleNotchHotKey
         )
+    }
+
+    private var monitoredHotKey: HotKey {
+        ShortcutGestureRouter.monitoredHotKey(dictation: dictationHotKey, control: controlHotKey)
+    }
+
+    private func refreshShortcutRegistrations() {
+        hotKeyEngine.start(for: monitoredHotKey)
+        if monitoredHotKey == dictationHotKey {
+            shortcutManager.unregister(action: .dictation)
+        } else {
+            shortcutManager.register(action: .dictation, hotKey: dictationHotKey)
+        }
+        shortcutManager.register(action: .control, hotKey: controlHotKey)
+        shortcutManager.register(action: .toggleNotch, hotKey: toggleNotchHotKey)
+    }
+
+    private func handleMonitoredHotKeyGesture(_ gesture: HotKeyGesture) {
+        switch ShortcutGestureRouter.action(
+            for: gesture,
+            monitoredHotKey: monitoredHotKey,
+            dictation: dictationHotKey,
+            control: controlHotKey
+        ) {
+        case .dictation:
+            handleTapDictationShortcut()
+        case .control:
+            handleControlGestureToggle()
+        case .voiceEdit:
+            startOrStopVoiceEdit()
+        case nil:
+            break
+        }
     }
 
     private func handleShortcutAction(_ action: SaysoShortcutAction, isKeyDown: Bool) {
@@ -433,6 +482,38 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    private func handleControlGestureToggle() {
+        if settings.mode == .control, transcriber.canStop {
+            transcriber.stop()
+            return
+        }
+        controlTryNowArmed = false
+        if settings.mode == .control {
+            startOrStopDictation()
+            return
+        }
+        if transcriber.canStop {
+            transcriber.stop()
+        }
+        switchMode(.control)
+        requestDictationStart(onboardingTest: false)
+    }
+
+    func startOrStopControl() {
+        handleControlGestureToggle()
+    }
+
+    func startControlTryNow() {
+        guard transcriber.canStart, !isStartingDictation else { return }
+        switchMode(.control)
+        guard settings.mode == .control else { return }
+        controlStatus = "Listening. Say Open Calculator."
+        controlTryNowArmed = true
+        if !requestDictationStart(onboardingTest: false) {
+            controlTryNowArmed = false
+        }
+    }
+
     var isNotchVisible: Bool { notch.isVisible }
     var isNotchCollapsed: Bool { notch.isCollapsed }
 
@@ -465,12 +546,28 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    private static func loadHotKey(for action: SaysoShortcutAction) -> HotKey {
-        guard let data = UserDefaults.standard.data(forKey: action.defaultsKey),
-              let hotKey = try? JSONDecoder().decode(HotKey.self, from: data) else {
-            return action.defaultHotKey
-        }
-        return hotKey
+    private static let shortcutDefaultsMigrationVersionKey = "sayso.shortcut-defaults-version"
+
+    private static func loadShortcutBindings() -> SaysoShortcutBindings {
+        let defaults = UserDefaults.standard
+        let fromVersion = defaults.integer(forKey: shortcutDefaultsMigrationVersionKey)
+        let bindings = ShortcutDefaultsMigration.migrate(
+            dictation: storedHotKey(for: .dictation, defaults: defaults),
+            control: storedHotKey(for: .control, defaults: defaults),
+            toggleNotch: storedHotKey(for: .toggleNotch, defaults: defaults),
+            fromVersion: fromVersion
+        )
+        guard fromVersion < ShortcutDefaultsMigration.currentVersion else { return bindings }
+        saveHotKey(bindings.dictation, for: .dictation)
+        saveHotKey(bindings.control, for: .control)
+        saveHotKey(bindings.toggleNotch, for: .toggleNotch)
+        defaults.set(ShortcutDefaultsMigration.currentVersion, forKey: shortcutDefaultsMigrationVersionKey)
+        return bindings
+    }
+
+    private static func storedHotKey(for action: SaysoShortcutAction, defaults: UserDefaults) -> HotKey? {
+        guard let data = defaults.data(forKey: action.defaultsKey) else { return nil }
+        return try? JSONDecoder().decode(HotKey.self, from: data)
     }
 
     private func showPersistentNotice(_ message: String) {
@@ -923,6 +1020,8 @@ final class SaysoAppModel: ObservableObject {
         }
         guard settings.mode == .dictation else {
             handsFreeCycle.disarm()
+            let isTryNow = controlTryNowArmed
+            controlTryNowArmed = false
             liveInsertion?.discard()
             liveInsertion = nil
             discardTranscriptAudio(transcript)
@@ -930,7 +1029,7 @@ final class SaysoAppModel: ObservableObject {
             activeRecordingSession = nil
             activeDictationSettings = nil
             dictationDestination = nil
-            runControl(transcript.text)
+            runControl(transcript.text, isTryNow: isTryNow)
             return
         }
         if let current = lastTranscript {
@@ -2113,27 +2212,46 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    func runControl(_ command: String) {
+    func runControl(_ command: String, isTryNow: Bool = false) {
         guard desktopControlEnabled() else { return }
+        guard !isTryNow || ControlTryNowPolicy.acceptsTranscript(command) else {
+            controlStatus = "Try now expected Open Calculator."
+            return
+        }
+        if let run = controlRun, run.awaitingClarification, controlExecutionTask == nil {
+            do {
+                let clarification = command.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !clarification.isEmpty else { throw SaysoError.invalidAction("Say which target you meant.") }
+                run.cycle = try JevControlRunState(
+                    goal: "\(run.cycle.goal). User clarification: \(clarification)",
+                    recentActions: run.cycle.recentActions
+                )
+                run.awaitingClarification = false
+                controlStatus = "Applying clarification"
+                executeControlRun(run)
+            } catch {
+                controlStatus = error.localizedDescription
+            }
+            return
+        }
         guard controlRun == nil, controlPreparationTask == nil else {
             controlStatus = "Control command already active."
             return
         }
         do {
             let target = try controlTarget()
-            let commands = try ControlPlanner.commands(from: command)
+            let cycle = try JevControlRunState(goal: command)
+            let calculatorTask = ControlPlanner.calculatorTask(from: command)
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
             controlPreparationTask = Task { [weak self] in
-                let applications: [InstalledDesktopApplication]
-                if commands.contains(where: { ControlPlanner.requiresInstalledApplicationCatalog(for: $0) }) {
-                    applications = await Task.detached(priority: .utility) {
-                        InstalledDesktopApplication.available()
-                    }.value
-                } else {
-                    applications = []
-                }
+                let availableApplications = await Task.detached(priority: .utility) {
+                    InstalledDesktopApplication.available()
+                }.value
+                let applications = isTryNow
+                    ? ControlTryNowPolicy.candidateApplications(from: availableApplications)
+                    : availableApplications
                 guard !Task.isCancelled,
                       let self,
                       self.controlPreparationID == preparationID else { return }
@@ -2141,9 +2259,11 @@ final class SaysoAppModel: ObservableObject {
                 self.controlPreparationID = nil
                 guard self.controlRun == nil else { return }
                 let run = ControlCommandRun(
-                    commands: commands,
+                    cycle: cycle,
                     target: target,
-                    installedApplications: applications
+                    installedApplications: applications,
+                    isTryNow: isTryNow,
+                    calculatorTask: calculatorTask
                 )
                 self.controlRun = run
                 self.executeControlRun(run)
@@ -2161,11 +2281,14 @@ final class SaysoAppModel: ObservableObject {
         }
         guard let step = pendingControlStep, let run = controlRun else { return }
         pendingControlStep = nil
-        executeControlRun(run, approvedStep: step)
+        let finishes = pendingControlFinishes
+        pendingControlFinishes = false
+        executeControlRun(run, approvedStep: step, approvedFinishes: finishes)
     }
 
     func discardPendingControl() {
         pendingControlStep = nil
+        pendingControlFinishes = false
         guard let run = controlRun else {
             controlStatus = "Action discarded"
             return
@@ -2175,6 +2298,7 @@ final class SaysoAppModel: ObservableObject {
 
     func cancelControl() {
         pendingControlStep = nil
+        pendingControlFinishes = false
         if controlPreparationTask != nil {
             controlPreparationTask?.cancel()
             controlPreparationTask = nil
@@ -2189,7 +2313,36 @@ final class SaysoAppModel: ObservableObject {
         requestControlCancellation(run, status: "Cancellation requested. Current macOS action may still finish.")
     }
 
-    private func executeControlRun(_ run: ControlCommandRun, approvedStep: ControlPlanStep? = nil) {
+    private func planWithJevCycle(
+        snapshot: DesktopSnapshot,
+        run: ControlCommandRun,
+        apiKey: String
+    ) async throws -> (plan: JevCyclePlan, alternatives: [String]) {
+        controlStatus = "Consulting Jev model..."
+        let offer = JevControlBridge.makeCycleOffer(
+            goal: run.cycle.goal,
+            snapshot: snapshot,
+            recentActions: run.cycle.recentActions,
+            installedApplications: run.installedApplications,
+            previous: run.previous
+        )
+        let decision = try await JevClient.cycle(
+            state: offer.state,
+            operations: offer.operations,
+            heads: offer.heads,
+            apiKey: apiKey
+        )
+        return (
+            try JevControlBridge.planCycleStep(from: decision, offer: offer),
+            JevControlBridge.cycleAlternatives(from: decision, offer: offer)
+        )
+    }
+
+    private func executeControlRun(
+        _ run: ControlCommandRun,
+        approvedStep: ControlPlanStep? = nil,
+        approvedFinishes: Bool = false
+    ) {
         guard controlRun === run, controlExecutionTask == nil else { return }
         guard desktopControlEnabled() else {
             requestControlCancellation(run, status: "Desktop control disabled.")
@@ -2203,61 +2356,107 @@ final class SaysoAppModel: ObservableObject {
                     _ = await desktopControlSession.beginCommand()
                     run.hasStarted = true
                 }
-                var carriedStep = approvedStep
-                while run.nextCommandIndex < run.commands.count {
+                var carriedStep = approvedStep.map { ($0, approvedFinishes) }
+                while true {
                     try Task.checkCancellation()
                     let step: ControlPlanStep
-                    let isApprovedStep: Bool
-                    if let approvedStep = carriedStep {
-                        step = approvedStep
+                    let finishes: Bool
+                    var isApprovedStep = false
+                    if let approved = carriedStep {
+                        step = approved.0
+                        finishes = approved.1
                         carriedStep = nil
                         isApprovedStep = true
                     } else {
                         let snapshot = try controller.capture(application: run.target)
                         currentSnapshot = snapshot
-                        let cmd = run.commands[run.nextCommandIndex]
-                        var planned: ControlPlanStep? = nil
-                        do {
-                            planned = try ControlPlanner.plan(
-                                command: cmd,
+                        if let task = run.calculatorTask,
+                           run.target.bundleIdentifier == "com.apple.calculator" {
+                            if run.nextCalculatorCommandIndex >= task.commands.count {
+                                guard task.resultIsVisible(in: snapshot.observations) else {
+                                    throw SaysoError.invalidAction("Calculator did not show the expected result \(task.expectedResult).")
+                                }
+                                let completed = await desktopControlSession.complete()
+                                controlStatus = completed.result == .completed ? "Control completed: \(task.expectedResult)" : "Control stopped"
+                                finishControlRun()
+                                return
+                            }
+                            let command: String
+                            if !run.calculatorWasCleared {
+                                guard let clear = snapshot.elements.first(where: {
+                                    ["All Clear", "Clear"].contains($0.title) && $0.supportsPress
+                                }) else {
+                                    throw SaysoError.invalidAction("Calculator Clear control is unavailable.")
+                                }
+                                command = "click \(clear.title)"
+                                run.calculatorWasCleared = true
+                            } else {
+                                command = task.commands[run.nextCalculatorCommandIndex]
+                                run.nextCalculatorCommandIndex += 1
+                            }
+                            step = try ControlPlanner.plan(
+                                command: command,
                                 snapshot: snapshot,
                                 installedApplications: run.installedApplications
                             )
-                        } catch {
-                            if let jevKey = typeSafeKey() {
-                                controlStatus = "Consulting Jev model..."
-                                let candidates = JevControlBridge.makeCandidates(
-                                    from: snapshot,
-                                    installedApplications: run.installedApplications
-                                )
-                                let context = JevCommandContext(
-                                    command: cmd,
-                                    application: run.target.localizedName ?? snapshot.applicationName,
-                                    window: snapshot.windowTitle,
-                                    completedSteps: run.commands.prefix(run.nextCommandIndex).map { String($0) }
-                                )
-                                let decision = try await JevClient.decide(context: context, candidates: candidates, apiKey: jevKey)
-                                planned = try JevControlBridge.planStep(
-                                    from: decision,
-                                    candidates: candidates,
-                                    snapshot: snapshot,
-                                    installedApplications: run.installedApplications
-                                )
-                            } else {
-                                throw error
+                            finishes = false
+                            isApprovedStep = true
+                            controlStatus = "Planned: verified Calculator step"
+                        } else {
+                            guard let jevKey = typeSafeKey() else {
+                                throw SaysoError.unavailable("Configure the TypeSafe / Jev key before using Control.")
                             }
-                        }
-                        guard let stepCandidate = planned else {
-                            throw SaysoError.invalidAction("Could not plan action for command.")
-                        }
-                        step = stepCandidate
-                        isApprovedStep = false
-                        controlStatus = "Planned: \(step.reason)"
-                        if ControlPolicy.requiresConfirmation(step) {
-                            pendingControlStep = step
-                            controlStatus = "Review required: \(step.reason)"
-                            controlExecutionTask = nil
-                            return
+                            let planned = try await planWithJevCycle(snapshot: snapshot, run: run, apiKey: jevKey)
+                            switch planned.plan {
+                            case .done:
+                                let completed = await desktopControlSession.complete()
+                                controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
+                                finishControlRun()
+                                return
+                            case .blocked:
+                                _ = await desktopControlSession.fail()
+                                controlStatus = "Jev could not find a safe next action."
+                                finishControlRun()
+                                return
+                            case .wait:
+                                run.waitCount += 1
+                                guard run.waitCount <= 2 else {
+                                    throw SaysoError.unavailable("The required control did not appear.")
+                                }
+                                run.cycle.record(action: "WAIT", result: "waited 0.4 seconds", screenChanged: false)
+                                try await Task.sleep(for: .milliseconds(400))
+                                continue
+                            case let .execute(stepCandidate, completesGoal):
+                                step = stepCandidate
+                                finishes = completesGoal && run.calculatorTask == nil
+                            }
+                            controlStatus = "Planned: \(step.reason)"
+                            if step.confidence < ControlPolicy.minimumConfidence {
+                                let choices = planned.alternatives
+                                guard !choices.isEmpty else {
+                                    throw SaysoError.invalidAction("Jev was not confident enough to act.")
+                                }
+                                let question = "Which one: \(choices.joined(separator: ", "))?"
+                                run.previous = question
+                                run.awaitingClarification = true
+                                controlStatus = question
+                                controlExecutionTask = nil
+                                return
+                            }
+                            if run.isTryNow, !ControlTryNowPolicy.canApprove(step) {
+                                throw SaysoError.invalidAction("Try now refused an unexpected Jev action.")
+                            }
+                            if ControlPolicy.requiresConfirmation(step) {
+                                if run.isTryNow || ControlCycleApproval.canAutoApprove(step, goal: run.cycle.goal) {
+                                    isApprovedStep = true
+                                } else {
+                                    pendingControlStep = step
+                                    pendingControlFinishes = finishes
+                                    controlStatus = "Review required: \(step.reason)"
+                                    controlExecutionTask = nil
+                                    return
+                                }
+                            }
                         }
                     }
                     try Task.checkCancellation()
@@ -2267,20 +2466,37 @@ final class SaysoAppModel: ObservableObject {
                     controlEntries = await controlAudit.entries()
                     guard !Task.isCancelled, controlRun === run else { return }
                     updateControlTarget(after: entry, step: step, run: run)
+                    run.cycle.record(
+                        action: step.reason,
+                        result: entry.result,
+                        screenChanged: entry.effect == .observed
+                    )
+                    run.waitCount = 0
                     let updated = await desktopControlSession.record(.init(entry.effect))
                     actionWasDispatched = false
-                    run.nextCommandIndex += 1
                     guard updated.canRunAction else {
                         controlStatus = "\(entry.result), \(updated.result?.rawValue ?? "stopped")"
                         finishControlRun()
                         return
                     }
                     controlStatus = entry.result
+                    if ControlCycleCompletion.shouldComplete(
+                        after: step.action,
+                        effect: entry.effect,
+                        goal: run.cycle.goal
+                    ) {
+                        let completed = await desktopControlSession.complete()
+                        controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
+                        finishControlRun()
+                        return
+                    }
+                    if finishes, entry.effect == .observed || entry.effect == .alreadySatisfied {
+                        let completed = await desktopControlSession.complete()
+                        controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
+                        finishControlRun()
+                        return
+                    }
                 }
-                let completed = await desktopControlSession.complete()
-                guard !Task.isCancelled, controlRun === run else { return }
-                controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
-                finishControlRun()
             } catch is CancellationError {
                 return
             } catch {
@@ -2296,6 +2512,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func finishControlRun() {
+        pendingControlStep = nil
+        pendingControlFinishes = false
         controlRun = nil
         controlExecutionTask = nil
     }
@@ -2305,11 +2523,10 @@ final class SaysoAppModel: ObservableObject {
         step: ControlPlanStep,
         run: ControlCommandRun
     ) {
-        guard entry.effect == .observed,
-              let bundleIdentifier = step.action.validatedNextTargetBundleIdentifier,
-              let target = NSWorkspace.shared.frontmostApplication,
-              target.bundleIdentifier == bundleIdentifier,
-              !target.isTerminated else { return }
+        guard entry.effect == .observed, step.action.mayMoveControlTarget,
+              let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else { return }
+        if let bundleIdentifier = step.action.validatedNextTargetBundleIdentifier,
+           target.bundleIdentifier != bundleIdentifier { return }
         run.target = target
     }
 
@@ -2554,7 +2771,7 @@ private struct ShortcutsWorkspace: View {
                         }
                     }
 
-                    Text("Double-tap the Dictation shortcut with text selected in any app to rewrite it with voice edit.")
+                    Text("Double-tap Fn for Dictation. Triple-tap Fn for Control. A custom Dictation shortcut keeps double-tap voice edit.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -4503,12 +4720,24 @@ private struct TranscriptionWorkspace: View {
                     )
                 } else {
                     SaysoCard {
-                        HStack(spacing: 10) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundStyle(SaysoPalette.cobalt)
-                            Text("Uses Apple Speech recognition framework built into macOS.")
-                                .font(.caption)
-                                .foregroundStyle(SaysoPalette.muted)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundStyle(SaysoPalette.cobalt)
+                                Text("Uses Apple Speech recognition framework built into macOS.")
+                                    .font(.caption)
+                                    .foregroundStyle(SaysoPalette.muted)
+                            }
+
+                            Toggle("Allow Apple Speech audio processing", isOn: Binding(
+                                get: { model.settings.cloudConsentGranted },
+                                set: {
+                                    model.settings.cloudConsentGranted = $0
+                                    model.save()
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .accessibilityHint("Required before Apple Speech dictation can start")
                         }
                     }
                 }
@@ -4536,9 +4765,9 @@ private struct TranscriptionWorkspace: View {
                 }
 
                 SaysoSettingItemCard(
-                    title: "Insert partial text live in TextEdit and Notes",
-                    description: "Streams words into document fields as you speak in supported apps.",
-                    example: "Words appear live in Notes before you stop talking."
+                    title: "Insert partial text live in focused editors",
+                    description: "Streams words only while the verified editable field, selection, process, and focus stay unchanged.",
+                    example: "Words appear live in TextEdit and other accessible editors before you stop talking."
                 ) {
                     Toggle("", isOn: $model.settings.livePartialInsertion)
                         .labelsHidden()

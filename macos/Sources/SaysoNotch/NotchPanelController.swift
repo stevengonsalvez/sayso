@@ -13,13 +13,15 @@ private final class NotchPresentationState: ObservableObject {
 final class NotchPanelController {
     private let panel: NSPanel
     private var hideTask: Task<Void, Never>?
+    private var localClickMonitor: Any?
+    private var globalClickMonitor: Any?
     private let state = NotchPresentationState()
     private weak var model: SaysoAppModel?
 
-    private let expandedHeight: CGFloat = 226
+    private let expandedHeight: CGFloat = 236
     private let collapsedHeight: CGFloat = 42
     private let notchShoulder: CGFloat = 42
-    // 360pt chosen to fit ModePicker and 2-line text; icon row needs 266pt minimum.
+    // 360pt fits the mode picker, status, primary action, and overflow control.
     private let minimumExpandedWidth: CGFloat = 360
 
     init() {
@@ -37,6 +39,7 @@ final class NotchPanelController {
         panel.hidesOnDeactivate = false
         panel.isMovable = true
         panel.isMovableByWindowBackground = true
+        installClickMonitors()
     }
 
     func install(model: SaysoAppModel) {
@@ -93,6 +96,23 @@ final class NotchPanelController {
         reposition()
     }
 
+    private func collapse() {
+        guard panel.isVisible, !state.isCollapsed else { return }
+        state.isCollapsed = true
+        reposition()
+    }
+
+    private func installClickMonitors() {
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.panel { self.collapse() }
+            return event
+        }
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in self?.collapse() }
+        }
+    }
+
     func hide() {
         dismiss()
     }
@@ -122,12 +142,12 @@ final class NotchPanelController {
         if abs(state.compactWidth - compactWidth) > 0.5 {
             state.compactWidth = compactWidth
         }
-        let expandedWidth: CGFloat = isFloating ? 254 : max(compactWidth, minimumExpandedWidth)
+        let expandedWidth: CGFloat = isFloating ? 300 : max(compactWidth, minimumExpandedWidth)
         if abs(state.expandedWidth - expandedWidth) > 0.5 {
             state.expandedWidth = expandedWidth
         }
         let size = isFloating
-            ? (state.isCollapsed ? NSSize(width: 170, height: 38) : NSSize(width: 254, height: 198))
+            ? (state.isCollapsed ? NSSize(width: 200, height: 38) : NSSize(width: 300, height: 226))
             : (state.isCollapsed
                 ? NSSize(width: state.compactWidth, height: collapsedHeight)
                 : NSSize(width: state.expandedWidth, height: expandedHeight))
@@ -160,7 +180,11 @@ final class NotchPanelController {
                 height: size.height
             )
         }
-        panel.setFrame(panelFrame, display: true, animate: true)
+        panel.setFrame(
+            panelFrame,
+            display: true,
+            animate: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
     }
 }
 
@@ -204,13 +228,10 @@ private struct NotchHUD: View {
     }
 }
 
-/// Floating HUD inspired by jev-use VoiceWidget: symmetric 22pt rounded rectangle,
-/// dark glass material, audio waveform bars, 2-line transcript, and top-trailing hover controls.
+/// Floating presentation of the same contextual voice workspace as the docked notch.
 private struct FloatingHUD: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var state: NotchPresentationState
-    @State private var isHovering = false
-    @State private var isGlowPulsing = false
     let toggle: () -> Void
     let dismiss: () -> Void
     let openApp: () -> Void
@@ -219,175 +240,165 @@ private struct FloatingHUD: View {
     let togglePresentation: () -> Void
     let quit: () -> Void
 
-    private var message: String {
-        if !model.transcriber.partialText.isEmpty {
-            return model.transcriber.partialText
-        }
-        if model.transcriber.phase == .listening {
-            return "Listening..."
-        }
-        if let notice = model.notice {
-            return notice
-        }
-        if model.settings.mode == .control {
-            return model.controlStatus
-        }
-        return "Tap mic to speak"
-    }
-
     var body: some View {
         if state.isCollapsed {
             Button(action: toggle) {
                 HStack(spacing: 8) {
                     Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
-                        .foregroundStyle(SaysoPalette.amber)
-                    Text(model.transcriber.phase == .listening ? "Listening" : "Sayso")
-                        .font(.caption.weight(.bold))
+                        .foregroundStyle(model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amber)
+                    Text(model.settings.mode == .dictation ? "Dictation" : "Control")
+                        .font(.caption.weight(.semibold))
+                    Spacer(minLength: 4)
+                    Text(model.settings.mode == .dictation ? "Double Fn" : "Triple Fn")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(SaysoPalette.muted)
                     if model.transcriber.phase == .listening {
                         Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7)
                     }
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .frame(width: 170, height: 38)
+                .padding(.horizontal, 12)
+                .frame(width: 200, height: 38)
                 .background {
-                    RoundedRectangle(cornerRadius: 19).fill(.ultraThinMaterial)
-                        .overlay(RoundedRectangle(cornerRadius: 19).fill(Color.black.opacity(0.65)))
-                        .overlay(RoundedRectangle(cornerRadius: 19).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(SaysoPalette.brandNavySurface)
+                        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(SaysoPalette.outline, lineWidth: 1))
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Open Sayso \(model.settings.mode == .dictation ? "Dictation" : "Control") workspace")
         } else {
-            VStack(spacing: 6) {
-                // Waveform / Level indicator
-                WaveformLevelIndicator(
-                    isListening: model.transcriber.phase == .listening,
-                    mode: model.settings.mode
-                )
-                .frame(width: 220, height: 50)
-                .accessibilityHidden(true)
-
-                // 2-line transcript / status message
-                Text(message)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 44)
-                    .help(message)
-
-                // Primary glowing action button
-                let isLive = model.transcriber.canStop || model.transcriber.phase == .listening
-                Button {
-                    model.startOrStopDictation()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: isLive ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 11, weight: .bold))
-                        Text(isLive ? "Stop listening" : "Start dictation")
-                            .font(.system(size: 12, weight: .bold))
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 32)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(isLive ? SaysoPalette.crimson : SaysoPalette.brandCobalt)
-                .shadow(color: isLive ? SaysoPalette.crimson.opacity(isGlowPulsing ? 0.95 : 0.4) : .clear, radius: isGlowPulsing ? 10 : 4)
-                .overlay {
-                    if isLive {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(SaysoPalette.crimson.opacity(isGlowPulsing ? 0.9 : 0.5), lineWidth: 1.5)
-                            .shadow(color: SaysoPalette.crimson, radius: isGlowPulsing ? 8 : 4)
-                    }
-                }
-                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
-                        isGlowPulsing = true
-                    }
-                }
-
-                // Subtitle / shortcut hint
-                Text("Option-Space to speak")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(width: 254, height: 198)
-            .background {
-                RoundedRectangle(cornerRadius: 22).fill(.ultraThinMaterial)
-                    .overlay(RoundedRectangle(cornerRadius: 22).fill(Color.black.opacity(0.65)))
-                    .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
-            }
-            .overlay(alignment: .topTrailing) {
-                HStack(spacing: 2) {
-                    Button { openOnboarding() } label: {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 11))
-                            .frame(width: 24, height: 24)
-                    }
-                    .help("Onboarding tour")
-
-                    Button { openSettings() } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 11))
-                            .frame(width: 24, height: 24)
-                    }
-                    .help("Settings")
-
-                    Button { togglePresentation() } label: {
-                        Image(systemName: "menubar.rectangle")
-                            .font(.system(size: 11))
-                            .frame(width: 24, height: 24)
-                    }
-                    .help("Dock to notch")
-
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 24, height: 24)
-                    }
-                    .help("Dismiss")
+            ZStack {
+                Button(action: toggle) {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(SaysoPalette.brandNavySurface)
+                        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(SaysoPalette.outline, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.75))
-                .padding(8)
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
+                .accessibilityLabel("Collapse Sayso workspace")
+
+                VoiceWorkspaceContent(
+                    model: model,
+                    collapse: toggle,
+                    dismiss: dismiss,
+                    openApp: openApp,
+                    openSettings: openSettings,
+                    openOnboarding: openOnboarding,
+                    togglePresentation: togglePresentation,
+                    quit: quit
+                )
+                .padding(14)
             }
-            .onHover { isHovering = $0 }
+            .frame(width: 300, height: 226)
             .preferredColorScheme(.dark)
         }
     }
 }
 
-/// Dynamic audio bar visualization reacting to voice activity
-private struct WaveformLevelIndicator: View {
-    let isListening: Bool
-    let mode: SaysoMode
+private struct VoiceWorkspaceContent: View {
+    @ObservedObject var model: SaysoAppModel
+    let collapse: () -> Void
+    let dismiss: () -> Void
+    let openApp: () -> Void
+    let openSettings: () -> Void
+    let openOnboarding: () -> Void
+    let togglePresentation: () -> Void
+    let quit: () -> Void
+
+    private var isLive: Bool {
+        model.transcriber.canStop || model.transcriber.phase == .listening
+    }
+
+    private var status: String {
+        if !model.transcriber.partialText.isEmpty { return model.transcriber.partialText }
+        if let notice = model.notice { return notice }
+        if model.settings.mode == .control { return model.controlStatus }
+        if model.transcriber.phase == .listening { return "Listening for dictation" }
+        return "Ready to dictate into the focused app"
+    }
+
+    private var actionTitle: String {
+        if model.settings.mode == .control {
+            if model.transcriber.canStop { return "Stop Control" }
+            return model.transcriber.canStart ? "Start Control" : "Finishing Control"
+        }
+        if model.transcriber.canStop { return "Stop Dictation" }
+        return model.transcriber.canStart ? "Start Dictation" : "Finishing Dictation"
+    }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 6) {
-                ForEach(0..<12) { i in
-                    let h: CGFloat = isListening
-                        ? 10 + 32 * CGFloat(abs(sin(t * 5 + Double(i) * 0.5)))
-                        : 6 + 6 * CGFloat(abs(sin(t * 1.5 + Double(i) * 0.4)))
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(
-                            LinearGradient(
-                                colors: isListening
-                                    ? [SaysoPalette.crimson, SaysoPalette.brandAmber]
-                                    : [SaysoPalette.brandCobalt, SaysoPalette.brandCobalt.opacity(0.4)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 4, height: h)
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                ModePicker(model: model)
+                Spacer(minLength: 4)
+                Menu {
+                    Button("Open Sayso", action: openApp)
+                    Button("Onboarding Tour", action: openOnboarding)
+                    Button("Settings", action: openSettings)
+                    Divider()
+                    Button(model.settings.overlayPresentation == .notch ? "Detach from Notch" : "Dock to Notch", action: togglePresentation)
+                    Button("Collapse", action: collapse)
+                    Button("Hide", action: dismiss)
+                    Divider()
+                    Button("Quit Sayso", role: .destructive, action: quit)
+                } label: {
+                    Label("More Sayso controls", systemImage: "ellipsis.circle")
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
+                        .frame(width: 28, height: 28)
                 }
+                .menuStyle(.borderlessButton)
+                .help("More Sayso controls")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Button(action: collapse) {
+                Text(status)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 40, maxHeight: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
+            .accessibilityValue(status)
+            .help("\(status). Click to collapse.")
+
+            if model.settings.mode == .control, !isLive, model.transcriber.canStart {
+                Button("Try now: Open Calculator") {
+                    model.startControlTryNow()
+                }
+                .buttonStyle(.bordered)
+                .tint(SaysoPalette.amber)
+                .controlSize(.small)
+                .accessibilityHint("Starts listening for the spoken command Open Calculator")
+            }
+
+            Button {
+                if model.settings.mode == .dictation {
+                    model.startOrStopDictation()
+                } else {
+                    model.startOrStopControl()
+                }
+            } label: {
+                Label(
+                    actionTitle,
+                    systemImage: isLive ? "stop.fill" : model.settings.mode == .dictation ? "mic.fill" : "cursorarrow.rays"
+                )
+                .font(.callout.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(isLive ? SaysoPalette.crimson : model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amberDark)
+            .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+
+            Button(action: collapse) {
+                Text(model.settings.mode == .dictation ? "Double Fn · Dictation" : "Triple Fn · Control")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.settings.mode == .dictation ? "Double tap Fn for Dictation, collapse workspace" : "Triple tap Fn for Control, collapse workspace")
         }
     }
 }
@@ -396,7 +407,6 @@ private struct WaveformLevelIndicator: View {
 private struct DockedNotchHUD: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var state: NotchPresentationState
-    @State private var isGlowPulsing = false
     let toggle: () -> Void
     let dismiss: () -> Void
     let openApp: () -> Void
@@ -410,94 +420,49 @@ private struct DockedNotchHUD: View {
             Button(action: toggle) {
                 HStack(spacing: 10) {
                     Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
-                        .foregroundStyle(SaysoPalette.amber)
+                        .foregroundStyle(model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amber)
+                    Text(model.settings.mode == .dictation ? "Dictation" : "Control")
+                    Spacer(minLength: 4)
+                    Text(model.settings.mode == .dictation ? "Double Fn" : "Triple Fn")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(SaysoPalette.muted)
                     if model.transcriber.phase == .listening { Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7) }
                 }
-                .font(.caption.weight(.bold))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
-                .padding(.leading, 14)
+                .padding(.horizontal, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(width: state.compactWidth, height: 42)
                 .background(.black, in: UnevenRoundedRectangle(bottomLeadingRadius: 18, bottomTrailingRadius: 18))
                 .overlay { NotchShine(cornerRadius: 18) }
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Open Sayso \(model.settings.mode == .dictation ? "Dictation" : "Control") workspace")
         } else {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 6) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(SaysoPalette.cobalt)
-                        Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
-                            .font(.caption.weight(.bold))
-                    }
-                    .frame(width: 28, height: 28)
+            ZStack {
+                Button(action: toggle) {
+                    UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
+                        .fill(SaysoPalette.obsidian)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Collapse Sayso workspace")
 
-                    Spacer(minLength: 8)
-                    NotchIconButton(
-                        model.settings.overlayPresentation == .notch ? "rectangle.on.rectangle" : "menubar.rectangle",
-                        label: model.settings.overlayPresentation == .notch ? "Detach widget" : "Attach to notch",
-                        action: togglePresentation
-                    )
-                    NotchIconButton("macwindow", label: "Open Sayso", action: openApp)
-                    NotchIconButton("sparkles", label: "Onboarding tour", action: openOnboarding)
-                    NotchIconButton("gearshape", label: "Open settings", action: openSettings)
-                    NotchIconButton("chevron.up", label: "Collapse notch", action: toggle)
-                    NotchIconButton("xmark", label: "Hide notch", action: dismiss)
-                    NotchIconButton("power", label: "Quit Sayso", tint: SaysoPalette.crimson, action: quit)
-                }
-
-                HStack {
-                    Spacer()
-                    ModePicker(model: model)
-                    Spacer()
-                }
-
-                Text(model.transcriber.partialText.isEmpty ? (model.notice ?? "Live words appear here.") : model.transcriber.partialText)
-                    .font(.system(size: 14, weight: .medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 42, maxHeight: 50)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                let isLive = model.transcriber.canStop || model.transcriber.phase == .listening
-                Button {
-                    model.startOrStopDictation()
-                } label: {
-                    Label(
-                        model.transcriber.canStop ? "Stop listening" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation",
-                        systemImage: model.transcriber.canStop ? "stop.fill" : model.transcriber.canStart ? "mic.fill" : "ellipsis"
-                    )
-                    .font(.callout.weight(.bold))
-                    .frame(maxWidth: .infinity, minHeight: 34)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(isLive ? SaysoPalette.crimson : SaysoPalette.cobalt)
-                .shadow(color: isLive ? SaysoPalette.crimson.opacity(isGlowPulsing ? 0.95 : 0.4) : .clear, radius: isGlowPulsing ? 12 : 5)
-                .overlay {
-                    if isLive {
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(SaysoPalette.crimson.opacity(isGlowPulsing ? 0.9 : 0.5), lineWidth: 1.5)
-                            .shadow(color: SaysoPalette.crimson, radius: isGlowPulsing ? 8 : 4)
-                    }
-                }
-                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
-                        isGlowPulsing = true
-                    }
-                }
+                VoiceWorkspaceContent(
+                    model: model,
+                    collapse: toggle,
+                    dismiss: dismiss,
+                    openApp: openApp,
+                    openSettings: openSettings,
+                    openOnboarding: openOnboarding,
+                    togglePresentation: togglePresentation,
+                    quit: quit
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 38)
+                .padding(.bottom, 14)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 38)
-            .padding(.bottom, 14)
-            .frame(width: state.expandedWidth, height: 226)
+            .frame(width: state.expandedWidth, height: 236)
             .contentShape(UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20))
-            .gesture(TapGesture().onEnded(toggle), including: .gesture)
-            .background {
-                UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
-                    .fill(SaysoPalette.obsidian)
-            }
             .overlay {
                 NotchShine(cornerRadius: 20)
             }
@@ -508,63 +473,9 @@ private struct DockedNotchHUD: View {
 
 private struct NotchShine: View {
     let cornerRadius: CGFloat
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isShining = false
 
     var body: some View {
-        ZStack {
-            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
-                .stroke(SaysoPalette.outline, lineWidth: 1)
-            UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
-                .stroke(SaysoPalette.cobalt.opacity(isShining ? 0.76 : 0), lineWidth: 1)
-                .shadow(color: SaysoPalette.cobalt.opacity(isShining ? 0.58 : 0), radius: isShining ? 4 : 0)
-        }
-        .task(id: reduceMotion) {
-            guard !reduceMotion else {
-                isShining = false
-                return
-            }
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .seconds(10))
-                } catch {
-                    return
-                }
-                withAnimation(.easeInOut(duration: 0.45)) { isShining = true }
-                do {
-                    try await Task.sleep(for: .milliseconds(900))
-                } catch {
-                    return
-                }
-                withAnimation(.easeOut(duration: 0.55)) { isShining = false }
-            }
-        }
-    }
-}
-
-private struct NotchIconButton: View {
-    let systemName: String
-    let label: String
-    let tint: Color
-    let action: () -> Void
-
-    init(_ systemName: String, label: String, tint: Color = .white, action: @escaping () -> Void) {
-        self.systemName = systemName
-        self.label = label
-        self.tint = tint
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(tint)
-                .frame(width: 26, height: 26)
-                .background(SaysoPalette.surfaceRaised, in: RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
+        UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+            .stroke(SaysoPalette.outline, lineWidth: 1)
     }
 }

@@ -11,19 +11,88 @@ import SpeakHotKeys
     #expect(dictation.displayName == "Start / Stop Dictation")
     #expect(dictation.defaultsKey == "sayso.dictation-hotkey")
     #expect(dictation.carbonID == 1)
-    #expect(dictation.defaultHotKey == .custom(keyCode: 49, modifiers: .option))
+    #expect(dictation.defaultHotKey == .fnKey)
 
     let control = SaysoShortcutAction.control
     #expect(control.displayName == "Start / Stop Desktop Control")
     #expect(control.defaultsKey == "sayso.control-hotkey")
     #expect(control.carbonID == 2)
-    #expect(control.defaultHotKey == .custom(keyCode: 49, modifiers: [.control, .option]))
+    #expect(control.defaultHotKey == .fnKey)
 
     let notch = SaysoShortcutAction.toggleNotch
     #expect(notch.displayName == "Toggle Notch HUD")
     #expect(notch.defaultsKey == "sayso.toggle-notch-hotkey")
     #expect(notch.carbonID == 3)
     #expect(notch.defaultHotKey == .custom(keyCode: 45, modifiers: [.control, .option]))
+}
+
+@Test func historicalShortcutDefaultsMigrateToFnGestures() {
+    let migrated = ShortcutDefaultsMigration.migrate(
+        dictation: .custom(keyCode: 49, modifiers: .option),
+        control: .custom(keyCode: 49, modifiers: [.control, .option]),
+        toggleNotch: .custom(keyCode: 45, modifiers: [.control, .option]),
+        fromVersion: 0
+    )
+
+    #expect(migrated.dictation == .fnKey)
+    #expect(migrated.control == .fnKey)
+    #expect(migrated.toggleNotch == .custom(keyCode: 45, modifiers: [.control, .option]))
+}
+
+@Test func shortcutMigrationPreservesEveryCustomBinding() {
+    let dictation = HotKey.custom(keyCode: 2, modifiers: [.command, .shift])
+    let control = HotKey.custom(keyCode: 3, modifiers: [.control])
+    let notch = HotKey.custom(keyCode: 4, modifiers: [.option])
+
+    let migrated = ShortcutDefaultsMigration.migrate(
+        dictation: dictation,
+        control: control,
+        toggleNotch: notch,
+        fromVersion: 0
+    )
+
+    #expect(migrated == .init(dictation: dictation, control: control, toggleNotch: notch))
+}
+
+@Test func currentShortcutVersionNeverRewritesStoredBindings() {
+    let historicalDictation = HotKey.custom(keyCode: 49, modifiers: .option)
+    let historicalControl = HotKey.custom(keyCode: 49, modifiers: [.control, .option])
+
+    let unchanged = ShortcutDefaultsMigration.migrate(
+        dictation: historicalDictation,
+        control: historicalControl,
+        toggleNotch: nil,
+        fromVersion: ShortcutDefaultsMigration.currentVersion
+    )
+
+    #expect(unchanged.dictation == historicalDictation)
+    #expect(unchanged.control == historicalControl)
+    #expect(unchanged.toggleNotch == SaysoShortcutAction.toggleNotch.defaultHotKey)
+}
+
+@Test func sharedFnDefaultsDoNotConflictBecauseGesturesDiffer() {
+    let conflicts = ShortcutConflictDetector.detectConflicts(
+        dictation: .fnKey,
+        control: .fnKey,
+        toggleNotch: SaysoShortcutAction.toggleNotch.defaultHotKey
+    )
+
+    #expect(conflicts.isEmpty)
+}
+
+@Test func fnGestureRouterSeparatesDictationAndControl() {
+    #expect(ShortcutGestureRouter.monitoredHotKey(dictation: .fnKey, control: .fnKey) == .fnKey)
+    #expect(ShortcutGestureRouter.action(for: .singleTap, monitoredHotKey: .fnKey, dictation: .fnKey, control: .fnKey) == nil)
+    #expect(ShortcutGestureRouter.action(for: .doubleTap, monitoredHotKey: .fnKey, dictation: .fnKey, control: .fnKey) == .dictation)
+    #expect(ShortcutGestureRouter.action(for: .tripleTap, monitoredHotKey: .fnKey, dictation: .fnKey, control: .fnKey) == .control)
+}
+
+@Test func customDictationRetainsSingleTapAndVoiceEditGestures() {
+    let custom = HotKey.custom(keyCode: 2, modifiers: [.command, .shift])
+
+    #expect(ShortcutGestureRouter.monitoredHotKey(dictation: custom, control: SaysoShortcutAction.control.defaultHotKey) == .fnKey)
+    #expect(ShortcutGestureRouter.action(for: .singleTap, monitoredHotKey: custom, dictation: custom, control: .fnKey) == .dictation)
+    #expect(ShortcutGestureRouter.action(for: .doubleTap, monitoredHotKey: custom, dictation: custom, control: .fnKey) == .voiceEdit)
 }
 
 @Test func defaultShortcutsHaveNoConflicts() {

@@ -96,17 +96,20 @@ public struct DesktopCandidateSnapshot: Codable, Equatable, Sendable {
     public let applicationName: String
     public let windowTitle: String
     public let candidates: [DesktopCandidate]
+    public let observations: [String]
 
     public init(
         processIdentifier: Int32,
         applicationName: String,
         windowTitle: String,
-        candidates: [DesktopCandidate]
+        candidates: [DesktopCandidate],
+        observations: [String] = []
     ) {
         self.processIdentifier = processIdentifier
         self.applicationName = applicationName
         self.windowTitle = windowTitle
         self.candidates = candidates
+        self.observations = observations
     }
 }
 

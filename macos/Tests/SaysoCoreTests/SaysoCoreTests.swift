@@ -46,7 +46,7 @@ import Testing
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
     #expect(settings.dictationProfileOverrides.isEmpty)
-    #expect(!settings.livePartialInsertion)
+    #expect(settings.livePartialInsertion)
     #expect(!settings.handsFreeContinuous)
     #expect(settings.handsFreeSilenceSeconds == 1.2)
     #expect(settings.handsFreeMaximumDurationSeconds == 900)
@@ -559,6 +559,29 @@ import Testing
     #expect(hidden.fingerprint == visible.fingerprint)
 }
 
+@Test func desktopFingerprintTracksVisibleObservations() {
+    let before = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Calculator",
+        windowTitle: "Calculator",
+        focusedRole: "AXWindow",
+        focusedValue: "",
+        isProtected: false,
+        observations: ["12×3"]
+    )
+    let after = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Calculator",
+        windowTitle: "Calculator",
+        focusedRole: "AXWindow",
+        focusedValue: "",
+        isProtected: false,
+        observations: ["36"]
+    )
+
+    #expect(before.fingerprint != after.fingerprint)
+}
+
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
     actor Snapshots {
         private var values: [DesktopSnapshot]
@@ -826,6 +849,121 @@ private func openOutcome(
     #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: "scroll down then ") }
     let overBudget = Array(repeating: "scroll down", count: ControlSessionLimits().maxActions + 1).joined(separator: " then ")
     #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: overBudget) }
+}
+
+@Test func controlPlannerExpandsSpokenCalculatorMultiplicationIntoBoundedSteps() throws {
+    let task = try #require(ControlPlanner.calculatorTask(from: "Open Calculator and find 12 times three."))
+    #expect(task.expectedResult == "36")
+    #expect(task.resultIsVisible(in: ["‎36"]))
+    #expect(!task.resultIsVisible(in: ["12×3"]))
+    #expect(task.commands == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "Open Calculator and find 12 times three.") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "open calculator and calculate twelve times 3") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "Open calculator and find 12×3") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+}
+
+@Test func controlSubmissionRequiresExplicitSendVerb() {
+    #expect(!ControlSubmissionPolicy.authorizesSubmission(in: "Open WhatsApp and type hello to Steve"))
+    #expect(ControlSubmissionPolicy.authorizesSubmission(in: "Open WhatsApp and send hello to Steve"))
+    #expect(ControlSubmissionPolicy.authorizesSubmission(in: "Please send this to Steve"))
+    #expect(!ControlSubmissionPolicy.authorizesSubmission(in: "Open the Send folder"))
+}
+
+@Test func cycleApprovalAllowsOnlyExplicitSubmissionOrSearchReturn() {
+    let fingerprint = "screen"
+    let returnStep = ControlPlanStep(
+        action: .key(.return, expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Press Return",
+        planningSource: .jev
+    )
+    let sendStep = ControlPlanStep(
+        action: .press(elementID: "send", expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Click Send",
+        planningSource: .jev,
+        candidateTitle: "Send"
+    )
+    let deleteStep = ControlPlanStep(
+        action: .press(elementID: "delete", expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Click Delete",
+        planningSource: .jev,
+        candidateTitle: "Delete"
+    )
+
+    #expect(ControlCycleApproval.canAutoApprove(returnStep, goal: "Send hello to Steve"))
+    #expect(ControlCycleApproval.canAutoApprove(returnStep, goal: "Search for accessibility"))
+    #expect(!ControlCycleApproval.canAutoApprove(returnStep, goal: "Type hello to Steve"))
+    #expect(ControlCycleApproval.canAutoApprove(sendStep, goal: "Send hello to Steve"))
+    #expect(!ControlCycleApproval.canAutoApprove(sendStep, goal: "Type hello to Steve"))
+    #expect(!ControlCycleApproval.canAutoApprove(deleteStep, goal: "Delete the file"))
+}
+
+@Test func cycleCompletionStopsAfterVerifiedDraftTyping() {
+    let action = DesktopAction.typeInto(elementID: "message", text: "hello", expectedFingerprint: "screen")
+    #expect(ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .observed,
+        goal: "Open WhatsApp and type hello in Compose message"
+    ))
+    #expect(!ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .observed,
+        goal: "Open WhatsApp and type hello then press Return"
+    ))
+    #expect(!ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .notObserved,
+        goal: "Open WhatsApp and type hello"
+    ))
+}
+
+@Test func controlTargetHandoffFollowsOnlyExplicitNavigationActions() {
+    #expect(DesktopAction.open(url: URL(string: "https://example.com")!).mayMoveControlTarget)
+    #expect(DesktopAction.openFolder(url: URL(fileURLWithPath: "/tmp")).mayMoveControlTarget)
+    #expect(DesktopAction.activate(bundleIdentifier: "com.apple.Safari").mayMoveControlTarget)
+    #expect(!DesktopAction.press(elementID: "button", expectedFingerprint: "screen").mayMoveControlTarget)
+    #expect(!DesktopAction.type(text: "hello", expectedFingerprint: "screen").mayMoveControlTarget)
+}
+
+@Test func successfulPressWithoutVisibleSnapshotChangeHasUnknownEffect() {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Calculator", windowTitle: "Calculator",
+        focusedRole: "AXButton", focusedValue: "", isProtected: false,
+        elements: [.init(id: "three", role: "AXButton", title: "3")]
+    )
+    let action = DesktopAction.press(elementID: "three", expectedFingerprint: snapshot.fingerprint)
+
+    #expect(ControlOutcome.effect(for: action, before: snapshot, after: snapshot) == .unknown)
 }
 
 @Test func controlPlannerAllowsOnlyReviewedNavigationKeys() throws {

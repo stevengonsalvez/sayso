@@ -28,6 +28,13 @@ enum ClipboardRestorePolicy {
     }
 }
 
+enum TextInsertionVerification {
+    static func changed(previous: String?, current: String?) -> Bool {
+        guard let previous, let current else { return false }
+        return previous != current
+    }
+}
+
 @MainActor
 public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, ObservableObject {
     public struct Voice: Identifiable, Hashable, Sendable {
@@ -87,12 +94,12 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
 
 @MainActor
 public enum TextOutput {
-    public enum DeliveryResult: Equatable {
+    public enum DeliveryResult: Equatable, Sendable {
         case delivered(TextDeliveryMethod)
         case pasteFailed(PasteFailure)
     }
 
-    public enum PasteFailure: Equatable {
+    public enum PasteFailure: Equatable, Sendable {
         case finalTextCopiedToClipboard
         case clipboardRestored
         case clipboardChangedBeforeRestore
@@ -163,17 +170,18 @@ public enum TextOutput {
 
         private let destination: Destination
         private var region: LiveTextRegion
+        private var expectedSelection: TextUTF16Range
         private var isUsable = true
         public private(set) var hasWritten = false
 
         public init?(destination: Destination) {
-            guard ["com.apple.TextEdit", "com.apple.Notes"].contains(destination.bundleIdentifier),
-                  TextOutput.isFocused(destination),
+            guard TextOutput.isFocused(destination),
                   let value = TextOutput.value(in: destination),
                   let selection = TextOutput.selectedRange(in: destination),
                   let region = LiveTextRegion(baseline: value, selection: selection) else { return nil }
             self.destination = destination
             self.region = region
+            expectedSelection = selection
         }
 
         @discardableResult
@@ -194,7 +202,13 @@ public enum TextOutput {
             guard isUsable,
                   TextOutput.isFocused(destination),
                   let current = TextOutput.value(in: destination),
-                  region.matches(current),
+                  let currentSelection = TextOutput.selectedRange(in: destination),
+                  LiveInsertionSafety.allowsReplacement(
+                      currentValue: current,
+                      currentSelection: currentSelection,
+                      region: region,
+                      expectedSelection: expectedSelection
+                  ),
                   let expected = region.value(afterReplacingWith: text),
                   TextOutput.setSelectedRange(region.replacementRange, in: destination),
                   AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
@@ -206,7 +220,12 @@ public enum TextOutput {
                 isUsable = false
                 return false
             }
+            guard let observedSelection = TextOutput.selectedRange(in: destination) else {
+                isUsable = false
+                return false
+            }
             region.replace(with: text)
+            expectedSelection = observedSelection
             return true
         }
     }
@@ -265,8 +284,12 @@ public enum TextOutput {
         restoreClipboardAfterPaste: Bool = true
     ) -> DeliveryResult {
         if let destination, destination.isSafeDeliveryTarget, !isProtected(destination.field) {
+            let previousValue = currentValue(in: destination)
             let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-            if setResult == .success { return .delivered(.directInsertion) }
+            if setResult == .success,
+               TextInsertionVerification.changed(previous: previousValue, current: currentValue(in: destination)) {
+                return .delivered(.directInsertion)
+            }
 
             switch paste(text, into: destination, restoreClipboardAfterPaste: restoreClipboardAfterPaste) {
             case .pasted:
@@ -593,6 +616,17 @@ public struct LiveTextRegion: Equatable, Sendable {
         guard start.samePosition(in: value.unicodeScalars) != nil,
               end.samePosition(in: value.unicodeScalars) != nil else { return nil }
         return .init(location: range.location, length: range.length)
+    }
+}
+
+public enum LiveInsertionSafety {
+    public static func allowsReplacement(
+        currentValue: String,
+        currentSelection: TextUTF16Range,
+        region: LiveTextRegion,
+        expectedSelection: TextUTF16Range
+    ) -> Bool {
+        region.matches(currentValue) && currentSelection == expectedSelection
     }
 }
 

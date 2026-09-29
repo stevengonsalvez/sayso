@@ -20,9 +20,9 @@ public enum SaysoShortcutAction: String, CaseIterable, Identifiable, Codable, Se
     public var explanatoryText: String {
         switch self {
         case .dictation:
-            return "Start or stop dictating into the focused app. Double-tap to voice edit."
+            return "Double-tap Fn to start or stop dictating into the focused app."
         case .control:
-            return "Start or stop listening for desktop control commands."
+            return "Triple-tap Fn to start or stop listening for desktop control commands."
         case .toggleNotch:
             return "Show, hide, or expand the Notch HUD overlay on your screen."
         }
@@ -31,9 +31,9 @@ public enum SaysoShortcutAction: String, CaseIterable, Identifiable, Codable, Se
     public var defaultHotKey: HotKey {
         switch self {
         case .dictation:
-            return .custom(keyCode: 49, modifiers: .option) // ⌥ Space
+            return .fnKey
         case .control:
-            return .custom(keyCode: 49, modifiers: [.control, .option]) // ⌃⌥ Space
+            return .fnKey
         case .toggleNotch:
             return .custom(keyCode: 45, modifiers: [.control, .option]) // ⌃⌥ N
         }
@@ -53,6 +53,72 @@ public enum SaysoShortcutAction: String, CaseIterable, Identifiable, Codable, Se
         case .control: return 2
         case .toggleNotch: return 3
         }
+    }
+}
+
+public struct SaysoShortcutBindings: Equatable, Sendable {
+    public let dictation: HotKey
+    public let control: HotKey
+    public let toggleNotch: HotKey
+
+    public init(dictation: HotKey, control: HotKey, toggleNotch: HotKey) {
+        self.dictation = dictation
+        self.control = control
+        self.toggleNotch = toggleNotch
+    }
+}
+
+public enum ShortcutDefaultsMigration {
+    public static let currentVersion = 1
+
+    private static let historicalDictation = HotKey.custom(keyCode: 49, modifiers: .option)
+    private static let historicalControl = HotKey.custom(keyCode: 49, modifiers: [.control, .option])
+
+    public static func migrate(
+        dictation: HotKey?,
+        control: HotKey?,
+        toggleNotch: HotKey?,
+        fromVersion: Int
+    ) -> SaysoShortcutBindings {
+        let shouldMigrate = fromVersion < currentVersion
+        return .init(
+            dictation: shouldMigrate && (dictation == nil || dictation == historicalDictation)
+                ? SaysoShortcutAction.dictation.defaultHotKey
+                : dictation ?? SaysoShortcutAction.dictation.defaultHotKey,
+            control: shouldMigrate && (control == nil || control == historicalControl)
+                ? SaysoShortcutAction.control.defaultHotKey
+                : control ?? SaysoShortcutAction.control.defaultHotKey,
+            toggleNotch: toggleNotch ?? SaysoShortcutAction.toggleNotch.defaultHotKey
+        )
+    }
+}
+
+public enum ShortcutGestureAction: Equatable, Sendable {
+    case dictation
+    case control
+    case voiceEdit
+}
+
+public enum ShortcutGestureRouter {
+    public static func monitoredHotKey(dictation: HotKey, control: HotKey) -> HotKey {
+        dictation.isFnKey || control.isFnKey ? .fnKey : dictation
+    }
+
+    public static func action(
+        for gesture: HotKeyGesture,
+        monitoredHotKey: HotKey,
+        dictation: HotKey,
+        control: HotKey
+    ) -> ShortcutGestureAction? {
+        if monitoredHotKey.isFnKey {
+            if gesture == .doubleTap, dictation.isFnKey { return .dictation }
+            if gesture == .tripleTap, control.isFnKey { return .control }
+            return nil
+        }
+        guard monitoredHotKey == dictation else { return nil }
+        if gesture == .singleTap { return .dictation }
+        if gesture == .doubleTap { return .voiceEdit }
+        return nil
     }
 }
 
@@ -84,7 +150,7 @@ public enum ShortcutConflictDetector {
     ) -> [ShortcutConflict] {
         var conflicts: [ShortcutConflict] = []
 
-        if dictation == control {
+        if dictation == control, !dictation.isFnKey {
             conflicts.append(ShortcutConflict(action: .dictation, conflictingWith: .control))
         }
         if dictation == toggleNotch {

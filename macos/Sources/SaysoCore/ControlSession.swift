@@ -1,5 +1,22 @@
 import Foundation
 
+public struct JevControlRunState: Equatable, Sendable {
+    public let goal: String
+    public private(set) var recentActions: [JevCycleRecentAction]
+
+    public init(goal: String, recentActions: [JevCycleRecentAction] = []) throws {
+        let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw SaysoError.invalidAction("Say a control command.") }
+        self.goal = trimmed
+        self.recentActions = Array(recentActions.suffix(10))
+    }
+
+    public mutating func record(action: String, result: String, screenChanged: Bool) {
+        recentActions.append(.init(action: action, result: result, screenChanged: screenChanged))
+        if recentActions.count > 10 { recentActions.removeFirst(recentActions.count - 10) }
+    }
+}
+
 public struct ControlSessionLimits: Codable, Equatable, Sendable {
     public let maxActions: Int
     public let maxConsecutiveNoEffect: Int

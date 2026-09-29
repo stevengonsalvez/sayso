@@ -195,7 +195,7 @@ public struct SaysoShortcutRecorderRow: View {
 
                 Spacer(minLength: 16)
 
-                if action == .dictation {
+                if action != .toggleNotch {
                     Toggle("Fn key", isOn: Binding(
                         get: { hotKey.isFnKey },
                         set: { useFn in

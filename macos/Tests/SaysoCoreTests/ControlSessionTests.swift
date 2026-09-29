@@ -1,6 +1,22 @@
 import Testing
 @testable import SaysoCore
 
+@Test func jevControlRunKeepsWholeGoalAndOnlyLastTenEffects() throws {
+    var run = try JevControlRunState(goal: "  Open Calculator and find 12 times three  ")
+    for index in 0..<12 {
+        run.record(action: "CLICK \(index)", result: "changed", screenChanged: true)
+    }
+
+    #expect(run.goal == "Open Calculator and find 12 times three")
+    #expect(run.recentActions.count == 10)
+    #expect(run.recentActions.first?.action == "CLICK 2")
+    #expect(run.recentActions.last?.action == "CLICK 11")
+}
+
+@Test func jevControlRunRejectsEmptyGoal() {
+    #expect(throws: SaysoError.self) { try JevControlRunState(goal: "   ") }
+}
+
 @Test func controlSessionCompletesAfterObservedWork() async {
     let session = ControlSession(limits: .init(maxActions: 3, maxConsecutiveNoEffect: 2))
 

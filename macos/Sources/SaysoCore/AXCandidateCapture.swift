@@ -8,7 +8,7 @@ public struct AXCandidateCaptureLimits: Equatable, Sendable {
     public let maximumNodes: Int
     public let maximumCandidates: Int
 
-    public init(maximumDepth: Int = 5, maximumNodes: Int = 300, maximumCandidates: Int = 100) {
+    public init(maximumDepth: Int = 6, maximumNodes: Int = 300, maximumCandidates: Int = 100) {
         self.maximumDepth = max(0, maximumDepth)
         self.maximumNodes = max(1, maximumNodes)
         self.maximumCandidates = max(1, maximumCandidates)
@@ -22,6 +22,19 @@ public enum AXCandidateCapturePolicy {
 
     public static func focusedValue(_ value: String, role: String, subrole: String) -> String {
         isProtected(role: role, subrole: subrole) ? "" : value
+    }
+
+    public static func visibleObservation(
+        role: String,
+        value: String?,
+        isProtected: Bool,
+        isValueSettable: Bool = false
+    ) -> String? {
+        let visibleOutputRoles = [kAXStaticTextRole as String, kAXUnknownRole as String]
+        guard !isProtected, !isValueSettable, visibleOutputRoles.contains(role), let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(160))
     }
 
     public static func includesCandidate(
@@ -106,12 +119,14 @@ public final class AXCandidateCapture: @unchecked Sendable {
         let captured = window.map {
             capturedCandidates(in: $0, processIdentifier: app.processIdentifier, windowTitle: windowTitle)
         } ?? []
+        let observations = window.map { capturedObservations(in: $0) } ?? []
 
         return DesktopCandidateSnapshot(
             processIdentifier: app.processIdentifier,
             applicationName: app.localizedName ?? "Unknown",
             windowTitle: windowTitle,
-            candidates: captured.map(\.candidate)
+            candidates: captured.map(\.candidate),
+            observations: observations
         )
     }
 
@@ -339,6 +354,47 @@ public final class AXCandidateCapture: @unchecked Sendable {
             captured.append(contentsOf: deferredSelectionCandidates.prefix(remaining))
         }
         return captured
+    }
+
+    private func capturedObservations(in root: AXUIElement) -> [String] {
+        struct PendingNode {
+            let element: AXUIElement
+            let depth: Int
+        }
+
+        let windowFrame = frame(of: root)
+        var pending = [PendingNode(element: root, depth: 0)]
+        var index = 0
+        var visited = 0
+        var observations: [String] = []
+        var seen: Set<String> = []
+
+        while index < pending.count, visited < limits.maximumNodes, observations.count < 40 {
+            let node = pending[index]
+            index += 1
+            visited += 1
+            let nodeFrame = frame(of: node.element)
+            let role = stringAttribute(kAXRoleAttribute as CFString, from: node.element) ?? ""
+            let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: node.element) ?? ""
+            let isProtected = AXCandidateCapturePolicy.isProtected(role: role, subrole: subrole)
+            if nodeFrame.map({ AXCandidateCapturePolicy.isCentreVisible(frame: $0, in: windowFrame) }) == true,
+               let observation = AXCandidateCapturePolicy.visibleObservation(
+                   role: role,
+                   value: stringAttribute(kAXValueAttribute as CFString, from: node.element),
+                   isProtected: isProtected,
+                   isValueSettable: attributeIsSettable(kAXValueAttribute as CFString, on: node.element)
+               ), seen.insert(observation).inserted {
+                observations.append(observation)
+            }
+
+            guard !isProtected, node.depth < limits.maximumDepth + 2 else { continue }
+            let children = copyAttribute(kAXChildrenAttribute as CFString, from: node.element) as? [AXUIElement] ?? []
+            let remaining = limits.maximumNodes - visited - (pending.count - index)
+            pending += children.prefix(max(0, remaining)).map {
+                PendingNode(element: $0, depth: node.depth + 1)
+            }
+        }
+        return observations
     }
 
     private func title(for element: AXUIElement) -> String {

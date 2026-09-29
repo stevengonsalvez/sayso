@@ -240,7 +240,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var speechVoiceIdentifier: String?
     public var speechRate: Double = 0.5
     public var autoInsert = true
-    public var livePartialInsertion = false
+    public var livePartialInsertion = true
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeContinuous = false
