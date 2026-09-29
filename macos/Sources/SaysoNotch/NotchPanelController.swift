@@ -365,13 +365,18 @@ private struct VoiceWorkspaceContent: View {
             .help("\(status). Click to collapse.")
 
             if model.settings.mode == .control, !isLive, model.transcriber.canStart {
-                Button("Try now: Open Calculator") {
+                Button(model.isCheckingControlTryNowReadiness ? "Checking readiness..." : "Try now: Open Calculator") {
                     model.startControlTryNow()
                 }
                 .buttonStyle(.bordered)
                 .tint(SaysoPalette.amber)
                 .controlSize(.small)
+                .disabled(model.isCheckingControlTryNowReadiness)
                 .accessibilityHint("Starts listening for the spoken command Open Calculator")
+                Text(model.controlTryNowReadiness)
+                    .font(.caption)
+                    .foregroundStyle(SaysoPalette.muted)
+                    .multilineTextAlignment(.center)
             }
 
             Button {

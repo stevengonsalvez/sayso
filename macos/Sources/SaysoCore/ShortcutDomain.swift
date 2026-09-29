@@ -101,7 +101,11 @@ public enum ShortcutGestureAction: Equatable, Sendable {
 
 public enum ShortcutGestureRouter {
     public static func monitoredHotKey(dictation: HotKey, control: HotKey) -> HotKey {
-        dictation.isFnKey || control.isFnKey ? .fnKey : dictation
+        dictation
+    }
+
+    public static func needsSeparateControlMonitor(dictation: HotKey, control: HotKey) -> Bool {
+        !dictation.isFnKey && control.isFnKey
     }
 
     public static func action(

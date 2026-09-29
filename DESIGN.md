@@ -80,6 +80,8 @@ All text and interactive states must meet WCAG AA. Increased Contrast strengthen
 - State changes may use a short opacity or scale transition.
 - Respect Reduce Motion by replacing movement with immediate opacity changes.
 - Never pulse, shimmer, spin continuously, or use glow as status.
+- Fn gestures use a 400 ms multi-tap decision window. Double-Fn therefore adds 400 ms before Dictation starts so triple-Fn can resolve without duplicate actions.
+- Completed gestures use a 120 ms cooldown. A fourth rapid tap is ignored instead of starting an accidental second action.
 
 ## Do
 

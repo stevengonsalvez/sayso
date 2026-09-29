@@ -897,7 +897,13 @@ private func openOutcome(
     #expect(!ControlSubmissionPolicy.authorizesSubmission(in: "Open the Send folder"))
 }
 
-@Test func cycleApprovalAllowsOnlyExplicitSubmissionOrSearchReturn() {
+@Test func bitwardenFallbackSelectsOnlyNamedTypeSafeSecret() {
+    let data = Data(#"[{"key":"OTHER_KEY","value":"ignore"},{"key":"TYPESAFE_API_KEY","value":"  expected-key  "}]"#.utf8)
+    #expect(BitwardenSecretsManager.typeSafeKey(from: data) == "expected-key")
+    #expect(BitwardenSecretsManager.typeSafeKey(from: Data(#"[{"key":"OTHER_KEY","value":"ignore"}]"#.utf8)) == nil)
+}
+
+@Test func submissionActionsKeepExistingConfirmationPolicy() {
     let fingerprint = "screen"
     let returnStep = ControlPlanStep(
         action: .key(.return, expectedFingerprint: fingerprint),
@@ -920,12 +926,9 @@ private func openOutcome(
         candidateTitle: "Delete"
     )
 
-    #expect(ControlCycleApproval.canAutoApprove(returnStep, goal: "Send hello to Steve"))
-    #expect(ControlCycleApproval.canAutoApprove(returnStep, goal: "Search for accessibility"))
-    #expect(!ControlCycleApproval.canAutoApprove(returnStep, goal: "Type hello to Steve"))
-    #expect(ControlCycleApproval.canAutoApprove(sendStep, goal: "Send hello to Steve"))
-    #expect(!ControlCycleApproval.canAutoApprove(sendStep, goal: "Type hello to Steve"))
-    #expect(!ControlCycleApproval.canAutoApprove(deleteStep, goal: "Delete the file"))
+    #expect(ControlPolicy.requiresConfirmation(returnStep))
+    #expect(ControlPolicy.requiresConfirmation(sendStep))
+    #expect(ControlPolicy.requiresConfirmation(deleteStep))
 }
 
 @Test func cycleCompletionStopsAfterVerifiedDraftTyping() {

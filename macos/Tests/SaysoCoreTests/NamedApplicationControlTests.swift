@@ -128,6 +128,29 @@ private func installedApplication(
     #expect(applications.map(\.bundleIdentifier) == ["com.apple.calculator"])
 }
 
+@Test func controlTryNowReadinessBlocksWrongModeAndMissingPermissions() {
+    #expect(ControlTryNowPolicy.readinessIssue(
+        mode: .dictation,
+        desktopControlEnabled: true,
+        accessibilityGranted: true
+    ) == .chooseControl)
+    #expect(ControlTryNowPolicy.readinessIssue(
+        mode: .control,
+        desktopControlEnabled: false,
+        accessibilityGranted: true
+    ) == .enableDesktopControl)
+    #expect(ControlTryNowPolicy.readinessIssue(
+        mode: .control,
+        desktopControlEnabled: true,
+        accessibilityGranted: false
+    ) == .accessibilityPermission)
+    #expect(ControlTryNowPolicy.readinessIssue(
+        mode: .control,
+        desktopControlEnabled: true,
+        accessibilityGranted: true
+    ) == nil)
+}
+
 @Test func namedApplicationCommandsRejectAmbiguousAndNonExactNames() {
     let safari = installedApplication(
         "Safari",

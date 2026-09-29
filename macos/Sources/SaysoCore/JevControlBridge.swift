@@ -3,6 +3,30 @@ import Foundation
 public enum JevControlBridge {
     private static let maximumChoicesPerHead = 255
 
+    private enum CycleOperation: String {
+        case pressReturn = "PRESS_RETURN"
+        case pressEscape = "PRESS_ESCAPE"
+        case scrollDown = "SCROLL_DOWN"
+        case scrollUp = "SCROLL_UP"
+        case done = "DONE"
+        case blocked = "BLOCKED"
+        case wait = "WAIT"
+        case click = "CLICK"
+        case typeText = "TYPE_TEXT"
+        case openApp = "OPEN_APP"
+        case openURL = "OPEN_URL"
+
+        var targetHead: String? {
+            switch self {
+            case .click: "click_target"
+            case .typeText: "type_target"
+            case .openApp: "app_target"
+            case .openURL: "url_target"
+            default: nil
+            }
+        }
+    }
+
     public static func makeCandidates(
         from snapshot: DesktopSnapshot,
         installedApplications: [InstalledDesktopApplication]? = nil
@@ -80,25 +104,25 @@ public enum JevControlBridge {
         }
         var heads: [String: [String: String]] = [:]
         var operations: [String: String] = [
-            "PRESS_RETURN": "Press Return to submit the focused search or message only when the goal asks.",
-            "PRESS_ESCAPE": "Press Escape to close the current transient interface.",
-            "SCROLL_DOWN": "Scroll down one screen.",
-            "SCROLL_UP": "Scroll up one screen.",
-            "DONE": "Every part of the goal is visibly satisfied.",
-            "BLOCKED": "No offered operation can make progress.",
-            "WAIT": "Wait briefly because the needed control is still loading."
+            CycleOperation.pressReturn.rawValue: "Press Return to submit the focused search or message only when the goal asks.",
+            CycleOperation.pressEscape.rawValue: "Press Escape to close the current transient interface.",
+            CycleOperation.scrollDown.rawValue: "Scroll down one screen.",
+            CycleOperation.scrollUp.rawValue: "Scroll up one screen.",
+            CycleOperation.done.rawValue: "Every part of the goal is visibly satisfied.",
+            CycleOperation.blocked.rawValue: "No offered operation can make progress.",
+            CycleOperation.wait.rawValue: "Wait briefly because the needed control is still loading."
         ]
         if !clickCandidates.isEmpty {
-            operations["CLICK"] = "Click, select, or focus the control chosen in click_target."
-            heads["click_target"] = Dictionary(
+            operations[CycleOperation.click.rawValue] = "Click, select, or focus the control chosen in click_target."
+            heads[CycleOperation.click.targetHead!] = Dictionary(
                 clickCandidates.map { ($0.id, $0.detail) },
                 uniquingKeysWith: { first, _ in first }
             )
         }
         let tokens = goal.split(separator: " ").map(String.init)
         if !inputCandidates.isEmpty {
-            operations["TYPE_TEXT"] = "Enter the verbatim words selected from the goal into type_target; does not submit."
-            heads["type_target"] = Dictionary(
+            operations[CycleOperation.typeText.rawValue] = "Enter the verbatim words selected from the goal into type_target; does not submit."
+            heads[CycleOperation.typeText.targetHead!] = Dictionary(
                 inputCandidates.map { ($0.id, $0.detail) },
                 uniquingKeysWith: { first, _ in first }
             )
@@ -112,23 +136,23 @@ public enum JevControlBridge {
             heads["type_to"] = wordOptions
         }
         if !appCandidates.isEmpty {
-            operations["OPEN_APP"] = "Open or switch to the application chosen in app_target."
-            heads["app_target"] = Dictionary(
+            operations[CycleOperation.openApp.rawValue] = "Open or switch to the application chosen in app_target."
+            heads[CycleOperation.openApp.targetHead!] = Dictionary(
                 appCandidates.map { ($0.id, $0.detail) },
                 uniquingKeysWith: { first, _ in first }
             )
         }
         if !websiteCandidates.isEmpty {
-            operations["OPEN_URL"] = "Open the website chosen in url_target."
-            heads["url_target"] = Dictionary(
+            operations[CycleOperation.openURL.rawValue] = "Open the website chosen in url_target."
+            heads[CycleOperation.openURL.targetHead!] = Dictionary(
                 websiteCandidates.map { ($0.id, $0.detail) },
                 uniquingKeysWith: { first, _ in first }
             )
         }
         let elements = snapshot.elements.enumerated().map { index, element in
             var supported: [String] = []
-            if element.supportsPress || element.supportsSelection { supported.append("CLICK") }
-            if element.supportsFocus { supported.append(contentsOf: ["CLICK", "TYPE_TEXT"]) }
+            if element.supportsPress || element.supportsSelection { supported.append(CycleOperation.click.rawValue) }
+            if element.supportsFocus { supported.append(contentsOf: [CycleOperation.click.rawValue, CycleOperation.typeText.rawValue]) }
             return JevCycleElement(
                 index: index + 1,
                 role: element.role,
@@ -163,27 +187,28 @@ public enum JevControlBridge {
         guard let operation = decision.choice("operation") else { throw JevDecisionError.invalidResponse }
         let finishes = decision.noul("finishes") >= 0.8
         let fingerprint = offer.snapshot.fingerprint
-        switch operation.id {
-        case "DONE": return .done
-        case "BLOCKED": return .blocked
-        case "WAIT": return .wait
-        case "PRESS_RETURN":
+        guard let cycleOperation = CycleOperation(rawValue: operation.id) else { throw JevDecisionError.invalidResponse }
+        switch cycleOperation {
+        case .done: return .done
+        case .blocked: return .blocked
+        case .wait: return .wait
+        case .pressReturn:
             return .execute(.init(action: .key(.return, expectedFingerprint: fingerprint), confidence: operation.confidence, reason: "Jev: Press Return", planningSource: .jev), finishes: finishes)
-        case "PRESS_ESCAPE":
+        case .pressEscape:
             return .execute(.init(action: .key(.escape, expectedFingerprint: fingerprint), confidence: operation.confidence, reason: "Jev: Press Escape", planningSource: .jev), finishes: finishes)
-        case "SCROLL_DOWN", "SCROLL_UP":
-            let lines = operation.id == "SCROLL_UP" ? 6 : -6
-            return .execute(.init(action: .scroll(lines: lines, expectedFingerprint: fingerprint), confidence: operation.confidence, reason: "Jev: \(operation.id == "SCROLL_UP" ? "Scroll up" : "Scroll down")", planningSource: .jev), finishes: finishes)
-        case "CLICK":
+        case .scrollDown, .scrollUp:
+            let scrollsUp = cycleOperation == .scrollUp
+            return .execute(.init(action: .scroll(lines: scrollsUp ? 6 : -6, expectedFingerprint: fingerprint), confidence: operation.confidence, reason: "Jev: \(scrollsUp ? "Scroll up" : "Scroll down")", planningSource: .jev), finishes: finishes)
+        case .click:
             guard let target = decision.choice("click_target") else { throw JevDecisionError.invalidResponse }
             return .execute(try cycleTargetStep(id: target.id, confidence: min(operation.confidence, target.confidence), offer: offer), finishes: finishes)
-        case "OPEN_APP":
+        case .openApp:
             guard let target = decision.choice("app_target") else { throw JevDecisionError.invalidResponse }
             return .execute(try cycleTargetStep(id: target.id, confidence: min(operation.confidence, target.confidence), offer: offer), finishes: finishes)
-        case "OPEN_URL":
+        case .openURL:
             guard let target = decision.choice("url_target") else { throw JevDecisionError.invalidResponse }
             return .execute(try cycleTargetStep(id: target.id, confidence: min(operation.confidence, target.confidence), offer: offer), finishes: finishes)
-        case "TYPE_TEXT":
+        case .typeText:
             guard let target = decision.choice("type_target"), target.id.hasPrefix("focus:"),
                   let first = wordIndex(decision.choice("type_from")?.id),
                   let last = wordIndex(decision.choice("type_to")?.id) else {
@@ -207,8 +232,6 @@ public enum JevControlBridge {
                 reason: "Jev: Type into selected field",
                 planningSource: .jev
             ), finishes: finishes)
-        default:
-            throw JevDecisionError.invalidResponse
         }
     }
 
@@ -217,15 +240,9 @@ public enum JevControlBridge {
         offer: JevCycleOffer,
         limit: Int = 3
     ) -> [String] {
-        guard let operation = decision.choice("operation")?.id else { return [] }
-        let head = switch operation {
-        case "CLICK": "click_target"
-        case "TYPE_TEXT": "type_target"
-        case "OPEN_APP": "app_target"
-        case "OPEN_URL": "url_target"
-        default: ""
-        }
-        guard !head.isEmpty, let probabilities = decision.answers[head]?.probabilities else { return [] }
+        guard let operationID = decision.choice("operation")?.id,
+              let head = CycleOperation(rawValue: operationID)?.targetHead,
+              let probabilities = decision.answers[head]?.probabilities else { return [] }
         let ranked = probabilities.sorted { $0.value > $1.value }.prefix(max(1, limit))
         return ranked.enumerated().compactMap { index, entry in
             let parts = entry.key.split(separator: ":", maxSplits: 1).map(String.init)

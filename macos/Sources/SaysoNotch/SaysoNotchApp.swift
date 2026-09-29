@@ -211,6 +211,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var onboardingTestTranscriptText: String?
     @Published private(set) var audioInputDevices: [AudioInputDevice] = []
     @Published private(set) var hasBYOKKey = false
+    @Published private(set) var isCheckingControlTryNowReadiness = false
     @Published var slmStates: [String: LocalSlmState] = [:]
     @Published var slmDownloadProgress: [String: Double] = [:]
 
@@ -230,6 +231,7 @@ final class SaysoAppModel: ObservableObject {
     private let automation = SaysoAutomationServer()
     private let settingsStore = UserDefaultsSettingsStore()
     private let hotKeyEngine = HotKeyEngine()
+    private let controlFnHotKeyEngine = HotKeyEngine()
     private let shortcutManager = SaysoShortcutManager()
     private let notch: NotchPanelController
     private var controlKeyDownTime: Date?
@@ -255,6 +257,8 @@ final class SaysoAppModel: ObservableObject {
     private var controlPreparationTask: Task<Void, Never>?
     private var controlPreparationID: UUID?
     private var controlTryNowArmed = false
+    private var controlReadinessTask: Task<Void, Never>?
+    private var controlReadinessID: UUID?
     private var historyAudioTask: Task<Void, Never>?
     private var noticeDismissalTask: Task<Void, Never>?
     private var nextNoticeIsPersistent = false
@@ -291,6 +295,7 @@ final class SaysoAppModel: ObservableObject {
         controlHotKey = shortcutBindings.control
         toggleNotchHotKey = shortcutBindings.toggleNotch
         hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
+        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
         notch = NotchPanelController()
         isNotchOverlayVisible = notch.isVisible
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
@@ -307,6 +312,9 @@ final class SaysoAppModel: ObservableObject {
         }
         hotKeyEngine.register(gesture: .tripleTap) { [weak self] in
             self?.handleMonitoredHotKeyGesture(.tripleTap)
+        }
+        controlFnHotKeyEngine.register(gesture: .tripleTap) { [weak self] in
+            self?.handleControlGestureToggle()
         }
         hotKeyEngine.register(gesture: .holdStart) { [weak self] in
             guard self?.monitoredHotKey == self?.dictationHotKey else { return }
@@ -358,6 +366,7 @@ final class SaysoAppModel: ObservableObject {
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
+        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
         settingsStore.save(settings)
     }
 
@@ -403,10 +412,13 @@ final class SaysoAppModel: ObservableObject {
 
     private func refreshShortcutRegistrations() {
         hotKeyEngine.start(for: monitoredHotKey)
-        if monitoredHotKey == dictationHotKey {
-            shortcutManager.unregister(action: .dictation)
-        } else {
-            shortcutManager.register(action: .dictation, hotKey: dictationHotKey)
+        shortcutManager.unregister(action: .dictation)
+        controlFnHotKeyEngine.stop()
+        if ShortcutGestureRouter.needsSeparateControlMonitor(
+            dictation: dictationHotKey,
+            control: controlHotKey
+        ) {
+            controlFnHotKeyEngine.start(for: .fnKey)
         }
         shortcutManager.register(action: .control, hotKey: controlHotKey)
         shortcutManager.register(action: .toggleNotch, hotKey: toggleNotchHotKey)
@@ -504,14 +516,64 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startControlTryNow() {
-        guard transcriber.canStart, !isStartingDictation else { return }
-        switchMode(.control)
-        guard settings.mode == .control else { return }
-        controlStatus = "Listening. Say Open Calculator."
-        controlTryNowArmed = true
-        if !requestDictationStart(onboardingTest: false) {
-            controlTryNowArmed = false
+        guard transcriber.canStart, !isStartingDictation, controlReadinessTask == nil else { return }
+        switch ControlTryNowPolicy.readinessIssue(
+            mode: settings.mode,
+            desktopControlEnabled: settings.desktopControlEnabled,
+            accessibilityGranted: AXIsProcessTrusted()
+        ) {
+        case .chooseControl:
+            controlStatus = "Choose Control before Try now. Nothing executed."
+            return
+        case .enableDesktopControl:
+            controlStatus = "Try now needs Desktop Control enabled in Settings. Nothing executed."
+            return
+        case .accessibilityPermission:
+            controlStatus = "Try now needs Accessibility permission. Nothing executed."
+            promptAccessibilityPermission()
+            return
+        case nil:
+            break
         }
+        controlStatus = "Checking Jev credential readiness..."
+        isCheckingControlTryNowReadiness = true
+        let readinessID = UUID()
+        controlReadinessID = readinessID
+        controlReadinessTask = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                if self.controlReadinessID == readinessID {
+                    self.isCheckingControlTryNowReadiness = false
+                    self.controlReadinessTask = nil
+                    self.controlReadinessID = nil
+                }
+            }
+            guard await self.typeSafeKey() != nil else {
+                self.controlStatus = "Try now needs a TypeSafe / Jev key in Keychain or Bitwarden. Nothing executed."
+                return
+            }
+            guard !Task.isCancelled,
+                  self.controlReadinessID == readinessID,
+                  self.settings.mode == .control else { return }
+            guard self.settings.desktopControlEnabled,
+                  AXIsProcessTrusted(),
+                  self.transcriber.canStart else {
+                self.controlStatus = "Try now readiness changed. Nothing executed."
+                return
+            }
+            self.controlStatus = "Ready. Listening for Open Calculator."
+            self.controlTryNowArmed = true
+            if !self.requestDictationStart(onboardingTest: false) {
+                self.controlTryNowArmed = false
+            }
+        }
+    }
+
+    var controlTryNowReadiness: String {
+        if !settings.desktopControlEnabled { return "Enable Desktop Control before trying." }
+        if !AXIsProcessTrusted() { return "Accessibility permission required; no action will run." }
+        if hasTypeSafeKey { return "Ready: Accessibility and Jev credential configured." }
+        return "Accessibility ready; Jev credential checked securely at start."
     }
 
     var isNotchVisible: Bool { notch.isVisible }
@@ -1471,6 +1533,12 @@ final class SaysoAppModel: ObservableObject {
             notice = "Stop dictation before changing modes."
             return
         }
+        if mode != .control {
+            controlReadinessTask?.cancel()
+            controlReadinessTask = nil
+            controlReadinessID = nil
+            isCheckingControlTryNowReadiness = false
+        }
         applyMode(mode)
     }
 
@@ -1679,7 +1747,7 @@ final class SaysoAppModel: ObservableObject {
         return false
     }
 
-    func typeSafeKey() -> String? {
+    func typeSafeKey() async -> String? {
         if let key = secrets.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return key.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -1687,7 +1755,14 @@ final class SaysoAppModel: ObservableObject {
         if let key = jevStore.secret(named: "typesafe-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return key.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return nil
+        return await bitwardenTypeSafeKey()
+    }
+
+    private func bitwardenTypeSafeKey(excluding rejectedKey: String? = nil) async -> String? {
+        guard let key = await BitwardenSecretsManager.typeSafeKey(), key != rejectedKey else { return nil }
+        try? secrets.store(key, named: "typesafe-api-key")
+        objectWillChange.send()
+        return key
     }
 
     @discardableResult
@@ -2326,12 +2401,23 @@ final class SaysoAppModel: ObservableObject {
             installedApplications: run.installedApplications,
             previous: run.previous
         )
-        let decision = try await JevClient.cycle(
-            state: offer.state,
-            operations: offer.operations,
-            heads: offer.heads,
-            apiKey: apiKey
-        )
+        let decision: JevDecision
+        do {
+            decision = try await JevClient.cycle(
+                state: offer.state,
+                operations: offer.operations,
+                heads: offer.heads,
+                apiKey: apiKey
+            )
+        } catch let error as JevServiceError where error.status == 401 || error.status == 403 {
+            guard let fallback = await bitwardenTypeSafeKey(excluding: apiKey) else { throw error }
+            decision = try await JevClient.cycle(
+                state: offer.state,
+                operations: offer.operations,
+                heads: offer.heads,
+                apiKey: fallback
+            )
+        }
         return (
             try JevControlBridge.planCycleStep(from: decision, offer: offer),
             JevControlBridge.cycleAlternatives(from: decision, offer: offer)
@@ -2403,7 +2489,7 @@ final class SaysoAppModel: ObservableObject {
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
                         } else {
-                            guard let jevKey = typeSafeKey() else {
+                            guard let jevKey = await typeSafeKey() else {
                                 throw SaysoError.unavailable("Configure the TypeSafe / Jev key before using Control.")
                             }
                             let planned = try await planWithJevCycle(snapshot: snapshot, run: run, apiKey: jevKey)
@@ -2447,7 +2533,7 @@ final class SaysoAppModel: ObservableObject {
                                 throw SaysoError.invalidAction("Try now refused an unexpected Jev action.")
                             }
                             if ControlPolicy.requiresConfirmation(step) {
-                                if run.isTryNow || ControlCycleApproval.canAutoApprove(step, goal: run.cycle.goal) {
+                                if run.isTryNow {
                                     isApprovedStep = true
                                 } else {
                                     pendingControlStep = step
@@ -2573,12 +2659,22 @@ private struct MenuContent: View {
     @ObservedObject var model: SaysoAppModel
 
     var body: some View {
+        let isControl = model.settings.mode == .control
+        let actionLabel = if model.transcriber.canStop {
+            isControl ? "Stop control" : "Stop dictation"
+        } else if !isControl, model.isContinuousDictationArmed {
+            "Stop continuous dictation"
+        } else if model.transcriber.canStart {
+            isControl ? "Start control" : "Start dictation"
+        } else {
+            isControl ? "Finishing control" : "Finishing dictation"
+        }
         VStack(alignment: .leading, spacing: 12) {
             Label("Sayso Notch", systemImage: "waveform.circle.fill")
                 .font(.headline)
             Text(model.transcriber.partialText.isEmpty ? "Ready" : model.transcriber.partialText)
                 .lineLimit(2)
-            Button(model.transcriber.canStop ? "Stop dictation" : model.isContinuousDictationArmed ? "Stop continuous dictation" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation") {
+            Button(actionLabel) {
                 model.startOrStopDictation()
             }
             .disabled(!model.transcriber.canStop && !model.transcriber.canStart && !model.isContinuousDictationArmed)

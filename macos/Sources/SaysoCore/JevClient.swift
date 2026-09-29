@@ -393,31 +393,19 @@ public enum JevClient {
         heads: [String: [String: String]],
         apiKey: String
     ) async throws -> JevDecision {
-        var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try cycleBody(state: state, operations: operations, heads: heads)
-        let (data, response) = try await session.data(for: request)
-        try Task.checkCancellation()
-        guard let response = response as? HTTPURLResponse else { throw JevDecisionError.invalidResponse }
-        guard (200 ... 299).contains(response.statusCode) else {
-            let raw = String(decoding: data.prefix(400), as: UTF8.self)
-            throw JevServiceError(
-                status: response.statusCode,
-                message: raw.replacingOccurrences(of: apiKey, with: "[redacted]")
-            )
-        }
-        return try JSONDecoder().decode(JevDecision.self, from: data)
+        try await evaluate(body: cycleBody(state: state, operations: operations, heads: heads), apiKey: apiKey)
     }
 
-
     private static func evaluate(context: JevCommandContext, candidates: [JevCandidate], apiKey: String) async throws -> JevDecision {
+        try await evaluate(body: requestBody(context: context, candidates: candidates), apiKey: apiKey)
+    }
+
+    private static func evaluate(body: Data, apiKey: String) async throws -> JevDecision {
         var request = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try requestBody(context: context, candidates: candidates)
+        request.httpBody = body
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else { throw JevDecisionError.invalidResponse }

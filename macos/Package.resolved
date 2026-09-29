@@ -1,5 +1,5 @@
 {
-  "originHash" : "34174a8e4fc30a3f5945999511df73418684f07168dd8d5e28369afcaf74fc11",
+  "originHash" : "f8bf88eecffe4adcd34e27e0fb082cd934262735b0914523abc557b98b54add3",
   "pins" : [
     {
       "identity" : "argmax-oss-swift",
@@ -24,7 +24,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/crmitchelmore/justspeaktoit.git",
       "state" : {
-        "revision" : "b320636408d81326fece26035bd91e56bc9c4590"
+        "revision" : "bd06625ff62e0f9b3ae9743312723420adc966bc"
       }
     },
     {

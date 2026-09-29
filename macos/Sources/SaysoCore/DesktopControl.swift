@@ -412,6 +412,12 @@ public enum ControlPlanningSource: String, Codable, Equatable, Sendable {
 }
 
 public enum ControlTryNowPolicy {
+    public enum ReadinessIssue: Equatable, Sendable {
+        case chooseControl
+        case enableDesktopControl
+        case accessibilityPermission
+    }
+
     public static let expectedCommand = "open calculator"
     public static let calculatorBundleIdentifier = "com.apple.calculator"
 
@@ -419,6 +425,17 @@ public enum ControlTryNowPolicy {
         transcript.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .joined(separator: " ") == expectedCommand
+    }
+
+    public static func readinessIssue(
+        mode: SaysoMode,
+        desktopControlEnabled: Bool,
+        accessibilityGranted: Bool
+    ) -> ReadinessIssue? {
+        guard mode == .control else { return .chooseControl }
+        guard desktopControlEnabled else { return .enableDesktopControl }
+        guard accessibilityGranted else { return .accessibilityPermission }
+        return nil
     }
 
     public static func candidateApplications(
@@ -599,23 +616,6 @@ public enum ControlSubmissionPolicy {
         guard let send = words.firstIndex(of: "send") else { return false }
         if send > 0, ["the", "a", "my", "your"].contains(words[send - 1]) { return false }
         return true
-    }
-}
-
-public enum ControlCycleApproval {
-    public static func canAutoApprove(_ step: ControlPlanStep, goal: String) -> Bool {
-        guard step.planningSource == .jev, step.confidence >= ControlPolicy.minimumConfidence else { return false }
-        let words = Set(goal.lowercased().split { !$0.isLetter }.map(String.init))
-        switch step.action {
-        case .key(.return, _):
-            return ControlSubmissionPolicy.authorizesSubmission(in: goal) || words.contains("search")
-        case .press, .select:
-            guard ControlSubmissionPolicy.authorizesSubmission(in: goal),
-                  let title = step.candidateTitle?.lowercased() else { return false }
-            return ["send", "post", "submit"].contains { title.split { !$0.isLetter }.contains(Substring($0)) }
-        default:
-            return false
-        }
     }
 }
 

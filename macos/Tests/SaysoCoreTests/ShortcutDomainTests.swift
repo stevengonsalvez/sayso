@@ -90,9 +90,14 @@ import SpeakHotKeys
 @Test func customDictationRetainsSingleTapAndVoiceEditGestures() {
     let custom = HotKey.custom(keyCode: 2, modifiers: [.command, .shift])
 
-    #expect(ShortcutGestureRouter.monitoredHotKey(dictation: custom, control: SaysoShortcutAction.control.defaultHotKey) == .fnKey)
+    #expect(ShortcutGestureRouter.monitoredHotKey(dictation: custom, control: SaysoShortcutAction.control.defaultHotKey) == custom)
+    #expect(ShortcutGestureRouter.needsSeparateControlMonitor(dictation: custom, control: .fnKey))
     #expect(ShortcutGestureRouter.action(for: .singleTap, monitoredHotKey: custom, dictation: custom, control: .fnKey) == .dictation)
     #expect(ShortcutGestureRouter.action(for: .doubleTap, monitoredHotKey: custom, dictation: custom, control: .fnKey) == .voiceEdit)
+}
+
+@Test func sharedFnBindingsUseOneGestureMonitor() {
+    #expect(!ShortcutGestureRouter.needsSeparateControlMonitor(dictation: .fnKey, control: .fnKey))
 }
 
 @Test func defaultShortcutsHaveNoConflicts() {
