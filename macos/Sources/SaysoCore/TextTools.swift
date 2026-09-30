@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 @preconcurrency import AVFoundation
+import SpeakCore
 
 struct TextOutputTargetIdentity: Equatable, Sendable {
     let processIdentifier: pid_t
@@ -215,7 +216,10 @@ public enum TextOutput {
         private var region: LiveTextRegion
         private var expectedSelection: TextUTF16Range
         private var isUsable = true
+        // ponytail: Same-field user edits cannot be verified until Electron exposes reliable AX text markers.
+        private var usesKeyboardStreaming = false
         public private(set) var hasWritten = false
+        public private(set) var deliveryMethod: TextDeliveryMethod = .directInsertion
 
         public init?(destination: Destination) {
             guard destination.field != nil,
@@ -243,6 +247,9 @@ public enum TextOutput {
 
         @discardableResult
         private func replace(with text: String) -> Bool {
+            if usesKeyboardStreaming {
+                return replaceKeyboardStream(with: text)
+            }
             guard isUsable,
                   let field = destination.field,
                   TextOutput.isFocused(destination),
@@ -255,14 +262,36 @@ public enum TextOutput {
                       expectedSelection: expectedSelection
                   ),
                   let expected = region.value(afterReplacingWith: text),
-                  TextOutput.setSelectedRange(region.replacementRange, in: destination),
-                  AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
+                  TextOutput.setSelectedRange(region.replacementRange, in: destination) else {
                 isUsable = false
                 return false
             }
-            guard TextOutput.value(in: destination) == expected else {
-                isUsable = false
-                return false
+
+            let setSucceeded = AXUIElementSetAttributeValue(
+                field,
+                kAXSelectedTextAttribute as CFString,
+                text as CFTypeRef
+            ) == .success
+            if setSucceeded { Thread.sleep(forTimeInterval: 0.05) }
+            let valueAfterDirectWrite = TextOutput.value(in: destination)
+            if valueAfterDirectWrite != expected {
+                guard TextInsertionVerification.shouldPasteAfterDirectWrite(
+                    setSucceeded: setSucceeded,
+                    verified: false,
+                    previous: current,
+                    current: valueAfterDirectWrite
+                ),
+                region.selection.length == 0,
+                TextOutput.isFocused(destination),
+                TextOutput.applyKeyboardStreamingEdit(
+                    KeyboardStreamingEdit.between(current: region.insertedText, target: text),
+                    to: destination
+                ) else {
+                    isUsable = false
+                    return false
+                }
+                usesKeyboardStreaming = true
+                deliveryMethod = .pidPaste
             }
             hasWritten = true
             guard let observedSelection = TextOutput.selectedRange(in: destination) else {
@@ -271,6 +300,21 @@ public enum TextOutput {
             }
             region.replace(with: text)
             expectedSelection = observedSelection
+            return true
+        }
+
+        private func replaceKeyboardStream(with text: String) -> Bool {
+            guard isUsable,
+                  TextOutput.isFocused(destination),
+                  TextOutput.applyKeyboardStreamingEdit(
+                      KeyboardStreamingEdit.between(current: region.insertedText, target: text),
+                      to: destination
+                  ) else {
+                isUsable = false
+                return false
+            }
+            region.replace(with: text)
+            hasWritten = true
             return true
         }
     }
@@ -470,6 +514,37 @@ public enum TextOutput {
         return .pasted
     }
 
+    private static func applyKeyboardStreamingEdit(
+        _ edit: KeyboardStreamingEdit,
+        to destination: Destination
+    ) -> Bool {
+        guard destination.isSafeDirectInsertionTarget else { return false }
+        guard !edit.isNoOp else { return true }
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return false }
+
+        for _ in 0..<edit.selectionCount {
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 123, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 123, keyDown: false) else { return false }
+            keyDown.flags = .maskShift
+            keyUp.flags = .maskShift
+            keyDown.postToPid(destination.processIdentifier)
+            keyUp.postToPid(destination.processIdentifier)
+        }
+        if edit.selectionCount > 0 { Thread.sleep(forTimeInterval: 0.01) }
+
+        if edit.replacement.isEmpty {
+            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true),
+                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false) else { return false }
+            keyDown.postToPid(destination.processIdentifier)
+            keyUp.postToPid(destination.processIdentifier)
+            return true
+        }
+        if case .pasted = paste(edit.replacement, into: destination, restoreClipboardAfterPaste: true) {
+            return true
+        }
+        return false
+    }
+
     private static func write(_ text: String, to pasteboard: NSPasteboard) -> Bool {
         pasteboard.clearContents()
         return pasteboard.setString(text, forType: .string)
@@ -596,6 +671,19 @@ public enum TextOutput {
         guard let value = copyAttribute(attribute, from: element),
               CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value, to: AXUIElement.self)
+    }
+}
+
+struct KeyboardStreamingEdit: Equatable {
+    let selectionCount: Int
+    let replacement: String
+
+    var isNoOp: Bool { selectionCount == 0 && replacement.isEmpty }
+
+    static func between(current: String, target: String) -> Self {
+        let diff = StreamingTextReconciler.diff(from: current, to: target)
+        let boundary = String.Index(utf16Offset: diff.replaceLocationUTF16, in: current)
+        return .init(selectionCount: current[boundary...].count, replacement: diff.replacement)
     }
 }
 

@@ -27,23 +27,23 @@ private func runAcceptance(text: String, targetBundleIdentifier: String) async -
     }
 
     let words = text.split(whereSeparator: \.isWhitespace)
-    let checkpoints = Set([max(1, words.count / 3), max(1, words.count * 2 / 3)])
-        .filter { $0 < words.count }
-        .sorted()
+    let checkpoints = stride(from: min(2, words.count), to: words.count, by: 2)
+    let stepDelay = ProcessInfo.processInfo.environment["SAYSO_ACCEPTANCE_STEP_DELAY_MS"]
+        .flatMap(Int.init) ?? 700
     let liveInsertion = TextOutput.LiveInsertion(destination: destination)
     var partials: [[String: Any]] = []
     for checkpoint in checkpoints {
         let partial = words.prefix(checkpoint).joined(separator: " ")
         let applied = liveInsertion?.update(partial) ?? false
         partials.append(["text": partial, "applied": applied])
-        try? await Task.sleep(for: .milliseconds(350))
+        try? await Task.sleep(for: .milliseconds(stepDelay))
     }
 
     let output: TextOutput.DeliveryResult
     if let liveInsertion {
         switch liveInsertion.finalize(text) {
         case .applied:
-            output = .delivered(.directInsertion)
+            output = .delivered(liveInsertion.deliveryMethod)
         case .deferred:
             output = TextOutput.insertOrCopy(text, destination: destination)
         case .failed:

@@ -1296,7 +1296,7 @@ final class SaysoAppModel: ObservableObject {
         if let liveInsertion = pendingDelivery.liveInsertion {
             switch liveInsertion.finalize(finalText) {
             case .applied:
-                output = .delivered(.directInsertion)
+                output = .delivered(liveInsertion.deliveryMethod)
             case .deferred:
                 output = pendingDelivery.settings.autoInsert
                     ? TextOutput.insertOrCopy(

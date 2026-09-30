@@ -126,3 +126,22 @@ import Testing
         expectedSelection: .init(location: 11, length: 0)
     ))
 }
+
+@Test func keyboardStreamingEditReplacesOnlyTheUnstableTail() {
+    #expect(KeyboardStreamingEdit.between(current: "hello", target: "hello world") == .init(
+        selectionCount: 0,
+        replacement: " world"
+    ))
+    #expect(KeyboardStreamingEdit.between(current: "hello word", target: "hello world") == .init(
+        selectionCount: 1,
+        replacement: "ld"
+    ))
+    #expect(KeyboardStreamingEdit.between(current: "hello world", target: "hello") == .init(
+        selectionCount: 6,
+        replacement: ""
+    ))
+    #expect(KeyboardStreamingEdit.between(current: "Hi 👨‍👩‍👧", target: "Hi 👋") == .init(
+        selectionCount: 1,
+        replacement: "👋"
+    ))
+}
