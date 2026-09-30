@@ -1575,6 +1575,10 @@ final class SaysoAppModel: ObservableObject {
         mainWindow = window
     }
 
+    func minimizeMainWindow() {
+        (NSApplication.shared.keyWindow ?? mainWindow)?.miniaturize(nil)
+    }
+
     func openOnboardingWizard() {
         isShowingOnboardingWizard = true
         showMainWindow()
@@ -2919,6 +2923,16 @@ private struct SettingsHome: View {
                         Text("Sayso").font(.headline.weight(.bold))
                         Text("Voice workspace").font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button {
+                        model.minimizeMainWindow()
+                    } label: {
+                        Image(systemName: "minus")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Minimise Sayso")
+                    .accessibilityLabel("Minimise Sayso")
                 }
                 .padding(16)
 
