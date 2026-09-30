@@ -33,9 +33,31 @@ import Testing
     #expect(!missingBaselineFails)
 }
 
-@Test func successfulUnverifiedDirectWriteNeverFallsThroughToPaste() {
-    #expect(!TextInsertionVerification.shouldPasteAfterDirectWrite(setSucceeded: true, verified: false))
-    #expect(TextInsertionVerification.shouldPasteAfterDirectWrite(setSucceeded: false, verified: false))
+@Test func directWriteFallsBackToPasteOnlyWhenTheFieldStayedUnchanged() {
+    #expect(TextInsertionVerification.shouldPasteAfterDirectWrite(
+        setSucceeded: true,
+        verified: false,
+        previous: "",
+        current: ""
+    ))
+    #expect(!TextInsertionVerification.shouldPasteAfterDirectWrite(
+        setSucceeded: true,
+        verified: false,
+        previous: "",
+        current: "unexpected"
+    ))
+    #expect(!TextInsertionVerification.shouldPasteAfterDirectWrite(
+        setSucceeded: true,
+        verified: false,
+        previous: "",
+        current: nil
+    ))
+    #expect(TextInsertionVerification.shouldPasteAfterDirectWrite(
+        setSucceeded: false,
+        verified: false,
+        previous: "",
+        current: nil
+    ))
 }
 
 @Test func liveTextRegionReplacesOnlyItsOriginalSelection() throws {

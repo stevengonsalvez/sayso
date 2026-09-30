@@ -420,9 +420,10 @@ import Testing
     #expect(!captured.allowsDelivery(to: reusedProcess, isFrontmost: true, capturedFieldOwnsFocus: nil))
     #expect(!missingBundle.allowsDelivery(to: missingBundle, isFrontmost: true, capturedFieldOwnsFocus: nil))
     #expect(!missingLaunchDate.allowsDelivery(to: missingLaunchDate, isFrontmost: true, capturedFieldOwnsFocus: nil))
-    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
-    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: nil))
-    #expect(!captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: nil))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
+    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: false))
     #expect(
         !captured.matches(reusedProcess)
     )

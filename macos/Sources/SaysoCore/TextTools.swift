@@ -22,8 +22,9 @@ struct TextOutputTargetIdentity: Equatable, Sendable {
         isFrontmost: Bool,
         capturedFieldOwnsFocus: Bool?
     ) -> Bool {
-        // nil means the captured app exposes no focused AX field, so app identity remains the safety boundary.
-        matches(current) && isFrontmost && (capturedFieldOwnsFocus ?? true)
+        guard matches(current) else { return false }
+        // PID-directed paste can use the current field in the captured app, or an unchanged background field.
+        return isFrontmost || capturedFieldOwnsFocus != false
     }
 }
 
@@ -67,8 +68,13 @@ enum TextInsertionVerification {
         return current == expected
     }
 
-    static func shouldPasteAfterDirectWrite(setSucceeded: Bool, verified: Bool) -> Bool {
-        !setSucceeded && !verified
+    static func shouldPasteAfterDirectWrite(
+        setSucceeded: Bool,
+        verified: Bool,
+        previous: String,
+        current: String?
+    ) -> Bool {
+        !verified && (!setSucceeded || current == previous)
     }
 }
 
@@ -254,11 +260,11 @@ public enum TextOutput {
                 isUsable = false
                 return false
             }
-            hasWritten = true
             guard TextOutput.value(in: destination) == expected else {
                 isUsable = false
                 return false
             }
+            hasWritten = true
             guard let observedSelection = TextOutput.selectedRange(in: destination) else {
                 isUsable = false
                 return false
@@ -329,8 +335,8 @@ public enum TextOutput {
         restoreClipboardAfterPaste: Bool = true
     ) -> DeliveryResult {
         if let destination, destination.isSafeDeliveryTarget {
-            if let field = destination.field,
-               !isProtected(field),
+            if destination.isSafeDirectInsertionTarget,
+               let field = destination.field,
                let previousValue = currentValue(in: destination),
                let selection = selectedRange(in: destination) {
                 let setSucceeded = AXUIElementSetAttributeValue(
@@ -338,16 +344,19 @@ public enum TextOutput {
                     kAXSelectedTextAttribute as CFString,
                     text as CFTypeRef
                 ) == .success
+                let current = currentValue(in: destination)
                 let verified = TextInsertionVerification.matchesExpected(
                     previous: previousValue,
                     selection: selection,
                     inserted: text,
-                    current: currentValue(in: destination)
+                    current: current
                 )
                 if verified { return .delivered(.directInsertion) }
                 if !TextInsertionVerification.shouldPasteAfterDirectWrite(
                     setSucceeded: setSucceeded,
-                    verified: verified
+                    verified: verified,
+                    previous: previousValue,
+                    current: current
                 ) {
                     return clipboardFallback(for: text)
                 }
@@ -365,15 +374,18 @@ public enum TextOutput {
     }
 
     public static func currentValue(in destination: Destination) -> String? {
-        guard destination.isSafeDeliveryTarget,
+        guard destination.isSafeDirectInsertionTarget,
               let field = destination.field,
               !isProtected(field) else { return nil }
         return copyAttribute(kAXValueAttribute as CFString, from: field) as? String
     }
 
     public static func isFocused(_ destination: Destination) -> Bool {
-        guard destination.isSafeDeliveryTarget else { return false }
-        return destination.field.map { !isProtected($0) } ?? true
+        destination.isSafeDirectInsertionTarget
+    }
+
+    public static func canPaste(into destination: Destination) -> Bool {
+        destination.isSafeDeliveryTarget
     }
 
     private static func value(in destination: Destination) -> String? {
@@ -853,6 +865,18 @@ public enum SelectedTextEdit {
 
 @MainActor
 private extension TextOutput.Destination {
+    var isSafeDirectInsertionTarget: Bool {
+        guard let field,
+              let currentIdentity = TextOutput.runningApplicationIdentity(processIdentifier: processIdentifier),
+              applicationIdentity.matches(currentIdentity) else { return false }
+        var fieldProcessIdentifier: pid_t = 0
+        guard AXUIElementGetPid(field, &fieldProcessIdentifier) == .success,
+              fieldProcessIdentifier == processIdentifier,
+              let focusedField = TextOutput.focusedElementLookup(processIdentifier: processIdentifier).element,
+              !TextOutput.isProtected(focusedField) else { return false }
+        return CFEqual(field, focusedField)
+    }
+
     var isSafeDeliveryTarget: Bool {
         guard let currentIdentity = TextOutput.runningApplicationIdentity(processIdentifier: processIdentifier) else {
             return false
@@ -860,13 +884,19 @@ private extension TextOutput.Destination {
         let capturedFieldOwnsFocus: Bool?
         if let field {
             var fieldProcessIdentifier: pid_t = 0
-            AXUIElementGetPid(field, &fieldProcessIdentifier)
-            guard fieldProcessIdentifier == processIdentifier,
-                  let focusedField = TextOutput.focusedElementLookup(processIdentifier: processIdentifier).element,
-                  !TextOutput.isProtected(focusedField) else {
-                return false
+            guard AXUIElementGetPid(field, &fieldProcessIdentifier) == .success,
+                  fieldProcessIdentifier == processIdentifier else { return false }
+            let focused = TextOutput.focusedElementLookup(processIdentifier: processIdentifier)
+            if let focusedField = focused.element {
+                var focusedProcessIdentifier: pid_t = 0
+                guard AXUIElementGetPid(focusedField, &focusedProcessIdentifier) == .success,
+                      focusedProcessIdentifier == processIdentifier,
+                      !TextOutput.isProtected(focusedField) else { return false }
+                capturedFieldOwnsFocus = CFEqual(field, focusedField)
+            } else {
+                guard focused.allowsAppFallback else { return false }
+                capturedFieldOwnsFocus = nil
             }
-            capturedFieldOwnsFocus = CFEqual(field, focusedField)
         } else {
             let focused = TextOutput.focusedElementLookup(processIdentifier: processIdentifier)
             if let currentField = focused.element {
