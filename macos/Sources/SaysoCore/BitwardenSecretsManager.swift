@@ -1,6 +1,9 @@
 import Foundation
 
 public enum BitwardenSecretsManager {
+    static let accessTokenURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".secrets/bws-access-token", isDirectory: false)
+
     private struct Secret: Decodable {
         let key: String
         let value: String
@@ -19,16 +22,27 @@ public enum BitwardenSecretsManager {
             .nilIfEmpty
     }
 
+    static func accessToken(from data: Data) -> String? {
+        String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
     private static func loadTypeSafeKey() -> String? {
         let executablePaths = ["/opt/homebrew/bin/bws", "/usr/local/bin/bws"]
         guard let executable = executablePaths.first(where: FileManager.default.isExecutableFile(atPath:)) else {
             return nil
         }
+        guard let tokenData = try? Data(contentsOf: accessTokenURL),
+              let accessToken = accessToken(from: tokenData) else { return nil }
 
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["secret", "list", "--output", "json"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["BWS_ACCESS_TOKEN"] = accessToken
+        process.environment = environment
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {

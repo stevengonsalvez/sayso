@@ -903,6 +903,12 @@ private func openOutcome(
     #expect(BitwardenSecretsManager.typeSafeKey(from: Data(#"[{"key":"OTHER_KEY","value":"ignore"}]"#.utf8)) == nil)
 }
 
+@Test func bitwardenFallbackReadsTrimmedAccessTokenFromRequiredFileData() {
+    #expect(BitwardenSecretsManager.accessToken(from: Data("  token-value\n".utf8)) == "token-value")
+    #expect(BitwardenSecretsManager.accessToken(from: Data(" \n".utf8)) == nil)
+    #expect(BitwardenSecretsManager.accessTokenURL.path.hasSuffix("/.secrets/bws-access-token"))
+}
+
 @Test func submissionActionsKeepExistingConfirmationPolicy() {
     let fingerprint = "screen"
     let returnStep = ControlPlanStep(

@@ -1760,8 +1760,6 @@ final class SaysoAppModel: ObservableObject {
 
     private func bitwardenTypeSafeKey(excluding rejectedKey: String? = nil) async -> String? {
         guard let key = await BitwardenSecretsManager.typeSafeKey(), key != rejectedKey else { return nil }
-        try? secrets.store(key, named: "typesafe-api-key")
-        objectWillChange.send()
         return key
     }
 
