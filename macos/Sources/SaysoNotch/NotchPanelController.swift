@@ -228,6 +228,26 @@ private struct NotchHUD: View {
     }
 }
 
+private extension SaysoAppModel {
+    var activeShortcutAction: SaysoShortcutAction {
+        settings.mode == .dictation ? .dictation : .control
+    }
+
+    var activeShortcutHint: String {
+        ShortcutHint.compact(
+            for: activeShortcutAction,
+            hotKey: settings.mode == .dictation ? dictationHotKey : controlHotKey
+        )
+    }
+
+    var activeShortcutAccessibilityHint: String {
+        ShortcutHint.accessibility(
+            for: activeShortcutAction,
+            hotKey: settings.mode == .dictation ? dictationHotKey : controlHotKey
+        )
+    }
+}
+
 /// Floating presentation of the same contextual voice workspace as the docked notch.
 private struct FloatingHUD: View {
     @ObservedObject var model: SaysoAppModel
@@ -249,7 +269,7 @@ private struct FloatingHUD: View {
                     Text(model.settings.mode == .dictation ? "Dictation" : "Control")
                         .font(.caption.weight(.semibold))
                     Spacer(minLength: 4)
-                    Text(model.settings.mode == .dictation ? "Double Fn" : "Triple Fn")
+                    Text(model.activeShortcutHint)
                         .font(.caption2.monospaced())
                         .foregroundStyle(SaysoPalette.muted)
                     if model.transcriber.phase == .listening {
@@ -267,6 +287,7 @@ private struct FloatingHUD: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open Sayso \(model.settings.mode == .dictation ? "Dictation" : "Control") workspace")
+            .accessibilityHint(model.activeShortcutAccessibilityHint)
         } else {
             ZStack {
                 Button(action: toggle) {
@@ -398,12 +419,12 @@ private struct VoiceWorkspaceContent: View {
             .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
 
             Button(action: collapse) {
-                Text(model.settings.mode == .dictation ? "Double Fn · Dictation" : "Triple Fn · Control")
+                Text("\(model.activeShortcutHint) · \(model.settings.mode == .dictation ? "Dictation" : "Control")")
                     .font(.caption.monospaced())
                     .foregroundStyle(SaysoPalette.muted)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(model.settings.mode == .dictation ? "Double tap Fn for Dictation, collapse workspace" : "Triple tap Fn for Control, collapse workspace")
+            .accessibilityLabel("\(model.activeShortcutAccessibilityHint) for \(model.settings.mode == .dictation ? "Dictation" : "Control"), collapse workspace")
         }
     }
 }
@@ -428,7 +449,7 @@ private struct DockedNotchHUD: View {
                         .foregroundStyle(model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amber)
                     Text(model.settings.mode == .dictation ? "Dictation" : "Control")
                     Spacer(minLength: 4)
-                    Text(model.settings.mode == .dictation ? "Double Fn" : "Triple Fn")
+                    Text(model.activeShortcutHint)
                         .font(.caption2.monospaced())
                         .foregroundStyle(SaysoPalette.muted)
                     if model.transcriber.phase == .listening { Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7) }
@@ -443,6 +464,7 @@ private struct DockedNotchHUD: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Open Sayso \(model.settings.mode == .dictation ? "Dictation" : "Control") workspace")
+            .accessibilityHint(model.activeShortcutAccessibilityHint)
         } else {
             ZStack {
                 Button(action: toggle) {

@@ -26,6 +26,21 @@ import SpeakHotKeys
     #expect(notch.defaultHotKey == .custom(keyCode: 45, modifiers: [.control, .option]))
 }
 
+@Test func shortcutHintsFollowCurrentBindings() {
+    #expect(ShortcutHint.compact(for: .dictation, hotKey: .fnKey) == "Double Fn")
+    #expect(ShortcutHint.compact(for: .control, hotKey: .fnKey) == "Triple Fn")
+
+    let custom = HotKey.custom(keyCode: 2, modifiers: [.command, .shift])
+    #expect(ShortcutHint.compact(for: .dictation, hotKey: custom) == custom.displayString)
+    #expect(ShortcutHint.accessibility(for: .dictation, hotKey: custom).contains(custom.displayString))
+    #expect(ShortcutHint.explanation(for: .control, hotKey: custom).contains(custom.displayString))
+}
+
+@Test func fnShortcutsRetainCustomFallbacks() {
+    #expect(SaysoShortcutAction.dictation.customFallbackHotKey == .custom(keyCode: 49, modifiers: .option))
+    #expect(SaysoShortcutAction.control.customFallbackHotKey == .custom(keyCode: 49, modifiers: [.control, .option]))
+}
+
 @Test func historicalShortcutDefaultsMigrateToFnGestures() {
     let migrated = ShortcutDefaultsMigration.migrate(
         dictation: .custom(keyCode: 49, modifiers: .option),

@@ -39,6 +39,17 @@ public enum SaysoShortcutAction: String, CaseIterable, Identifiable, Codable, Se
         }
     }
 
+    public var customFallbackHotKey: HotKey {
+        switch self {
+        case .dictation:
+            return .custom(keyCode: 49, modifiers: .option)
+        case .control:
+            return .custom(keyCode: 49, modifiers: [.control, .option])
+        case .toggleNotch:
+            return defaultHotKey
+        }
+    }
+
     public var defaultsKey: String {
         switch self {
         case .dictation: return "sayso.dictation-hotkey"
@@ -65,6 +76,31 @@ public struct SaysoShortcutBindings: Equatable, Sendable {
         self.dictation = dictation
         self.control = control
         self.toggleNotch = toggleNotch
+    }
+}
+
+public enum ShortcutHint {
+    public static func compact(for action: SaysoShortcutAction, hotKey: HotKey) -> String {
+        guard hotKey.isFnKey else { return hotKey.displayString }
+        return action == .control ? "Triple Fn" : "Double Fn"
+    }
+
+    public static func accessibility(for action: SaysoShortcutAction, hotKey: HotKey) -> String {
+        if hotKey.isFnKey {
+            return action == .control ? "Triple tap Fn" : "Double tap Fn"
+        }
+        return "Press \(hotKey.displayString)"
+    }
+
+    public static func explanation(for action: SaysoShortcutAction, hotKey: HotKey) -> String {
+        switch action {
+        case .dictation:
+            return "\(accessibility(for: action, hotKey: hotKey)) to start or stop dictating into the focused app."
+        case .control:
+            return "\(accessibility(for: action, hotKey: hotKey)) to start or stop listening for desktop control commands."
+        case .toggleNotch:
+            return "Show, hide, or expand the Notch HUD overlay on your screen."
+        }
     }
 }
 

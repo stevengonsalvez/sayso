@@ -188,7 +188,7 @@ public struct SaysoShortcutRecorderRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(action.displayName)
                         .font(.subheadline.weight(.semibold))
-                    Text(action.explanatoryText)
+                    Text(ShortcutHint.explanation(for: action, hotKey: hotKey))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -203,7 +203,7 @@ public struct SaysoShortcutRecorderRow: View {
                                 stopRecording()
                                 hotKey = .fnKey
                             } else {
-                                hotKey = action.defaultHotKey
+                                hotKey = action.customFallbackHotKey
                             }
                         }
                     ))
