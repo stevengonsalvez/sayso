@@ -1,11 +1,41 @@
 import Testing
 @testable import SaysoCore
 
-@Test func directInsertionRequiresObservedValueChange() {
-    #expect(TextInsertionVerification.changed(previous: "", current: "hello"))
-    #expect(!TextInsertionVerification.changed(previous: "", current: ""))
-    #expect(!TextInsertionVerification.changed(previous: nil, current: "hello"))
-    #expect(!TextInsertionVerification.changed(previous: "", current: nil))
+@Test func directInsertionRequiresExactExpectedValue() {
+    let initialInsertionMatches = TextInsertionVerification.matchesExpected(
+        previous: "",
+        selection: .init(location: 0, length: 0),
+        inserted: "hello",
+        current: "hello"
+    )
+    let identicalReplacementMatches = TextInsertionVerification.matchesExpected(
+        previous: "hello",
+        selection: .init(location: 0, length: 5),
+        inserted: "hello",
+        current: "hello"
+    )
+    let missingInsertionFails = TextInsertionVerification.matchesExpected(
+        previous: "hello",
+        selection: .init(location: 5, length: 0),
+        inserted: " world",
+        current: "hello"
+    )
+    let missingBaselineFails = TextInsertionVerification.matchesExpected(
+        previous: nil,
+        selection: .init(location: 0, length: 0),
+        inserted: "hello",
+        current: "hello"
+    )
+
+    #expect(initialInsertionMatches)
+    #expect(identicalReplacementMatches)
+    #expect(!missingInsertionFails)
+    #expect(!missingBaselineFails)
+}
+
+@Test func successfulUnverifiedDirectWriteNeverFallsThroughToPaste() {
+    #expect(!TextInsertionVerification.shouldPasteAfterDirectWrite(setSucceeded: true, verified: false))
+    #expect(TextInsertionVerification.shouldPasteAfterDirectWrite(setSucceeded: false, verified: false))
 }
 
 @Test func liveTextRegionReplacesOnlyItsOriginalSelection() throws {

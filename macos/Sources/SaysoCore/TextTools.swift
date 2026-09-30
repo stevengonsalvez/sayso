@@ -29,9 +29,22 @@ enum ClipboardRestorePolicy {
 }
 
 enum TextInsertionVerification {
-    static func changed(previous: String?, current: String?) -> Bool {
-        guard let previous, let current else { return false }
-        return previous != current
+    static func matchesExpected(
+        previous: String?,
+        selection: TextUTF16Range?,
+        inserted: String,
+        current: String?
+    ) -> Bool {
+        guard let previous,
+              let selection,
+              let current,
+              let region = LiveTextRegion(baseline: previous, selection: selection),
+              let expected = region.value(afterReplacingWith: inserted) else { return false }
+        return current == expected
+    }
+
+    static func shouldPasteAfterDirectWrite(setSucceeded: Bool, verified: Bool) -> Bool {
+        !setSucceeded && !verified
     }
 }
 
@@ -284,11 +297,26 @@ public enum TextOutput {
         restoreClipboardAfterPaste: Bool = true
     ) -> DeliveryResult {
         if let destination, destination.isSafeDeliveryTarget, !isProtected(destination.field) {
-            let previousValue = currentValue(in: destination)
-            let setResult = AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-            if setResult == .success,
-               TextInsertionVerification.changed(previous: previousValue, current: currentValue(in: destination)) {
-                return .delivered(.directInsertion)
+            if let previousValue = currentValue(in: destination),
+               let selection = selectedRange(in: destination) {
+                let setSucceeded = AXUIElementSetAttributeValue(
+                    destination.field,
+                    kAXSelectedTextAttribute as CFString,
+                    text as CFTypeRef
+                ) == .success
+                let verified = TextInsertionVerification.matchesExpected(
+                    previous: previousValue,
+                    selection: selection,
+                    inserted: text,
+                    current: currentValue(in: destination)
+                )
+                if verified { return .delivered(.directInsertion) }
+                if !TextInsertionVerification.shouldPasteAfterDirectWrite(
+                    setSucceeded: setSucceeded,
+                    verified: verified
+                ) {
+                    return clipboardFallback(for: text)
+                }
             }
 
             switch paste(text, into: destination, restoreClipboardAfterPaste: restoreClipboardAfterPaste) {
@@ -299,32 +327,7 @@ public enum TextOutput {
             }
         }
 
-        // If direct AX destination was unavailable or protected, simulate paste to frontmost app
-        return pasteToFrontmostOrCopy(text, restoreClipboardAfterPaste: restoreClipboardAfterPaste)
-    }
-
-    private static func pasteToFrontmostOrCopy(
-        _ text: String,
-        restoreClipboardAfterPaste: Bool
-    ) -> DeliveryResult {
-        guard copy(text) else { return .pasteFailed(.clipboardUnavailable) }
-        guard let source = CGEventSource(stateID: .combinedSessionState),
-              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false) else {
-            return .delivered(.clipboard)
-        }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        if let targetPid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-           targetPid != ProcessInfo.processInfo.processIdentifier {
-            keyDown.postToPid(targetPid)
-            keyUp.postToPid(targetPid)
-            return .delivered(.pidPaste)
-        } else {
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-            return .delivered(.pidPaste)
-        }
+        return clipboardFallback(for: text)
     }
 
     public static func currentValue(in destination: Destination) -> String? {
