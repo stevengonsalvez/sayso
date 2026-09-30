@@ -8,17 +8,22 @@ struct TextOutputTargetIdentity: Equatable, Sendable {
     let launchDate: Date?
 
     func matches(_ current: TextOutputTargetIdentity) -> Bool {
-        processIdentifier == current.processIdentifier
-            && bundleIdentifier == current.bundleIdentifier
-            && launchDate == current.launchDate
+        guard let bundleIdentifier,
+              let currentBundleIdentifier = current.bundleIdentifier,
+              let launchDate,
+              let currentLaunchDate = current.launchDate else { return false }
+        return processIdentifier == current.processIdentifier
+            && bundleIdentifier == currentBundleIdentifier
+            && launchDate == currentLaunchDate
     }
 
     func allowsDelivery(
         to current: TextOutputTargetIdentity,
         isFrontmost: Bool,
-        capturedFieldOwnsFocus: Bool
+        capturedFieldOwnsFocus: Bool?
     ) -> Bool {
-        matches(current) && isFrontmost && capturedFieldOwnsFocus
+        // nil means the captured app exposes no focused AX field, so app identity remains the safety boundary.
+        matches(current) && isFrontmost && (capturedFieldOwnsFocus ?? true)
     }
 }
 
@@ -26,6 +31,25 @@ enum ClipboardRestorePolicy {
     static func ownsPasteboard(expectedChangeCount: Int, currentChangeCount: Int) -> Bool {
         expectedChangeCount == currentChangeCount
     }
+}
+
+enum AppPasteFocusPolicy {
+    static func allowsFallback(for error: AXError) -> Bool {
+        error == .noValue || error == .attributeUnsupported
+    }
+
+    static func allowsDelivery(
+        hasCurrentElement: Bool,
+        isProtected: Bool,
+        lookupAllowsFallback: Bool
+    ) -> Bool {
+        hasCurrentElement ? !isProtected : lookupAllowsFallback
+    }
+}
+
+private struct FocusedElementLookup {
+    let element: AXUIElement?
+    let allowsAppFallback: Bool
 }
 
 enum TextInsertionVerification {
@@ -156,14 +180,14 @@ public enum TextOutput {
     }
 
     public final class Destination {
-        fileprivate let field: AXUIElement
+        fileprivate let field: AXUIElement?
         fileprivate let processIdentifier: pid_t
         fileprivate let applicationIdentity: TextOutputTargetIdentity
         public let bundleIdentifier: String?
         public let recordingDestination: RecordingDestination
 
         fileprivate init(
-            field: AXUIElement,
+            field: AXUIElement?,
             processIdentifier: pid_t,
             applicationIdentity: TextOutputTargetIdentity,
             bundleIdentifier: String?,
@@ -188,7 +212,8 @@ public enum TextOutput {
         public private(set) var hasWritten = false
 
         public init?(destination: Destination) {
-            guard TextOutput.isFocused(destination),
+            guard destination.field != nil,
+                  TextOutput.isFocused(destination),
                   let value = TextOutput.value(in: destination),
                   let selection = TextOutput.selectedRange(in: destination),
                   let region = LiveTextRegion(baseline: value, selection: selection) else { return nil }
@@ -213,6 +238,7 @@ public enum TextOutput {
         @discardableResult
         private func replace(with text: String) -> Bool {
             guard isUsable,
+                  let field = destination.field,
                   TextOutput.isFocused(destination),
                   let current = TextOutput.value(in: destination),
                   let currentSelection = TextOutput.selectedRange(in: destination),
@@ -224,7 +250,7 @@ public enum TextOutput {
                   ),
                   let expected = region.value(afterReplacingWith: text),
                   TextOutput.setSelectedRange(region.replacementRange, in: destination),
-                  AXUIElementSetAttributeValue(destination.field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
+                  AXUIElementSetAttributeValue(field, kAXSelectedTextAttribute as CFString, text as CFTypeRef) == .success else {
                 isUsable = false
                 return false
             }
@@ -258,29 +284,35 @@ public enum TextOutput {
     }
 
     public static func captureDestination(targetProcessIdentifier: pid_t?) -> Destination? {
-        guard let targetProcessIdentifier else { return nil }
+        guard let targetProcessIdentifier,
+              let runningApplication = NSRunningApplication(processIdentifier: targetProcessIdentifier),
+              !runningApplication.isTerminated,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else { return nil }
         let application = AXUIElementCreateApplication(targetProcessIdentifier)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(application, kAXFocusedUIElementAttribute as CFString, &value) == .success,
-              let value else { return nil }
-        let field = unsafeDowncast(value, to: AXUIElement.self)
-        var fieldProcessIdentifier: pid_t = 0
-        AXUIElementGetPid(field, &fieldProcessIdentifier)
-        guard fieldProcessIdentifier == targetProcessIdentifier, !isProtected(field) else { return nil }
-        let role = copyAttribute(kAXRoleAttribute as CFString, from: field) as? String ?? "Unknown"
+        let focused = focusedElementLookup(processIdentifier: targetProcessIdentifier)
+        guard focused.element != nil || focused.allowsAppFallback else { return nil }
+        let field = focused.element
+        let role: String
+        if let field {
+            var fieldProcessIdentifier: pid_t = 0
+            AXUIElementGetPid(field, &fieldProcessIdentifier)
+            guard fieldProcessIdentifier == targetProcessIdentifier, !isProtected(field) else { return nil }
+            role = copyAttribute(kAXRoleAttribute as CFString, from: field) as? String ?? "Unknown"
+        } else {
+            role = "AXApplicationPasteTarget"
+        }
         let window = copyElement(kAXFocusedWindowAttribute as CFString, from: application)
         let windowTitle = window.flatMap { copyAttribute(kAXTitleAttribute as CFString, from: $0) as? String } ?? ""
-        let runningApplication = NSRunningApplication(processIdentifier: targetProcessIdentifier)
-        let name = runningApplication?.localizedName ?? "Unknown"
+        let name = runningApplication.localizedName ?? "Unknown"
         return Destination(
             field: field,
             processIdentifier: targetProcessIdentifier,
             applicationIdentity: .init(
                 processIdentifier: targetProcessIdentifier,
-                bundleIdentifier: runningApplication?.bundleIdentifier,
-                launchDate: runningApplication?.launchDate
+                bundleIdentifier: runningApplication.bundleIdentifier,
+                launchDate: runningApplication.launchDate
             ),
-            bundleIdentifier: runningApplication?.bundleIdentifier,
+            bundleIdentifier: runningApplication.bundleIdentifier,
             recordingDestination: .init(
                 processIdentifier: targetProcessIdentifier,
                 applicationName: name,
@@ -296,11 +328,13 @@ public enum TextOutput {
         destination: Destination?,
         restoreClipboardAfterPaste: Bool = true
     ) -> DeliveryResult {
-        if let destination, destination.isSafeDeliveryTarget, !isProtected(destination.field) {
-            if let previousValue = currentValue(in: destination),
+        if let destination, destination.isSafeDeliveryTarget {
+            if let field = destination.field,
+               !isProtected(field),
+               let previousValue = currentValue(in: destination),
                let selection = selectedRange(in: destination) {
                 let setSucceeded = AXUIElementSetAttributeValue(
-                    destination.field,
+                    field,
                     kAXSelectedTextAttribute as CFString,
                     text as CFTypeRef
                 ) == .success
@@ -331,20 +365,25 @@ public enum TextOutput {
     }
 
     public static func currentValue(in destination: Destination) -> String? {
-        guard destination.isSafeDeliveryTarget, !isProtected(destination.field) else { return nil }
-        return copyAttribute(kAXValueAttribute as CFString, from: destination.field) as? String
+        guard destination.isSafeDeliveryTarget,
+              let field = destination.field,
+              !isProtected(field) else { return nil }
+        return copyAttribute(kAXValueAttribute as CFString, from: field) as? String
     }
 
     public static func isFocused(_ destination: Destination) -> Bool {
-        destination.isSafeDeliveryTarget && !isProtected(destination.field)
+        guard destination.isSafeDeliveryTarget else { return false }
+        return destination.field.map { !isProtected($0) } ?? true
     }
 
     private static func value(in destination: Destination) -> String? {
-        copyAttribute(kAXValueAttribute as CFString, from: destination.field) as? String
+        guard let field = destination.field else { return nil }
+        return copyAttribute(kAXValueAttribute as CFString, from: field) as? String
     }
 
     private static func selectedRange(in destination: Destination) -> TextUTF16Range? {
-        guard let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: destination.field),
+        guard let field = destination.field,
+              let value = copyAttribute(kAXSelectedTextRangeAttribute as CFString, from: field),
               CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
         let rangeValue = unsafeDowncast(value, to: AXValue.self)
         var range = CFRange()
@@ -353,10 +392,11 @@ public enum TextOutput {
     }
 
     private static func setSelectedRange(_ range: TextUTF16Range, in destination: Destination) -> Bool {
+        guard let field = destination.field else { return false }
         var value = CFRange(location: range.location, length: range.length)
         guard let rangeValue = AXValueCreate(.cfRange, &value) else { return false }
         return AXUIElementSetAttributeValue(
-            destination.field,
+            field,
             kAXSelectedTextRangeAttribute as CFString,
             rangeValue
         ) == .success
@@ -407,6 +447,9 @@ public enum TextOutput {
         }
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
+        guard destination.isSafeDeliveryTarget else {
+            return .failed(.finalTextCopiedToClipboard)
+        }
         keyDown.postToPid(destination.processIdentifier)
         keyUp.postToPid(destination.processIdentifier)
         if let snapshot {
@@ -811,17 +854,37 @@ public enum SelectedTextEdit {
 @MainActor
 private extension TextOutput.Destination {
     var isSafeDeliveryTarget: Bool {
-        var fieldProcessIdentifier: pid_t = 0
-        AXUIElementGetPid(field, &fieldProcessIdentifier)
-        guard let currentIdentity = TextOutput.runningApplicationIdentity(processIdentifier: processIdentifier),
-              fieldProcessIdentifier == processIdentifier,
-              let focusedField = TextOutput.focusedElement(processIdentifier: processIdentifier) else {
+        guard let currentIdentity = TextOutput.runningApplicationIdentity(processIdentifier: processIdentifier) else {
             return false
+        }
+        let capturedFieldOwnsFocus: Bool?
+        if let field {
+            var fieldProcessIdentifier: pid_t = 0
+            AXUIElementGetPid(field, &fieldProcessIdentifier)
+            guard fieldProcessIdentifier == processIdentifier,
+                  let focusedField = TextOutput.focusedElementLookup(processIdentifier: processIdentifier).element,
+                  !TextOutput.isProtected(focusedField) else {
+                return false
+            }
+            capturedFieldOwnsFocus = CFEqual(field, focusedField)
+        } else {
+            let focused = TextOutput.focusedElementLookup(processIdentifier: processIdentifier)
+            if let currentField = focused.element {
+                var focusedProcessIdentifier: pid_t = 0
+                guard AXUIElementGetPid(currentField, &focusedProcessIdentifier) == .success,
+                      focusedProcessIdentifier == processIdentifier else { return false }
+            }
+            guard AppPasteFocusPolicy.allowsDelivery(
+                    hasCurrentElement: focused.element != nil,
+                    isProtected: focused.element.map(TextOutput.isProtected) ?? false,
+                    lookupAllowsFallback: focused.allowsAppFallback
+                  ) else { return false }
+            capturedFieldOwnsFocus = nil
         }
         return applicationIdentity.allowsDelivery(
             to: currentIdentity,
             isFrontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier,
-            capturedFieldOwnsFocus: CFEqual(field, focusedField)
+            capturedFieldOwnsFocus: capturedFieldOwnsFocus
         )
     }
 }
@@ -838,7 +901,20 @@ private extension TextOutput {
         )
     }
 
-    static func focusedElement(processIdentifier: pid_t) -> AXUIElement? {
-        copyElement(kAXFocusedUIElementAttribute as CFString, from: AXUIElementCreateApplication(processIdentifier))
+    static func focusedElementLookup(processIdentifier: pid_t) -> FocusedElementLookup {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            application,
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        )
+        guard error == .success else {
+            return .init(element: nil, allowsAppFallback: AppPasteFocusPolicy.allowsFallback(for: error))
+        }
+        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return .init(element: nil, allowsAppFallback: false)
+        }
+        return .init(element: unsafeDowncast(value, to: AXUIElement.self), allowsAppFallback: false)
     }
 }

@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import Testing
 @testable import SaysoCore
@@ -390,24 +391,40 @@ import Testing
     #expect(VoiceEdits.outcome("Sayso delete world", to: "Hello world.") == .applied("Hello."))
 }
 
-@Test func textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery() {
+@Test func textOutputTargetIdentityAllowsCapturedAppFallbackWithoutAXFocus() {
     let start = Date(timeIntervalSinceReferenceDate: 123)
     let captured = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: "ai.sayso.target",
         launchDate: start
     )
+    let reusedProcess = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: "ai.sayso.reused",
+        launchDate: start
+    )
+    let missingBundle = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: nil,
+        launchDate: start
+    )
+    let missingLaunchDate = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: "ai.sayso.target",
+        launchDate: nil
+    )
 
     #expect(captured.matches(captured))
     #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: true))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!captured.allowsDelivery(to: reusedProcess, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!missingBundle.allowsDelivery(to: missingBundle, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!missingLaunchDate.allowsDelivery(to: missingLaunchDate, isFrontmost: true, capturedFieldOwnsFocus: nil))
     #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
+    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: nil))
     #expect(!captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
     #expect(
-        !captured.matches(.init(
-            processIdentifier: 42,
-            bundleIdentifier: "ai.sayso.reused",
-            launchDate: start
-        ))
+        !captured.matches(reusedProcess)
     )
     #expect(
         !captured.matches(.init(
@@ -416,6 +433,18 @@ import Testing
             launchDate: start.addingTimeInterval(1)
         ))
     )
+}
+
+@Test func appPasteFallbackAllowsOnlyExplicitMissingAXFocus() {
+    #expect(AppPasteFocusPolicy.allowsFallback(for: .noValue))
+    #expect(AppPasteFocusPolicy.allowsFallback(for: .attributeUnsupported))
+    #expect(!AppPasteFocusPolicy.allowsFallback(for: .apiDisabled))
+    #expect(!AppPasteFocusPolicy.allowsFallback(for: .cannotComplete))
+
+    #expect(AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: false, isProtected: false, lookupAllowsFallback: true))
+    #expect(!AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: false, isProtected: false, lookupAllowsFallback: false))
+    #expect(AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: true, isProtected: false, lookupAllowsFallback: false))
+    #expect(!AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: true, isProtected: true, lookupAllowsFallback: false))
 }
 
 @Test func clipboardRestorePreservesUserChangesAndCoalescesOwnedPastes() {
