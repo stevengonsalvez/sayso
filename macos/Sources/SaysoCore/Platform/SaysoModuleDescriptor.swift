@@ -12,9 +12,11 @@ public enum SaysoModuleHealth: Equatable, Sendable {
 public struct SaysoModuleDescriptor: Equatable, Sendable {
     public let id: String
     public let title: String
+    public let capabilities: Set<SaysoCapability>
 
-    public init(id: String, title: String) {
+    public init(id: String, title: String, capabilities: Set<SaysoCapability> = []) {
         self.id = id
         self.title = title
+        self.capabilities = capabilities
     }
 }
