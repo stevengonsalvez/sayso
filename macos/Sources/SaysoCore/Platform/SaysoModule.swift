@@ -4,11 +4,20 @@ import Foundation
 public struct SaysoModuleContext: Sendable {
     public let moduleID: String
     private let publishActivity: @Sendable (SaysoActivity) -> Void
+    private let failure: @Sendable () -> Void
 
-    public init(moduleID: String, publish: @escaping @Sendable (SaysoActivity) -> Void) {
+    public init(
+        moduleID: String,
+        publish: @escaping @Sendable (SaysoActivity) -> Void,
+        reportFailure: @escaping @Sendable () -> Void = {}
+    ) {
         self.moduleID = moduleID
         self.publishActivity = publish
+        self.failure = reportFailure
     }
+
+    /// Three failures within five minutes quarantine this module only.
+    public func reportFailure() { failure() }
 
     public func publish(stackID: String, kind: SaysoActivityKind, title: String, expiresAfter: TimeInterval? = nil) {
         publishActivity(SaysoActivity(moduleID: moduleID, stackID: stackID, kind: kind, title: title, expiresAfter: expiresAfter))
