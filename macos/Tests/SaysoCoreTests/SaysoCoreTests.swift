@@ -740,6 +740,13 @@ import Testing
     #expect(openOutcome(beforeURL: nil, observedURL: nil) == .notObserved)
 }
 
+@Test func openNavigationIsUnknownWhenFrontmostHandlerExposesNoURL() {
+    // Browsers such as Arc expose no document URL through Accessibility. That is unknown, not a failed navigation.
+    let outcome = openOutcome(beforeURL: nil, targetWasFrontmost: true, observedURL: nil)
+    #expect(outcome == .targetAlreadyActive)
+    #expect(outcome.effect == .unknown)
+}
+
 @Test func openNavigationDoesNotClaimAlreadyOpenOrRedirectedTargets() {
     let targetURL = URL(string: "https://example.com/docs?version=1#read")!
     let redirected = URL(string: "https://www.example.com/docs?version=1#read")!
