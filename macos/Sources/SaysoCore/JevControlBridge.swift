@@ -260,8 +260,15 @@ public enum JevControlBridge {
         guard text.count >= 2, let first = text.first, let last = text.last,
               pairs.contains(where: { $0.0 == first && $0.1 == last }) else { return text }
         let inner = String(text.dropFirst().dropLast())
-        let quoteMarks = Set(pairs.flatMap { [$0.0, $0.1] }.filter { $0 != "'" })
-        return inner.contains(where: quoteMarks.contains) ? text : inner
+        let quoteMarks = Set(pairs.flatMap { [$0.0, $0.1] })
+        let chars = Array(inner)
+        let hasInnerQuote = chars.indices.contains { index in
+            guard quoteMarks.contains(chars[index]) else { return false }
+            // An apostrophe between two letters (don't, don’t) is part of a word, not a quote.
+            let isApostrophe = index > 0 && index < chars.count - 1 && chars[index - 1].isLetter && chars[index + 1].isLetter
+            return !isApostrophe
+        }
+        return hasInnerQuote ? text : inner
     }
 
     private static func wordIndex(_ identifier: String?) -> Int? {
