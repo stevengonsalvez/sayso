@@ -38,5 +38,6 @@ private func typedText(goal: String, from: Int, to: Int) throws -> String? {
     #expect(try typedText(goal: "Type \"hello world\" now", from: 1, to: 2) == "hello world")
     #expect(try typedText(goal: "Type “hello world” now", from: 1, to: 2) == "hello world")
     #expect(try typedText(goal: "Type 'hello world' now", from: 1, to: 2) == "hello world")
+    #expect(try typedText(goal: "Type ‘don’t stop’ now", from: 1, to: 2) == "don’t stop")
     #expect(try typedText(goal: "Type \"hello\" and \"world\" now", from: 1, to: 3) == "\"hello\" and \"world\"")
 }
