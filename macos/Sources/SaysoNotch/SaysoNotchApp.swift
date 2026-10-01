@@ -224,7 +224,8 @@ final class SaysoAppModel: ObservableObject {
     let audioInputDeviceController = CoreAudioInputDeviceController()
     let speech = SpeechOutput()
     private lazy var tts = TtsModule(synthesizer: speech)
-    private lazy var modules = SaysoModuleHost(modules: [tts])
+    private lazy var historyModule = HistoryModule(port: history)
+    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule])
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -1111,7 +1112,7 @@ final class SaysoAppModel: ObservableObject {
                 updated.translatedLanguage = nil
                 lastTranscript = updated
                 Task {
-                    let historyResult = await history.appendResult(updated)
+                    let historyResult = await appendToHistory(updated)
                     guard lastTranscript?.id == updated.id else { return }
                     if historyResult == .recovered {
                         notice = "Voice edit applied. Recovered unreadable history to a local backup."
@@ -1155,7 +1156,7 @@ final class SaysoAppModel: ObservableObject {
         let settingsSnapshot = settings
         let completed = await translated(transcript, settings: settingsSnapshot)
         lastTranscript = completed
-        let historyResult = await history.appendResult(completed)
+        let historyResult = await appendToHistory(completed)
         let finalText = completed.displayText
         let copied = TextOutput.copy(finalText)
         if historyResult == .recovered {
@@ -1294,7 +1295,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
         lastTranscript = transcript
-        let historyResult = await history.appendResult(transcript)
+        let historyResult = await appendToHistory(transcript)
         let finalText = transcript.displayText
         let output: TextOutput.DeliveryResult
         if let liveInsertion = pendingDelivery.liveInsertion {
@@ -2049,6 +2050,12 @@ final class SaysoAppModel: ObservableObject {
         )
     }
 
+    /// Every transcript save goes through the history module so failures surface as retryable activities.
+    private func appendToHistory(_ transcript: Transcript) async -> HistoryAppendResult {
+        modules.enable("history")
+        return await historyModule.append(transcript)
+    }
+
     private func speak(plan: SpeechPlan?) {
         guard let plan else { return }
         modules.enable("tts")
@@ -2087,7 +2094,7 @@ final class SaysoAppModel: ObservableObject {
             guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
                 throw SaysoError.unavailable("Saved audio was removed during reprocessing")
             }
-            guard await history.append(completed) else {
+            guard await appendToHistory(completed).didSave else {
                 notice = "Reprocessed transcript could not save to history."
                 transcriptProcessingNotice = nil
                 return
@@ -2163,7 +2170,7 @@ final class SaysoAppModel: ObservableObject {
                 guard FileManager.default.fileExists(atPath: importedURL.path) else {
                     throw SaysoError.unavailable("Imported audio was removed before it could be saved")
                 }
-                guard await history.append(completed) else {
+                guard await appendToHistory(completed).didSave else {
                     throw SaysoError.unavailable("History storage")
                 }
                 lastTranscript = completed
@@ -7904,7 +7911,7 @@ extension SaysoAppModel {
                 }
                 let final = await translated(transcript, settings: settings)
                 lastTranscript = final
-                await history.append(final)
+                _ = await appendToHistory(final)
                 return .success(
                     id: request.id, command: request.command,
                     result: .init(text: final.displayText, model: final.route.displayName)
