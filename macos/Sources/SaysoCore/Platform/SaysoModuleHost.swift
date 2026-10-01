@@ -6,6 +6,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var state = SaysoActivityEngine()
     public var engine: SaysoActivityEngine { locked { state } }
+    public var nextExpiry: Date? { locked { state.nextExpiry } }
     private let modules: [String: SaysoModule]
     private var runtimes: [String: SaysoModuleRuntime] = [:]
     private var failures: [String: [Date]] = [:]
@@ -15,6 +16,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
     private var permissionBlocked: Set<String> = []
     private var generations: [String: Int] = [:]
     private let events: SaysoEventBus
+    /// Fired, with the host lock held, after any change to the activity stack; keep handlers short.
+    public var onActivitiesChanged: (@Sendable () -> Void)?
     private var scopes: [String: SaysoEventScope] = [:]
 
     private static let quarantineWindow: TimeInterval = 300
@@ -69,6 +72,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
                 defer { self.lock.unlock() }
                 guard self.generations[id] == generation else { return }
                 self.state.publish($0, at: self.now())
+                self.onActivitiesChanged?()
             },
             reportFailure: { [weak self] in
                 guard let self else { return }
@@ -83,6 +87,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
                 defer { self.lock.unlock() }
                 guard self.generations[id] == generation else { return }
                 self.state.dismiss(moduleID: id, stackID: stackID)
+                self.onActivitiesChanged?()
             },
             events: scope
         )
@@ -100,6 +105,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
         scopes.removeValue(forKey: id)?.close()
         runtime.stop()
         state.dismissAll(moduleID: id)
+        onActivitiesChanged?()
     }
 
     private func recentFailures(_ id: String) -> [Date] {
@@ -136,6 +142,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         state.tick(at: now())
+        onActivitiesChanged?()
     }
     public func pin(moduleID: String, stackID: String) {
         lock.lock()
@@ -151,6 +158,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         state.dismiss(moduleID: moduleID, stackID: stackID)
+        onActivitiesChanged?()
     }
 
     /// User-initiated recovery from quarantine; the module stays disabled until enabled again.
