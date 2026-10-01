@@ -222,6 +222,8 @@ final class SaysoAppModel: ObservableObject {
     let localPunjabiModel: SherpaPunjabiModelManager
     let audioInputDeviceController = CoreAudioInputDeviceController()
     let speech = SpeechOutput()
+    private lazy var tts = TtsModule(synthesizer: speech)
+    private lazy var modules = SaysoModuleHost(modules: [tts])
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -2026,27 +2028,30 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func speak(_ text: String, language: DictationLanguage? = nil) {
-        let resolvedLanguage = language ?? settings.speechLanguage
-        speech.speak(
-            text,
-            language: resolvedLanguage,
-            voiceIdentifier: selectedVoice(for: resolvedLanguage),
-            rate: settings.speechRate
-        )
+        speak(plan: speechPlan(text, language: language))
     }
 
     func speakLatest() {
         guard let transcript = lastTranscript else { return }
         let transcriptLanguage = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
-        let language = transcriptLanguage == .automatic ? settings.speechLanguage : transcriptLanguage
-        speech.speak(transcript.displayText, language: language, voiceIdentifier: selectedVoice(for: language), rate: settings.speechRate)
+        speak(plan: speechPlan(transcript.displayText, language: transcriptLanguage))
     }
 
-    private func selectedVoice(for language: DictationLanguage) -> String? {
-        guard language != .automatic else { return nil }
-        return settings.speechVoiceIdentifier.flatMap { selected in
-            SpeechOutput.availableVoices(for: language).contains(where: { $0.id == selected }) ? selected : nil
-        }
+    private func speechPlan(_ text: String, language: DictationLanguage?) -> SpeechPlan? {
+        SpeechPlan.resolve(
+            text: text,
+            language: language,
+            settingsLanguage: settings.speechLanguage,
+            selectedVoiceID: settings.speechVoiceIdentifier,
+            rate: settings.speechRate,
+            installedVoiceIDs: { Set(SpeechOutput.availableVoices(for: $0).map(\.id)) }
+        )
+    }
+
+    private func speak(plan: SpeechPlan?) {
+        guard let plan else { return }
+        modules.enable("tts")
+        tts.speak(plan)
     }
 
     func reprocessHistory(_ entry: Transcript) async {
