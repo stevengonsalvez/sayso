@@ -13,7 +13,7 @@ private final class ScriptedRuntime: SaysoModuleRuntime, @unchecked Sendable {
     init(context: SaysoModuleContext) { self.context = context }
     func start() {}
     func stop() { stops += 1 }
-    func handle(actionID: String) { handled.append(actionID) }
+    func handle(stackID: String, actionID: String) { handled.append(actionID) }
 }
 
 private struct ScriptedModule: SaysoModule {
@@ -45,10 +45,10 @@ private func makeHost(
         stackID: "copy", kind: .completion, title: "Copied", expiresAfter: 3,
         actions: [SaysoAction(id: "undo", title: "Undo")]
     )
-    #expect(host.perform(actionID: "undo", moduleID: "m"))
+    #expect(host.perform(actionID: "undo", stackID: "copy", moduleID: "m"))
 
     clock.now += 3
-    #expect(!host.perform(actionID: "undo", moduleID: "m"))
+    #expect(!host.perform(actionID: "undo", stackID: "copy", moduleID: "m"))
     host.tick()
     #expect(host.engine.stack.isEmpty)
 }
