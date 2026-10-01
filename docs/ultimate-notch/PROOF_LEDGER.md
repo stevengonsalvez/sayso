@@ -18,6 +18,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | History operation gate | `HistoryOperationGateTests` (truth table of the four legacy busy flags) | missing type | 328 | `SaysoAppModel` busy flags replaced by the gate; app builds; no runtime check of reprocess/import/clear UI | batch 1 pending |
 | Platform event bus + module scopes | `EventBusTests`, `ModuleEventsTests` | missing bus/scope/emit API | 340 | none, in-process | none yet |
 | History module (events, retry, recovery notice) | `HistoryModuleTests` (incl. generic harness) | missing types; later test-bug fix `isFinal` | 347 | Wired: all five `SaysoAppModel` transcript save sites call `HistoryModule.append`; app builds; no runtime check. Failure activities are not rendered yet (no host UI) | batch 1 pending |
+| Shortcuts module (events, release on stop) | `ShortcutsModuleTests` (incl. generic harness) | missing types | 350 | NOT wired: no adapter over `SaysoShortcutManager` yet; app still handles hotkeys directly. Hotkey regressions are not observable in tests | none yet |
 
 ## Proof boundaries
 
