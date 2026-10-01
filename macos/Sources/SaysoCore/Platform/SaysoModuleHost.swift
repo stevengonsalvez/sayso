@@ -1,9 +1,11 @@
 import Foundation
 
 /// Owns module lifecycles and the shared activity engine.
-// ponytail: single-threaded by contract (main actor callers), no lock; add one if modules publish off-thread.
+/// Every entry point takes one recursive lock, so transitions are serialized across threads.
 public final class SaysoModuleHost: @unchecked Sendable {
-    public private(set) var engine = SaysoActivityEngine()
+    private let lock = NSRecursiveLock()
+    private var state = SaysoActivityEngine()
+    public var engine: SaysoActivityEngine { locked { state } }
     private let modules: [String: SaysoModule]
     private var runtimes: [String: SaysoModuleRuntime] = [:]
     private var failures: [String: [Date]] = [:]
@@ -33,6 +35,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
     }
 
     public func health(of id: String) -> SaysoModuleHealth {
+        lock.lock()
+        defer { lock.unlock() }
         if quarantined.contains(id) { return .quarantined }
         if permissionBlocked.contains(id) { return .permissionRequired }
         if runtimes[id] == nil { return .disabled }
@@ -40,6 +44,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
     }
 
     public func enable(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
         guard runtimes[id] == nil, !quarantined.contains(id), let module = modules[id] else { return }
         guard module.descriptor.capabilities.allSatisfy(isGranted) else {
             permissionBlocked.insert(id)
@@ -52,11 +58,17 @@ public final class SaysoModuleHost: @unchecked Sendable {
         let context = SaysoModuleContext(
             moduleID: id,
             publish: { [weak self] in
-                guard let self, self.generations[id] == generation else { return }
-                self.engine.publish($0, at: self.now())
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.generations[id] == generation else { return }
+                self.state.publish($0, at: self.now())
             },
             reportFailure: { [weak self] in
-                guard let self, self.generations[id] == generation else { return }
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.generations[id] == generation else { return }
                 self.recordFailure(id)
             }
         )
@@ -66,11 +78,13 @@ public final class SaysoModuleHost: @unchecked Sendable {
     }
 
     public func disable(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
         permissionBlocked.remove(id)
         guard let runtime = runtimes.removeValue(forKey: id) else { return }
         generations[id, default: 0] += 1
         runtime.stop()
-        engine.dismissAll(moduleID: id)
+        state.dismissAll(moduleID: id)
     }
 
     private func recentFailures(_ id: String) -> [Date] {
@@ -91,9 +105,11 @@ public final class SaysoModuleHost: @unchecked Sendable {
     /// Routes an action to its owning runtime only if a currently published activity declares it.
     @discardableResult
     public func perform(actionID: String, stackID: String, moduleID: String) -> Bool {
-        engine.tick(at: now())
+        lock.lock()
+        defer { lock.unlock() }
+        state.tick(at: now())
         guard let runtime = runtimes[moduleID],
-              engine.stack.contains(where: {
+              state.stack.contains(where: {
                   $0.moduleID == moduleID && $0.stackID == stackID && $0.actions.contains { $0.id == actionID }
               })
         else { return false }
@@ -101,23 +117,51 @@ public final class SaysoModuleHost: @unchecked Sendable {
         return true
     }
 
-    public func tick() { engine.tick(at: now()) }
-    public func pin(moduleID: String, stackID: String) { engine.pin(moduleID: moduleID, stackID: stackID) }
-    public func unpin() { engine.unpin() }
-    public func dismiss(moduleID: String, stackID: String) { engine.dismiss(moduleID: moduleID, stackID: stackID) }
+    public func tick() {
+        lock.lock()
+        defer { lock.unlock() }
+        state.tick(at: now())
+    }
+    public func pin(moduleID: String, stackID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        state.pin(moduleID: moduleID, stackID: stackID)
+    }
+    public func unpin() {
+        lock.lock()
+        defer { lock.unlock() }
+        state.unpin()
+    }
+    public func dismiss(moduleID: String, stackID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        state.dismiss(moduleID: moduleID, stackID: stackID)
+    }
 
     /// User-initiated recovery from quarantine; the module stays disabled until enabled again.
     public func clearQuarantine(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
         quarantined.remove(id)
         failures[id] = nil
     }
 
     /// Re-checks running modules after a permission change; any that lost a capability stop.
     public func capabilitiesChanged() {
+        lock.lock()
+        defer { lock.unlock() }
         for id in Array(runtimes.keys) {
             guard let capabilities = modules[id]?.descriptor.capabilities, !capabilities.allSatisfy(isGranted) else { continue }
             disable(id)
             permissionBlocked.insert(id)
         }
+    }
+}
+
+private extension SaysoModuleHost {
+    func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }
