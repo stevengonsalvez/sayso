@@ -27,4 +27,37 @@ public struct SaysoGalleryCardPresentation: Equatable, Sendable {
         animationsEnabled = scenario.accessibility != .reduceMotion
         highContrast = scenario.accessibility == .increaseContrast
     }
+
+    public enum Action: Equatable, Sendable { case grant, retry }
+
+    /// Lightest colour of the expanded-surface gradient: the worst-case background for white text.
+    public static let surfaceTop: (r: Double, g: Double, b: Double) = (0.09, 0.10, 0.12)
+    public static let surfaceBottom: (r: Double, g: Double, b: Double) = (0.03, 0.03, 0.04)
+
+    /// The pulse runs only if neither the scenario nor the system asks for reduced motion.
+    public func pulseEnabled(systemReduceMotion: Bool) -> Bool {
+        animationsEnabled && !systemReduceMotion
+    }
+
+    public func usesHighContrast(systemIncreaseContrast: Bool) -> Bool {
+        highContrast || systemIncreaseContrast
+    }
+
+    public func offersGrantAction(hasHandler: Bool) -> Bool { showsGrantPrompt && hasHandler }
+    public func offersRetryAction(hasHandler: Bool) -> Bool { showsRetry && hasHandler }
+
+    /// Alpha of white secondary text, including the dimming applied to disabled cards.
+    public func secondaryTextOpacity(highContrast: Bool) -> Double {
+        let base = highContrast ? 0.92 : 0.60
+        // Disabled cards dim text, but never below AA (4.5:1) when Increase Contrast is on.
+        let dim = isMuted ? (highContrast ? 0.65 : 0.45) : 1
+        return base * dim
+    }
+
+    public static func actionSummary(_ action: Action, scenarioID: String) -> String {
+        switch action {
+        case .grant: "Grant requested: \(scenarioID)"
+        case .retry: "Retry requested: \(scenarioID)"
+        }
+    }
 }
