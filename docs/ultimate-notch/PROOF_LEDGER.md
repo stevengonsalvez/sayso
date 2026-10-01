@@ -32,8 +32,12 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 - Known gap: gallery commits `11e7411` and `af76582` do not build alone (Package.swift precedes sources).
 - Known gap: intermediate commit `1cb32cf` leaves `ActivityEnginePinTests` failing until `3f13213`.
 
-## Carried review findings, not yet fixed
+## Carried review findings
 
-1. `macos/Sources/speak/main.swift`: mock dictation acceptance can pass without proving a partial insertion.
-2. `JevControlBridge.swift`: TYPE_TEXT selection can strip boundary punctuation.
-3. `NotchInteraction.swift`: collapse policy is not wired into the production controller.
+1. `macos/Sources/speak/main.swift`: mock dictation acceptance can pass without proving a partial insertion. OPEN.
+2. `JevControlBridge.swift` TYPE_TEXT boundary punctuation: FIXED with `JevTypeTextPunctuationTests` (RED: 3 assertion failures, then GREEN, full suite 352). Only a wrapping quote pair is dropped now.
+3. `NotchInteraction.swift` collapse policy: outside-click collapse now calls `NotchCollapsePolicy`. Status and footer buttons still call the toggle directly and the controller has no test target, so this is only partly wired and unverified at runtime. OPEN (partial).
+
+## Review tooling
+
+Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
