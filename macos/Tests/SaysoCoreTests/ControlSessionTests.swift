@@ -1,5 +1,37 @@
+import Foundation
 import Testing
 @testable import SaysoCore
+
+@Test func jevControlRunKeepsWholeGoalAndOnlyLastTenEffects() throws {
+    var run = try JevControlRunState(goal: "  Open Calculator and find 12 times three  ")
+    for index in 0..<12 {
+        run.record(action: "CLICK \(index)", result: "changed", screenChanged: true)
+    }
+
+    #expect(run.goal == "Open Calculator and find 12 times three")
+    #expect(run.recentActions.count == 10)
+    #expect(run.recentActions.first?.action == "CLICK 2")
+    #expect(run.recentActions.last?.action == "CLICK 11")
+}
+
+@Test func jevControlRunRejectsEmptyGoal() {
+    #expect(throws: SaysoError.self) { try JevControlRunState(goal: "   ") }
+}
+
+@Test func pendingClarificationOnlyAbsorbsPromptShortChoiceReplies() {
+    // Live repro 2026-09-30: "Which one: 1: Calculator, 2: Safari?" swallowed every later command.
+    let choices = ["1: Calculator", "2: Safari"]
+    let asked = Date(timeIntervalSinceReferenceDate: 1_000)
+    let soon = asked.addingTimeInterval(5)
+
+    #expect(ControlClarification.isAnswer("Safari two", to: choices, askedAt: asked, now: soon))
+    #expect(ControlClarification.isAnswer("the second one", to: choices, askedAt: asked, now: soon))
+    #expect(ControlClarification.isAnswer("Calculator.", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Open ark browser", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Open calculator and calculate 12×3", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Safari", to: choices, askedAt: asked, now: asked.addingTimeInterval(61)))
+    #expect(!ControlClarification.isAnswer("Safari", to: [], askedAt: asked, now: soon))
+}
 
 @Test func controlSessionCompletesAfterObservedWork() async {
     let session = ControlSession(limits: .init(maxActions: 3, maxConsecutiveNoEffect: 2))

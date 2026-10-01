@@ -188,14 +188,14 @@ public struct SaysoShortcutRecorderRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(action.displayName)
                         .font(.subheadline.weight(.semibold))
-                    Text(action.explanatoryText)
+                    Text(ShortcutHint.explanation(for: action, hotKey: hotKey))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer(minLength: 16)
 
-                if action == .dictation {
+                if action != .toggleNotch {
                     Toggle("Fn key", isOn: Binding(
                         get: { hotKey.isFnKey },
                         set: { useFn in
@@ -203,7 +203,7 @@ public struct SaysoShortcutRecorderRow: View {
                                 stopRecording()
                                 hotKey = .fnKey
                             } else {
-                                hotKey = action.defaultHotKey
+                                hotKey = action.customFallbackHotKey
                             }
                         }
                     ))

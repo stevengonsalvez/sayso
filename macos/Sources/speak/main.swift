@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SaysoCore
 import SpeakUpstreamBridge
@@ -12,6 +13,71 @@ enum SpeakCommand: String {
     case transcribePunjabi = "transcribe-punjabi"
     case installIndic = "install-indic"
     case installPunjabi = "install-punjabi"
+    case acceptance
+}
+
+@MainActor
+private func runAcceptance(text: String, targetBundleIdentifier: String) async -> [String: Any] {
+    guard let application = NSWorkspace.shared.frontmostApplication,
+          application.bundleIdentifier == targetBundleIdentifier,
+          let destination = TextOutput.captureDestination(
+              targetProcessIdentifier: application.processIdentifier
+          ) else {
+        return ["ok": false, "error": "Named target is not the safe focused text destination."]
+    }
+
+    let words = text.split(whereSeparator: \.isWhitespace)
+    let checkpoints = stride(from: min(2, words.count), to: words.count, by: 2)
+    let stepDelay = ProcessInfo.processInfo.environment["SAYSO_ACCEPTANCE_STEP_DELAY_MS"]
+        .flatMap(Int.init) ?? 700
+    let liveInsertion = TextOutput.LiveInsertion(destination: destination)
+    var partials: [[String: Any]] = []
+    for checkpoint in checkpoints {
+        let partial = words.prefix(checkpoint).joined(separator: " ")
+        let applied = liveInsertion?.update(partial) ?? false
+        partials.append(["text": partial, "applied": applied])
+        try? await Task.sleep(for: .milliseconds(stepDelay))
+    }
+
+    let output: TextOutput.DeliveryResult
+    if let liveInsertion {
+        switch liveInsertion.finalize(text) {
+        case .applied:
+            output = .delivered(liveInsertion.deliveryMethod)
+        case .deferred:
+            output = TextOutput.insertOrCopy(text, destination: destination)
+        case .failed:
+            output = TextOutput.copy(text)
+                ? .delivered(.clipboard)
+                : .pasteFailed(.clipboardUnavailable)
+        }
+    } else {
+        output = TextOutput.insertOrCopy(text, destination: destination)
+    }
+    try? await Task.sleep(for: .milliseconds(900))
+
+    var result: [String: Any] = [
+        "ok": true,
+        "target": destination.recordingDestination.applicationName,
+        "fieldRole": destination.recordingDestination.fieldRole,
+        "frontmost": NSWorkspace.shared.frontmostApplication?.localizedName ?? "",
+        "liveInsertionAvailable": liveInsertion != nil,
+        "liveInsertionWrote": liveInsertion?.hasWritten ?? false,
+        "partials": partials,
+        "targetCanPaste": TextOutput.canPaste(into: destination),
+    ]
+    switch output {
+    case let .delivered(method):
+        result["delivery"] = method.rawValue
+        if method == .clipboard {
+            result["ok"] = false
+            result["error"] = "Final text was copied, not inserted."
+        }
+    case let .pasteFailed(failure):
+        result["ok"] = false
+        result["error"] = failure.userMessage
+    }
+    return result
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -66,6 +132,22 @@ case .transcribePunjabi:
         fputs("Punjabi transcription failed: \(error.localizedDescription)\n", stderr)
         exit(1)
     }
+case .acceptance:
+    let acceptanceArguments = Array(arguments.dropFirst())
+    guard acceptanceArguments.count >= 3, acceptanceArguments[0] == "--target" else {
+        fputs("Usage: sayso acceptance --target <bundle-id> <text>\n", stderr)
+        exit(2)
+    }
+    let targetBundleIdentifier = acceptanceArguments[1]
+    let text = acceptanceArguments.dropFirst(2).joined(separator: " ")
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        fputs("Usage: sayso acceptance --target <bundle-id> <text>\n", stderr)
+        exit(2)
+    }
+    let result = await runAcceptance(text: text, targetBundleIdentifier: targetBundleIdentifier)
+    let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    print(String(decoding: data, as: UTF8.self))
+    if result["ok"] as? Bool != true { exit(1) }
 case .status, .history, .start, .stop, .transcribe:
     let client = UnixSocketAutomationClient(socketPath: SaysoAutomationEndpoint.socketPath)
     let request: AutomationRequest
@@ -80,7 +162,7 @@ case .status, .history, .start, .stop, .transcribe:
             exit(2)
         }
         request = .init(command: .transcribeFile, path: URL(fileURLWithPath: path).path)
-    case .installPunjabi, .installIndic, .transcribePunjabi, .transcribeLocal:
+    case .installPunjabi, .installIndic, .transcribePunjabi, .transcribeLocal, .acceptance:
         fatalError("Handled above")
     }
     do {

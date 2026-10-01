@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import Testing
 @testable import SaysoCore
@@ -46,7 +47,7 @@ import Testing
     #expect(settings.speechVoiceIdentifier == nil)
     #expect(settings.speechRate == 0.5)
     #expect(settings.dictationProfileOverrides.isEmpty)
-    #expect(!settings.livePartialInsertion)
+    #expect(settings.livePartialInsertion)
     #expect(!settings.handsFreeContinuous)
     #expect(settings.handsFreeSilenceSeconds == 1.2)
     #expect(settings.handsFreeMaximumDurationSeconds == 900)
@@ -390,24 +391,41 @@ import Testing
     #expect(VoiceEdits.outcome("Sayso delete world", to: "Hello world.") == .applied("Hello."))
 }
 
-@Test func textOutputTargetIdentityRequiresCurrentAppAndFocusedFieldForEveryDelivery() {
+@Test func textOutputTargetIdentityAllowsCapturedAppFallbackWithoutAXFocus() {
     let start = Date(timeIntervalSinceReferenceDate: 123)
     let captured = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: "ai.sayso.target",
         launchDate: start
     )
+    let reusedProcess = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: "ai.sayso.reused",
+        launchDate: start
+    )
+    let missingBundle = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: nil,
+        launchDate: start
+    )
+    let missingLaunchDate = TextOutputTargetIdentity(
+        processIdentifier: 42,
+        bundleIdentifier: "ai.sayso.target",
+        launchDate: nil
+    )
 
     #expect(captured.matches(captured))
     #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: true))
-    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
-    #expect(!captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!captured.allowsDelivery(to: reusedProcess, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!missingBundle.allowsDelivery(to: missingBundle, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(!missingLaunchDate.allowsDelivery(to: missingLaunchDate, isFrontmost: true, capturedFieldOwnsFocus: nil))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: true))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: nil))
+    #expect(captured.allowsDelivery(to: captured, isFrontmost: true, capturedFieldOwnsFocus: false))
+    #expect(!captured.allowsDelivery(to: captured, isFrontmost: false, capturedFieldOwnsFocus: false))
     #expect(
-        !captured.matches(.init(
-            processIdentifier: 42,
-            bundleIdentifier: "ai.sayso.reused",
-            launchDate: start
-        ))
+        !captured.matches(reusedProcess)
     )
     #expect(
         !captured.matches(.init(
@@ -416,6 +434,18 @@ import Testing
             launchDate: start.addingTimeInterval(1)
         ))
     )
+}
+
+@Test func appPasteFallbackAllowsOnlyExplicitMissingAXFocus() {
+    #expect(AppPasteFocusPolicy.allowsFallback(for: .noValue))
+    #expect(AppPasteFocusPolicy.allowsFallback(for: .attributeUnsupported))
+    #expect(!AppPasteFocusPolicy.allowsFallback(for: .apiDisabled))
+    #expect(!AppPasteFocusPolicy.allowsFallback(for: .cannotComplete))
+
+    #expect(AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: false, isProtected: false, lookupAllowsFallback: true))
+    #expect(!AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: false, isProtected: false, lookupAllowsFallback: false))
+    #expect(AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: true, isProtected: false, lookupAllowsFallback: false))
+    #expect(!AppPasteFocusPolicy.allowsDelivery(hasCurrentElement: true, isProtected: true, lookupAllowsFallback: false))
 }
 
 @Test func clipboardRestorePreservesUserChangesAndCoalescesOwnedPastes() {
@@ -497,6 +527,7 @@ import Testing
         action: .scroll(lines: 1, expectedFingerprint: "target"), confidence: 0.60, reason: "grounded"
     )
     #expect(ControlPolicy.canAutoRun(step))
+    #expect(step.planningSource == .deterministic)
 }
 
 @Test func controlPolicyForegroundsOnlyInteractiveTargetActions() {
@@ -556,6 +587,34 @@ import Testing
     )
 
     #expect(hidden.fingerprint == visible.fingerprint)
+}
+
+@Test func liveObservationsNeitherStalePlansNorHidePressEffects() {
+    let before = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Calculator",
+        windowTitle: "Calculator",
+        focusedRole: "AXWindow",
+        focusedValue: "",
+        isProtected: false,
+        observations: ["12×3"]
+    )
+    let after = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "Calculator",
+        windowTitle: "Calculator",
+        focusedRole: "AXWindow",
+        focusedValue: "",
+        isProtected: false,
+        observations: ["36"]
+    )
+
+    // A clock or result changing between planning and execution must not reject the plan as stale...
+    #expect(before.fingerprint == after.fingerprint)
+    // ...but it is still evidence that a pressed control had an effect.
+    let press = DesktopAction.press(elementID: "equals", expectedFingerprint: before.fingerprint)
+    #expect(ControlOutcome.effect(for: press, before: before, after: after) == .observed)
+    #expect(ControlOutcome.effect(for: press, before: before, after: before) == .unknown)
 }
 
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
@@ -721,21 +780,40 @@ private func openOutcome(
     let entry = ControlAuditEntry(
         action: .activate(bundleIdentifier: "com.apple.Safari"),
         beforeFingerprint: "before", afterFingerprint: nil,
-        effect: .notObserved, executionMethod: .pointerClick, result: "observed target active"
+        effect: .notObserved, planningSource: .jev,
+        executionMethod: .pointerClick, result: "observed target active"
     )
     let encoded = try JSONEncoder().encode(entry)
     #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).effect == .notObserved)
+    #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).planningSource == .jev)
     #expect(try JSONDecoder().decode(ControlAuditEntry.self, from: encoded).executionMethod == .pointerClick)
 
     var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
     legacy["effect"] = nil
+    legacy["planningSource"] = nil
     legacy["executionMethod"] = nil
     let decoded = try JSONDecoder().decode(
         ControlAuditEntry.self, from: JSONSerialization.data(withJSONObject: legacy)
     )
     #expect(decoded.effect == .unknown)
+    #expect(decoded.planningSource == .unknown)
     #expect(decoded.executionMethod == .unspecified)
     #expect(decoded.result == "observed target active")
+}
+
+@Test func controlPlanStepDecodesLegacyEntriesAsDeterministic() throws {
+    let step = ControlPlanStep(
+        action: .scroll(lines: 1, expectedFingerprint: "target"),
+        confidence: 0.9,
+        reason: "Exact scroll command"
+    )
+    let encoded = try JSONEncoder().encode(step)
+    var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+    legacy["planningSource"] = nil
+    let decoded = try JSONDecoder().decode(
+        ControlPlanStep.self, from: JSONSerialization.data(withJSONObject: legacy)
+    )
+    #expect(decoded.planningSource == .deterministic)
 }
 
 @Test func permissionInteractionsKeepDecidedDictationInTargetAndRefreshSettingsGrants() {
@@ -806,6 +884,130 @@ private func openOutcome(
     #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: "scroll down then ") }
     let overBudget = Array(repeating: "scroll down", count: ControlSessionLimits().maxActions + 1).joined(separator: " then ")
     #expect(throws: SaysoError.self) { try ControlPlanner.commands(from: overBudget) }
+}
+
+@Test func controlPlannerExpandsSpokenCalculatorMultiplicationIntoBoundedSteps() throws {
+    let task = try #require(ControlPlanner.calculatorTask(from: "Open Calculator and find 12 times three."))
+    #expect(task.expectedResult == "36")
+    #expect(task.resultIsVisible(in: ["‎36"]))
+    #expect(!task.resultIsVisible(in: ["12×3"]))
+    #expect(task.commands == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "Open Calculator and find 12 times three.") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "open calculator and calculate twelve times 3") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+    #expect(try ControlPlanner.commands(from: "Open calculator and find 12×3") == [
+        "open Calculator",
+        "click 1",
+        "click 2",
+        "click Multiply",
+        "click 3",
+        "click Equals",
+    ])
+}
+
+@Test func controlSubmissionRequiresExplicitSendVerb() {
+    #expect(!ControlSubmissionPolicy.authorizesSubmission(in: "Open WhatsApp and type hello to Steve"))
+    #expect(ControlSubmissionPolicy.authorizesSubmission(in: "Open WhatsApp and send hello to Steve"))
+    #expect(ControlSubmissionPolicy.authorizesSubmission(in: "Please send this to Steve"))
+    #expect(!ControlSubmissionPolicy.authorizesSubmission(in: "Open the Send folder"))
+}
+
+@Test func bitwardenFallbackSelectsOnlyNamedTypeSafeSecret() {
+    let data = Data(#"[{"key":"OTHER_KEY","value":"ignore"},{"key":"TYPESAFE_API_KEY","value":"  expected-key  "}]"#.utf8)
+    #expect(BitwardenSecretsManager.typeSafeKey(from: data) == "expected-key")
+    #expect(BitwardenSecretsManager.typeSafeKey(from: Data(#"[{"key":"OTHER_KEY","value":"ignore"}]"#.utf8)) == nil)
+}
+
+@Test func bitwardenFallbackReadsTrimmedAccessTokenFromRequiredFileData() {
+    #expect(BitwardenSecretsManager.accessToken(from: Data("  token-value\n".utf8)) == "token-value")
+    #expect(BitwardenSecretsManager.accessToken(from: Data(" \n".utf8)) == nil)
+    #expect(BitwardenSecretsManager.accessTokenURL.path.hasSuffix("/.secrets/bws-access-token"))
+}
+
+@Test func submissionActionsKeepExistingConfirmationPolicy() {
+    let fingerprint = "screen"
+    let returnStep = ControlPlanStep(
+        action: .key(.return, expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Press Return",
+        planningSource: .jev
+    )
+    let sendStep = ControlPlanStep(
+        action: .press(elementID: "send", expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Click Send",
+        planningSource: .jev,
+        candidateTitle: "Send"
+    )
+    let deleteStep = ControlPlanStep(
+        action: .press(elementID: "delete", expectedFingerprint: fingerprint),
+        confidence: 0.95,
+        reason: "Jev: Click Delete",
+        planningSource: .jev,
+        candidateTitle: "Delete"
+    )
+
+    #expect(ControlPolicy.requiresConfirmation(returnStep))
+    #expect(ControlPolicy.requiresConfirmation(sendStep))
+    #expect(ControlPolicy.requiresConfirmation(deleteStep))
+}
+
+@Test func cycleCompletionStopsAfterVerifiedDraftTyping() {
+    let action = DesktopAction.typeInto(elementID: "message", text: "hello", expectedFingerprint: "screen")
+    #expect(ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .observed,
+        goal: "Open WhatsApp and type hello in Compose message"
+    ))
+    #expect(!ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .observed,
+        goal: "Open WhatsApp and type hello then press Return"
+    ))
+    #expect(!ControlCycleCompletion.shouldComplete(
+        after: action,
+        effect: .notObserved,
+        goal: "Open WhatsApp and type hello"
+    ))
+}
+
+@Test func controlTargetHandoffFollowsOnlyExplicitNavigationActions() {
+    #expect(DesktopAction.open(url: URL(string: "https://example.com")!).mayMoveControlTarget)
+    #expect(DesktopAction.openFolder(url: URL(fileURLWithPath: "/tmp")).mayMoveControlTarget)
+    #expect(DesktopAction.activate(bundleIdentifier: "com.apple.Safari").mayMoveControlTarget)
+    #expect(!DesktopAction.press(elementID: "button", expectedFingerprint: "screen").mayMoveControlTarget)
+    #expect(!DesktopAction.type(text: "hello", expectedFingerprint: "screen").mayMoveControlTarget)
+}
+
+@Test func successfulPressWithoutVisibleSnapshotChangeHasUnknownEffect() {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42, applicationName: "Calculator", windowTitle: "Calculator",
+        focusedRole: "AXButton", focusedValue: "", isProtected: false,
+        elements: [.init(id: "three", role: "AXButton", title: "3")]
+    )
+    let action = DesktopAction.press(elementID: "three", expectedFingerprint: snapshot.fingerprint)
+
+    #expect(ControlOutcome.effect(for: action, before: snapshot, after: snapshot) == .unknown)
 }
 
 @Test func controlPlannerAllowsOnlyReviewedNavigationKeys() throws {

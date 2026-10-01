@@ -14,6 +14,35 @@ import Testing
     #expect(AXCandidateCapturePolicy.focusedValue("message", role: "AXTextField", subrole: "") == "message")
 }
 
+@Test func capturePolicyIncludesOnlySafeVisibleTextObservations() {
+    #expect(AXCandidateCapturePolicy.visibleObservation(
+        role: "AXStaticText",
+        value: "  36  ",
+        isProtected: false
+    ) == "36")
+    #expect(AXCandidateCapturePolicy.visibleObservation(
+        role: "AXUnknown",
+        value: "  12×3  ",
+        isProtected: false
+    ) == "12×3")
+    #expect(AXCandidateCapturePolicy.visibleObservation(
+        role: "AXUnknown",
+        value: "editable",
+        isProtected: false,
+        isValueSettable: true
+    ) == nil)
+    #expect(AXCandidateCapturePolicy.visibleObservation(
+        role: "AXTextField",
+        value: "draft message",
+        isProtected: false
+    ) == nil)
+    #expect(AXCandidateCapturePolicy.visibleObservation(
+        role: "AXStaticText",
+        value: "secret",
+        isProtected: true
+    ) == nil)
+}
+
 @Test func capturePolicyRequiresSafeInteractiveLocator() {
     #expect(!AXCandidateCapturePolicy.includesCandidate(
         role: "AXButton",
@@ -57,6 +86,10 @@ import Testing
     #expect(limits.maximumCandidates == 1)
     #expect(AXCandidateCapturePolicy.childPaths(from: [2, 1], childCount: 4, remainingNodeCapacity: 2) == [[2, 1, 0], [2, 1, 1]])
     #expect(AXCandidateCapturePolicy.childPaths(from: [], childCount: 4, remainingNodeCapacity: 0).isEmpty)
+}
+
+@Test func defaultCaptureReachesNestedApplicationControls() {
+    #expect(AXCandidateCaptureLimits().maximumDepth == 6)
 }
 
 @Test func directControlsOutrankSelectionOnlyRows() {

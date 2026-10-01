@@ -41,3 +41,17 @@ import Testing
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "focus Search", snapshot: snapshot) }
     #expect(throws: SaysoError.self) { try ControlPlanner.plan(command: "focus Address", snapshot: snapshot) }
 }
+
+@Test func acceptedFocusWithoutSnapshotChangeIsAlreadySatisfied() {
+    let snapshot = DesktopSnapshot(
+        processIdentifier: 42,
+        applicationName: "WhatsApp",
+        windowTitle: "Chats",
+        focusedRole: "AXTextArea",
+        focusedValue: "",
+        isProtected: false
+    )
+    let action = DesktopAction.focus(elementID: "message", expectedFingerprint: snapshot.fingerprint)
+
+    #expect(ControlOutcome.effect(for: action, before: snapshot, after: snapshot) == .alreadySatisfied)
+}
