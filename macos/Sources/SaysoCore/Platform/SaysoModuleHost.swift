@@ -64,4 +64,14 @@ public final class SaysoModuleHost: @unchecked Sendable {
             disable(id)
         }
     }
+
+    /// Routes an action to its owning runtime only if a currently published activity declares it.
+    @discardableResult
+    public func perform(actionID: String, moduleID: String) -> Bool {
+        guard let runtime = runtimes[moduleID],
+              engine.stack.contains(where: { $0.moduleID == moduleID && $0.actions.contains { $0.id == actionID } })
+        else { return false }
+        runtime.handle(actionID: actionID)
+        return true
+    }
 }
