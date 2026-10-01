@@ -22,6 +22,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Studio router | `StudioRouterTests` | missing router/route types | 361 | not wired to any Studio UI | none yet |
 | External API v1 (listModules, publish, clear) + external module | `ExternalAPITests` (validation, no confirmations from scripts, disabled module, generic harness) | missing API types | 368 | handler only: NOT connected to the Unix socket transport; expiry ticker exists but is not attached to an app host | none yet |
 | Expiry ticker + dispatch scheduler | `ExpiryTickerTests`, `DispatchSchedulerTests` | missing types; first scheduler test run on the main queue was flaky in the full suite, moved to a private queue | 374 | not yet attached to the app host (nothing renders or ticks activities yet) | none yet |
+| Notch surface machine (hover 60ms peek, click pin, outside collapse, swipe, jump, top-edge) | `NotchSurfaceMachineTests` | missing type; first GREEN failed on float timing at exactly 60ms, fixed with epsilon | 382 | NOT wired: `NotchPanelController` still uses its own isCollapsed toggle | none yet |
 
 ## Proof boundaries
 
