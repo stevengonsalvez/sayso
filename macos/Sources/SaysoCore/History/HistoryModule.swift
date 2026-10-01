@@ -24,6 +24,12 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
         await current?.waitUntilIdle()
     }
 
+    /// Saves now and returns the outcome; `.failed` while the module is disabled or stopped.
+    public func append(_ transcript: Transcript) async -> HistoryAppendResult {
+        guard let current = lock.withLock({ runtime }) else { return .failed }
+        return await current.append(transcript)
+    }
+
     private final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
         private static let recoveredNoticeSeconds: TimeInterval = 6
 
@@ -76,6 +82,13 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
             retries.forEach(save)
         }
 
+        func append(_ transcript: Transcript) async -> HistoryAppendResult {
+            guard !lock.withLock({ stopped }) else { return .failed }
+            let result = await port.append(transcript)
+            record(transcript: transcript, result: result)
+            return result
+        }
+
         func waitUntilIdle() async {
             while true {
                 let pending = lock.withLock { Array(tasks.values) }
@@ -90,16 +103,22 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
             if stopped { lock.unlock(); return }
             let task = Task { [weak self, port] in
                 let result = await port.append(transcript)
-                self?.finish(key, transcript: transcript, result: result)
+                self?.record(transcript: transcript, result: result)
+                self?.finish(key)
             }
             tasks[key] = task
             lock.unlock()
         }
 
-        private func finish(_ key: UUID, transcript: Transcript, result: HistoryAppendResult) {
+        private func finish(_ key: UUID) {
+            lock.lock()
+            tasks[key] = nil
+            lock.unlock()
+        }
+
+        private func record(transcript: Transcript, result: HistoryAppendResult) {
             lock.lock()
             let isStopped = stopped
-            tasks[key] = nil
             if !isStopped {
                 if result == .failed { failed[transcript.id] = transcript } else { failed[transcript.id] = nil }
             }
