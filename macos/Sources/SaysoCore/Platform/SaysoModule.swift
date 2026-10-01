@@ -5,16 +5,22 @@ public struct SaysoModuleContext: Sendable {
     public let moduleID: String
     private let publishActivity: @Sendable (SaysoActivity) -> Void
     private let failure: @Sendable () -> Void
+    private let dismissStack: @Sendable (String) -> Void
 
     public init(
         moduleID: String,
         publish: @escaping @Sendable (SaysoActivity) -> Void,
-        reportFailure: @escaping @Sendable () -> Void = {}
+        reportFailure: @escaping @Sendable () -> Void = {},
+        dismiss: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         self.moduleID = moduleID
         self.publishActivity = publish
         self.failure = reportFailure
+        self.dismissStack = dismiss
     }
+
+    /// Removes this module's activity on `stackID`.
+    public func dismiss(stackID: String) { dismissStack(stackID) }
 
     /// Three failures within five minutes quarantine this module only.
     public func reportFailure() { failure() }
