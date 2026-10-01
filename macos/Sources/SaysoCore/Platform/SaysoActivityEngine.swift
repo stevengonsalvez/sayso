@@ -20,14 +20,14 @@ public struct SaysoActivityEngine: Sendable {
             .map(\.element)
     }
 
-    /// A user pin wins over automation; only a critical confirmation overrides it.
+    /// A user pin wins over automation; only a critical activity overrides it.
     public var primary: SaysoActivity? {
         let ranked = stack
         let pinnedHit = pinned.flatMap { pin in
             ranked.first { $0.moduleID == pin.moduleID && $0.stackID == pin.stackID }
         }
-        if let pinnedHit, pinnedHit.kind == .confirmation { return pinnedHit }
-        if let top = ranked.first, top.kind == .confirmation { return top }
+        if let pinnedHit, pinnedHit.interruption == .critical { return pinnedHit }
+        if let critical = ranked.first(where: { $0.interruption == .critical }) { return critical }
         return pinnedHit ?? ranked.first
     }
 
