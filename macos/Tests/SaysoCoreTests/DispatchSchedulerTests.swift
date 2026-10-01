@@ -19,7 +19,7 @@ private func waitUntil(_ timeout: TimeInterval = 2, _ condition: () -> Bool) asy
 }
 
 @Test func dispatchSchedulerRunsOnceAtTheDateAndNeverWhenCancelled() async {
-    let scheduler = SaysoDispatchScheduler()
+    let scheduler = SaysoDispatchScheduler(queue: DispatchQueue(label: "test.scheduler"))
     let fired = Counter(), cancelled = Counter()
 
     _ = scheduler.schedule(at: Date().addingTimeInterval(0.05)) { fired.bump() }
@@ -34,6 +34,6 @@ private func waitUntil(_ timeout: TimeInterval = 2, _ condition: () -> Bool) asy
 
 @Test func dispatchSchedulerRunsPastDatesPromptly() async {
     let fired = Counter()
-    _ = SaysoDispatchScheduler().schedule(at: Date().addingTimeInterval(-5)) { fired.bump() }
+    _ = SaysoDispatchScheduler(queue: DispatchQueue(label: "test.scheduler")).schedule(at: Date().addingTimeInterval(-5)) { fired.bump() }
     #expect(await waitUntil { fired.count == 1 })
 }
