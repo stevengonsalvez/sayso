@@ -91,12 +91,10 @@ public enum JevControlBridge {
         }
         let inputCandidates = uniqueCandidates(clickCandidates.filter { $0.id.hasPrefix("focus:") })
         let indexedApplications = Array(installedApplications.enumerated())
-        let matchingApplications = indexedApplications.filter {
-            goal.range(of: visibleApplicationName($0.element.name), options: [.caseInsensitive, .diacriticInsensitive]) != nil
-        }
+        let matchingApplications = indexedApplications.filter { containsWord(visibleName($0.element.name), in: goal) }
         let offeredApplications = matchingApplications.isEmpty ? indexedApplications : matchingApplications
         let appCandidates = offeredApplications.prefix(maximumChoicesPerHead).map {
-            let name = visibleApplicationName($0.element.name)
+            let name = visibleName($0.element.name)
             return JevCandidate(id: "open:\($0.element.bundleIdentifier)", label: "Open \(name)", detail: "Open or activate application \(name)")
         }
         let websiteCandidates = websites(in: goal).map {
@@ -249,7 +247,7 @@ public enum JevControlBridge {
             guard parts.count == 2 else { return nil }
             if parts[0] == "open" {
                 return offer.installedApplications.first { $0.bundleIdentifier == parts[1] }.map {
-                    "\(index + 1): \(visibleApplicationName($0.name))"
+                    "\(index + 1): \(visibleName($0.name))"
                 }
             }
             if parts[0] == "url" { return URL(string: parts[1])?.host.map { "\(index + 1): \($0)" } }
@@ -262,13 +260,16 @@ public enum JevControlBridge {
         return Int(identifier.dropFirst())
     }
 
-    private static func visibleApplicationName(_ name: String) -> String {
-        visibleName(name)
-    }
-
     private static func visibleName(_ name: String) -> String {
         String(name.unicodeScalars.filter { $0.properties.generalCategory != .format })
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whole words only: a button titled "Set" must not match "settings", nor an app "Mail" match "email".
+    private static func containsWord(_ word: String, in text: String) -> Bool {
+        guard !word.isEmpty else { return false }
+        let pattern = "(?<![\\p{L}\\p{N}])\(NSRegularExpression.escapedPattern(for: word))(?![\\p{L}\\p{N}])"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive, .diacriticInsensitive]) != nil
     }
 
     private static func uniqueCandidates(_ candidates: [JevCandidate]) -> [JevCandidate] {
@@ -286,8 +287,7 @@ public enum JevControlBridge {
     ) -> Double {
         guard let element = offer.snapshot.elements.first(where: { $0.id == targetID }) else { return confidence }
         let title = visibleName(element.title)
-        guard !title.isEmpty,
-              offer.state.goal.range(of: title, options: [.caseInsensitive, .diacriticInsensitive]) != nil else {
+        guard containsWord(title, in: offer.state.goal) else {
             return confidence
         }
         let exactMatches = offer.snapshot.elements.filter {
