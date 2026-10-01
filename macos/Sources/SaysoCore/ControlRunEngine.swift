@@ -51,6 +51,7 @@ public final class ControlRunEngine<Target: Sendable> {
         var waitCount = 0
         var previous: String?
         var clarification: (choices: [String], askedAt: Date)?
+        var hasAnsweredClarification = false
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
 
@@ -119,6 +120,7 @@ public final class ControlRunEngine<Target: Sendable> {
                         recentActions: current.cycle.recentActions
                     )
                     current.clarification = nil
+                    current.hasAnsweredClarification = true
                     setStatus("Applying clarification")
                     execute(current)
                 } catch {
@@ -308,6 +310,18 @@ public final class ControlRunEngine<Target: Sendable> {
                                 finishes = completesGoal && run.calculatorTask == nil
                             }
                             setStatus("Planned: \(step.reason)")
+                            if step.confidence < ControlPolicy.minimumConfidence, run.hasAnsweredClarification, !run.isTryNow {
+                                // The user already chose. Asking again would loop, so hand them the exact action to approve.
+                                pendingStep = ControlPlanStep(
+                                    id: step.id, action: step.action, confidence: ControlPolicy.minimumConfidence,
+                                    reason: step.reason, planningSource: step.planningSource,
+                                    candidateTitle: step.candidateTitle, requiresConfirmation: true
+                                )
+                                pendingFinishes = finishes
+                                setStatus("Review required: \(step.reason)")
+                                executionTask = nil
+                                return
+                            }
                             if step.confidence < ControlPolicy.minimumConfidence {
                                 let choices = planned.alternatives
                                 guard !choices.isEmpty else {
