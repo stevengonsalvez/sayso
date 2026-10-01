@@ -66,17 +66,22 @@ private func runAcceptance(text: String, targetBundleIdentifier: String) async -
         "partials": partials,
         "targetCanPaste": TextOutput.canPaste(into: destination),
     ]
+    let delivery: AcceptanceVerdict.Delivery
     switch output {
     case let .delivered(method):
         result["delivery"] = method.rawValue
-        if method == .clipboard {
-            result["ok"] = false
-            result["error"] = "Final text was copied, not inserted."
-        }
+        delivery = method == .clipboard ? .clipboard : .inserted
     case let .pasteFailed(failure):
-        result["ok"] = false
-        result["error"] = failure.userMessage
+        delivery = .failed(failure.userMessage)
     }
+    let verdict = AcceptanceVerdict.evaluate(
+        expectedText: text,
+        partialsApplied: partials.map { ($0["applied"] as? Bool) ?? false },
+        delivery: delivery,
+        observedTargetValue: TextOutput.currentValue(in: destination)
+    )
+    result["ok"] = verdict.ok
+    if let error = verdict.error { result["error"] = error }
     return result
 }
 
