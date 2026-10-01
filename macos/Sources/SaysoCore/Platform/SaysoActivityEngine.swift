@@ -56,4 +56,8 @@ public struct SaysoActivityEngine: Sendable {
     public mutating func tick(at now: Date) {
         entries.removeAll { ($0.expiry ?? .distantFuture) <= now }
     }
+
+    public mutating func dismissAll(moduleID: String) {
+        entries.removeAll { $0.activity.moduleID == moduleID }
+    }
 }
