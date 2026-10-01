@@ -61,12 +61,14 @@ public struct DesktopSnapshot: Codable, Equatable, Sendable {
     public var fingerprint: String {
         // Capability flags bind a plan to the visible interaction method, not just its title.
         // Transient pointer visibility is rechecked immediately before an HID click.
+        // Read-only observations (clocks, timers, results) are excluded so live text cannot stale a plan;
+        // ControlOutcome compares them separately as effect evidence.
         let visibleControls = elements.map {
             [$0.id, $0.role, $0.title, $0.supportsPress.description, $0.supportsFocus.description, $0.supportsSelection.description]
                 .joined(separator: "\u{1F}")
         }
             .joined(separator: "\u{1E}")
-        return [String(processIdentifier), applicationName, windowTitle, focusedRole, focusedValue, isProtected.description, observations.joined(separator: "\u{1D}"), visibleControls]
+        return [String(processIdentifier), applicationName, windowTitle, focusedRole, focusedValue, isProtected.description, visibleControls]
             .joined(separator: "|")
     }
 }
@@ -641,6 +643,9 @@ public enum ControlOutcome {
         after: DesktopSnapshot?,
         externalEffect: ControlEffect = .unknown
     ) -> ControlEffect {
+        func changed(_ after: DesktopSnapshot) -> Bool {
+            after.fingerprint != before.fingerprint || after.observations != before.observations
+        }
         switch action {
         case .type, .typeInto:
             guard let after else { return .unknown }
@@ -648,13 +653,13 @@ public enum ControlOutcome {
         case .press:
             guard let after else { return .unknown }
             // AXPress success proves dispatch, but many controls change content outside this snapshot.
-            return after.fingerprint != before.fingerprint ? .observed : .unknown
+            return changed(after) ? .observed : .unknown
         case .focus:
             guard let after else { return .unknown }
-            return after.fingerprint != before.fingerprint ? .observed : .alreadySatisfied
+            return changed(after) ? .observed : .alreadySatisfied
         case .scroll, .clickAt:
             guard let after else { return .unknown }
-            return after.fingerprint != before.fingerprint ? .observed : .notObserved
+            return changed(after) ? .observed : .notObserved
         case .select:
             // The executor reads AXSelected after the action. Selection is intentionally absent from this fingerprint.
             return .unknown
@@ -1376,7 +1381,7 @@ public final class AXDesktopController: @unchecked Sendable {
                 throw SaysoError.unavailable(bundleIdentifier)
             }
             targetProcessIdentifier = app.processIdentifier
-            app.activate()
+            _ = await activate(app)
         case let .activateApplication(bundleIdentifier, applicationURL):
             let standardizedURL = applicationURL.standardizedFileURL.resolvingSymlinksInPath()
             guard InstalledDesktopApplication.validatesLaunchTarget(
@@ -1394,11 +1399,11 @@ public final class AXDesktopController: @unchecked Sendable {
                     )
                 }) {
                 app = running
+                _ = await activate(running)
             } else {
                 app = try await launchApplication(at: standardizedURL)
             }
             targetProcessIdentifier = app.processIdentifier
-            _ = app.activate()
         case let .quit(bundleIdentifier):
             guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first else {
                 throw SaysoError.unavailable(bundleIdentifier)
@@ -1512,13 +1517,13 @@ public final class AXDesktopController: @unchecked Sendable {
     }
 
     private func setFocusedText(_ text: String, in processIdentifier: Int32) async throws {
-        let result = await MainActor.run {
-            TextOutput.insertOrCopy(
-                text,
-                destination: TextOutput.captureDestination(targetProcessIdentifier: processIdentifier)
-            )
+        let result = await MainActor.run { () -> TextOutput.DeliveryResult? in
+            // Refuse unsafe targets before insertOrCopy, whose fallback would overwrite the clipboard.
+            guard let destination = TextOutput.captureDestination(targetProcessIdentifier: processIdentifier),
+                  TextOutput.canPaste(into: destination) else { return nil }
+            return TextOutput.insertOrCopy(text, destination: destination)
         }
-        guard case .delivered = result else {
+        guard case let .delivered(method)? = result, method != TextDeliveryMethod.clipboard else {
             throw SaysoError.invalidAction("Text field rejected insertion")
         }
     }
@@ -1531,7 +1536,7 @@ public final class AXDesktopController: @unchecked Sendable {
         guard let target = NSRunningApplication(processIdentifier: processIdentifier), !target.isTerminated else {
             throw SaysoError.staleTarget
         }
-        guard target.activate() else {
+        guard await activate(target) else {
             throw SaysoError.unavailable("Activate \(applicationName)")
         }
         let observation = try await ControlObservation.observe(
@@ -1543,6 +1548,13 @@ public final class AXDesktopController: @unchecked Sendable {
         guard observation.effectObserved else {
             throw SaysoError.unavailable("Activate \(applicationName)")
         }
+    }
+
+    /// Cooperative activation ignores `NSRunningApplication.activate()` from an inactive regular app such as Sayso.
+    /// Launch Services activation is honoured, and it reopens a window for a running app that has none.
+    private func activate(_ app: NSRunningApplication) async -> Bool {
+        guard let bundleURL = app.bundleURL else { return app.activate() }
+        return (try? await launchApplication(at: bundleURL)) != nil
     }
 
     private func launchApplication(at applicationURL: URL) async throws -> NSRunningApplication {
