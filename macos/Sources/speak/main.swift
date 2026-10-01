@@ -30,6 +30,7 @@ private func runAcceptance(text: String, targetBundleIdentifier: String) async -
     let checkpoints = stride(from: min(2, words.count), to: words.count, by: 2)
     let stepDelay = ProcessInfo.processInfo.environment["SAYSO_ACCEPTANCE_STEP_DELAY_MS"]
         .flatMap(Int.init) ?? 700
+    let valueBefore = TextOutput.currentValue(in: destination)
     let liveInsertion = TextOutput.LiveInsertion(destination: destination)
     var partials: [[String: Any]] = []
     for checkpoint in checkpoints {
@@ -78,7 +79,8 @@ private func runAcceptance(text: String, targetBundleIdentifier: String) async -
         expectedText: text,
         partialsApplied: partials.map { ($0["applied"] as? Bool) ?? false },
         delivery: delivery,
-        observedTargetValue: TextOutput.currentValue(in: destination)
+        observedTargetValue: TextOutput.currentValue(in: destination),
+        targetValueBefore: valueBefore
     )
     result["ok"] = verdict.ok
     if let error = verdict.error { result["error"] = error }
