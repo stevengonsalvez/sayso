@@ -18,7 +18,7 @@ public struct SpeechPlan: Equatable, Sendable {
         installedVoiceIDs: (DictationLanguage) -> Set<String>
     ) -> SpeechPlan? {
         guard !text.isEmpty else { return nil }
-        let resolved = (language == nil || language == .automatic) ? settingsLanguage : language!
+        let resolved = language.flatMap { $0 == .automatic ? nil : $0 } ?? settingsLanguage
         let voice = resolved == .automatic ? nil : selectedVoiceID.flatMap { installedVoiceIDs(resolved).contains($0) ? $0 : nil }
         let clamped = min(max(rate, rateRange.lowerBound), rateRange.upperBound)
         return SpeechPlan(text: text, language: resolved, voiceID: voice, rate: clamped)
