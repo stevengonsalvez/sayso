@@ -12,17 +12,36 @@ private let scenarios = SaysoGallery.scenarios(for: [
 /// ImageRenderer skips ScrollView, lazy stacks and native controls, so the real browser is
 /// drawn through a live NSHostingView instead.
 @MainActor
+private func distinctSampleCount(_ rep: NSBitmapImageRep, step: Int) -> Int {
+    var seen = Set<String>()
+    for y in stride(from: 0, to: rep.pixelsHigh, by: step) {
+        for x in stride(from: 0, to: rep.pixelsWide, by: step) { seen.insert(String(describing: rep.colorAt(x: x, y: y))) }
+    }
+    return seen.count
+}
+
+@MainActor
 private func hostedBitmap(width: Int, height: Int) throws -> NSBitmapImageRep {
     let host = NSHostingView(rootView: SaysoGalleryView(scenarios: scenarios))
     let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: width, height: height),
         styleMask: [.titled], backing: .buffered, defer: false
     )
+    window.isReleasedWhenClosed = false  // ARC owns the window; the default would over-release it on close
+    defer { window.close() }
     window.contentView = host
     host.frame = NSRect(x: 0, y: 0, width: width, height: height)
     host.layoutSubtreeIfNeeded()
-    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-    host.layoutSubtreeIfNeeded()
+    // Bounded poll: pump the run loop until the lazy grid has drawn content, at most 5s.
+    let deadline = Date().addingTimeInterval(5)
+    while Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+        host.layoutSubtreeIfNeeded()
+        if let probe = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+            host.cacheDisplay(in: host.bounds, to: probe)
+            if distinctSampleCount(probe, step: 4) > 40 { break }
+        }
+    }
     let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
     host.cacheDisplay(in: host.bounds, to: rep)
     return rep
@@ -31,11 +50,7 @@ private func hostedBitmap(width: Int, height: Int) throws -> NSBitmapImageRep {
 @MainActor
 @Test func hostedBrowserDrawsCardsNotJustChrome() throws {
     let rep = try hostedBitmap(width: 1100, height: 800)
-    var seen = Set<String>()
-    for y in stride(from: 0, to: rep.pixelsHigh, by: 4) {
-        for x in stride(from: 0, to: rep.pixelsWide, by: 4) { seen.insert(String(describing: rep.colorAt(x: x, y: y))) }
-    }
-    #expect(seen.count > 40)
+    #expect(distinctSampleCount(rep, step: 4) > 40)
     if let dir = ProcessInfo.processInfo.environment["SAYSO_GALLERY_PNG_DIR"],
        let data = rep.representation(using: .png, properties: [:]) {
         try data.write(to: URL(fileURLWithPath: dir).appendingPathComponent("browser-hosted.png"))
