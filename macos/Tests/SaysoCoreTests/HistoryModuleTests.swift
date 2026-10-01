@@ -104,7 +104,9 @@ private func makeHost(_ port: FakePort) -> (SaysoModuleHost, HistoryModule, Says
     #expect(result == .failed)
     #expect(port.appended == [t])
     #expect(sink.appended == [HistoryAppended(transcriptID: t.id, result: .failed)])
-    #expect(host.engine.stack.map(\.title) == ["History could not save"])
+    // The caller owns failures of direct appends, so no retryable activity is created.
+    #expect(host.engine.stack.isEmpty)
+    #expect(!host.perform(actionID: "retry", stackID: "save-failed", moduleID: "history"))
 }
 
 @Test func directAppendWhileUnavailableReturnsNilWithoutTouchingStorage() async {
