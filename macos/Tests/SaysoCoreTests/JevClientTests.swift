@@ -304,6 +304,55 @@ struct JevClientTests {
         #expect(step.confidence == ControlPolicy.minimumConfidence)
     }
 
+    @Test("Jev cycle narrows applications by whole words only")
+    func cycleNarrowsApplicationsByWholeWords() {
+        let snapshot = DesktopSnapshot(
+            processIdentifier: 1234, applicationName: "Finder", windowTitle: "Desktop",
+            focusedRole: "AXWindow", focusedValue: "", isProtected: false
+        )
+        let apps = ["Mail", "Notes"].map {
+            InstalledDesktopApplication(name: $0, bundleIdentifier: "com.apple.\($0)", applicationURL: URL(fileURLWithPath: "/System/Applications/\($0).app"))
+        }
+        let named = JevControlBridge.makeCycleOffer(goal: "open Notes", snapshot: snapshot, recentActions: [], installedApplications: apps)
+        let substring = JevControlBridge.makeCycleOffer(goal: "email the footnotes", snapshot: snapshot, recentActions: [], installedApplications: apps)
+
+        #expect(named.state.available.apps == ["Open Notes"])
+        #expect(substring.state.available.apps.sorted() == ["Open Mail", "Open Notes"])
+    }
+
+    @Test("Jev cycle keeps a low-confidence pick whose title is only part of a goal word")
+    func cycleKeepsLowConfidenceForSubstringTitle() throws {
+        let snapshot = DesktopSnapshot(
+            processIdentifier: 1234,
+            applicationName: "Notes",
+            windowTitle: "Notes",
+            focusedRole: "AXWindow",
+            focusedValue: "",
+            isProtected: false,
+            elements: [.init(id: "set", role: "AXButton", title: "Set", supportsPress: true)]
+        )
+        let offer = JevControlBridge.makeCycleOffer(
+            goal: "open the settings panel",
+            snapshot: snapshot,
+            recentActions: [],
+            installedApplications: []
+        )
+        let data = try JSONSerialization.data(withJSONObject: [
+            "answers": [
+                "operation": ["type": "choice", "choice": "CLICK", "confidence": 0.95],
+                "click_target": ["type": "choice", "choice": "press:set", "confidence": 0.3]
+            ]
+        ])
+        let decision = try JSONDecoder().decode(JevDecision.self, from: data)
+
+        guard case let .execute(step, _) = try JevControlBridge.planCycleStep(from: decision, offer: offer) else {
+            Issue.record("Expected executable cycle step")
+            return
+        }
+        #expect(step.confidence == 0.3)
+        #expect(!ControlPolicy.canAutoRun(step))
+    }
+
     @Test("Jev cycle offers and maps a website named in the whole goal")
     func cycleWebsiteTarget() throws {
         let snapshot = DesktopSnapshot(
