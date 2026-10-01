@@ -52,6 +52,7 @@ public final class ControlRunEngine<Target: Sendable> {
         var previous: String?
         var clarification: (choices: [String], askedAt: Date)?
         var hasAnsweredClarification = false
+        var folderStepIssued = false
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
 
@@ -205,6 +206,10 @@ public final class ControlRunEngine<Target: Sendable> {
         requestCancellation(run, status: reason ?? "Cancellation requested. Current macOS action may still finish.")
     }
 
+    private static func isExplicitFolderCommand(_ goal: String) -> Bool {
+        goal.lowercased().hasPrefix("open folder ")
+    }
+
     private static func clearButton(in snapshot: DesktopSnapshot) -> DesktopElement? {
         snapshot.elements.first { ["All Clear", "Clear"].contains($0.title) && $0.supportsPress }
     }
@@ -286,6 +291,14 @@ public final class ControlRunEngine<Target: Sendable> {
                             finishes = false
                             isApprovedStep = true
                             setStatus("Planned: verified Calculator step")
+                        } else if !run.folderStepIssued, Self.isExplicitFolderCommand(run.cycle.goal) {
+                            // An explicit path needs no model: plan it exactly, and keep the path off the network.
+                            run.folderStepIssued = true
+                            step = try ControlPlanner.plan(
+                                command: run.cycle.goal, snapshot: snapshot, installedApplications: run.installedApplications
+                            )
+                            finishes = true
+                            setStatus("Planned: \(step.reason)")
                         } else {
                             let planned = try await plan(snapshot: snapshot, run: run)
                             switch planned.plan {
