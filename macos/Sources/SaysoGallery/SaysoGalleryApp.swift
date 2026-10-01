@@ -30,7 +30,7 @@ struct SaysoGalleryApp: App {
 
     var body: some Scene {
         WindowGroup("Sayso Gallery") {
-            SaysoGalleryView(scenarios: SaysoGallery.scenarios(for: demoDescriptors))
+            SaysoGalleryRootView(scenarios: SaysoGallery.scenarios(for: demoDescriptors))
                 .frame(minWidth: 900, minHeight: 600)
         }
         .defaultSize(width: 1200, height: 800)
