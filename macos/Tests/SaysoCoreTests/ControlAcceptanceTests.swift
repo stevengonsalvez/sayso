@@ -108,6 +108,17 @@ final class ControlHarness {
 
 @MainActor
 extension ControlAcceptanceTests {
+    @Test func calculatorWaitsForControlsToAppearAfterAColdLaunch() async {
+        let harness = ControlHarness()
+        harness.installStandardApps()
+        harness.desktop.coldCapturesAfterLaunch = 2
+        harness.decisions = [ControlHarness.openApp(FakeDesktop.calculatorID)]
+
+        await harness.run("open calculator and find 12 times 3")
+
+        #expect(harness.engine.status == "Control completed: 36")
+    }
+
     private func harnessWith(_ apps: [(String, FakeDesktop.App)], limits: ControlSessionLimits = .init()) -> ControlHarness {
         let harness = ControlHarness(limits: limits)
         harness.installStandardApps()
