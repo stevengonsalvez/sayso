@@ -14,7 +14,7 @@ private final class FakePort: HistoryPort, @unchecked Sendable {
 private final class Sink: @unchecked Sendable { var appended: [HistoryAppended] = [] }
 
 private func transcript(_ text: String = "hello") -> Transcript {
-    Transcript(text: text, language: .english, route: .local)
+    Transcript(text: text, language: .english, route: .local, isFinal: true)
 }
 
 private func makeHost(_ port: FakePort) -> (SaysoModuleHost, HistoryModule, SaysoEventBus, Sink) {
