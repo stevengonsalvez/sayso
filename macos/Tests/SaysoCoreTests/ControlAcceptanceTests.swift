@@ -301,6 +301,21 @@ extension ControlHarness {
         #expect(harness.engine.status == "Control completed: 36")
     }
 
+    @Test func cancellingWithAReasonReportsThatReasonAndStopsTheRun() async {
+        let harness = harness()
+        harness.desktop.frontmost = "com.apple.TextEdit"
+        harness.decisions = [ControlHarness.choose("PRESS_RETURN")]
+
+        await harness.run("press return", from: "com.apple.TextEdit")
+        harness.engine.cancel(reason: "Desktop control disabled.")
+        await harness.engine.waitUntilIdle()
+
+        #expect(harness.engine.status == "Desktop control disabled.")
+        #expect(harness.engine.pendingStep == nil)
+        #expect(!harness.engine.isActive)
+        #expect(harness.desktop.dispatched.isEmpty)
+    }
+
     @Test func providerFailureExecutesNothing() async {
         let harness = harness()
         harness.decisions = [{ _ in throw SaysoError.unavailable("Jev unreachable") }]
