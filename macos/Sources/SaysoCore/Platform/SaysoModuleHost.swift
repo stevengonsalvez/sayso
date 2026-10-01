@@ -16,6 +16,9 @@ public final class SaysoModuleHost: @unchecked Sendable {
     private static let quarantineWindow: TimeInterval = 300
     private static let quarantineFailures = 3
 
+    public var descriptors: [SaysoModuleDescriptor] { order.map(\.descriptor) }
+    private let order: [SaysoModule]
+
     public init(
         modules: [SaysoModule],
         now: @escaping @Sendable () -> Date = { Date() },
@@ -23,14 +26,17 @@ public final class SaysoModuleHost: @unchecked Sendable {
     ) {
         self.now = now
         self.isGranted = isGranted
-        self.modules = Dictionary(uniqueKeysWithValues: modules.map { ($0.descriptor.id, $0) })
+        var seen = Set<String>()
+        let unique = modules.filter { seen.insert($0.descriptor.id).inserted }
+        self.order = unique
+        self.modules = Dictionary(uniqueKeysWithValues: unique.map { ($0.descriptor.id, $0) })
     }
 
     public func health(of id: String) -> SaysoModuleHealth {
         if quarantined.contains(id) { return .quarantined }
         if permissionBlocked.contains(id) { return .permissionRequired }
         if runtimes[id] == nil { return .disabled }
-        return failures[id, default: []].isEmpty ? .ready : .degraded
+        return recentFailures(id).isEmpty ? .ready : .degraded
     }
 
     public func enable(_ id: String) {
@@ -40,13 +46,14 @@ public final class SaysoModuleHost: @unchecked Sendable {
             return
         }
         permissionBlocked.remove(id)
+        failures[id] = nil
         let generation = generations[id, default: 0] + 1
         generations[id] = generation
         let context = SaysoModuleContext(
             moduleID: id,
             publish: { [weak self] in
                 guard let self, self.generations[id] == generation else { return }
-                self.engine.publish($0)
+                self.engine.publish($0, at: self.now())
             },
             reportFailure: { [weak self] in
                 guard let self, self.generations[id] == generation else { return }
@@ -59,15 +66,21 @@ public final class SaysoModuleHost: @unchecked Sendable {
     }
 
     public func disable(_ id: String) {
+        permissionBlocked.remove(id)
         guard let runtime = runtimes.removeValue(forKey: id) else { return }
         generations[id, default: 0] += 1
         runtime.stop()
         engine.dismissAll(moduleID: id)
     }
 
+    private func recentFailures(_ id: String) -> [Date] {
+        let current = now()
+        return failures[id, default: []].filter { current.timeIntervalSince($0) < Self.quarantineWindow }
+    }
+
     private func recordFailure(_ id: String) {
         let current = now()
-        let recent = failures[id, default: []].filter { current.timeIntervalSince($0) < Self.quarantineWindow } + [current]
+        let recent = recentFailures(id) + [current]
         failures[id] = recent
         if recent.count >= Self.quarantineFailures {
             quarantined.insert(id)
@@ -78,10 +91,31 @@ public final class SaysoModuleHost: @unchecked Sendable {
     /// Routes an action to its owning runtime only if a currently published activity declares it.
     @discardableResult
     public func perform(actionID: String, moduleID: String) -> Bool {
+        engine.tick(at: now())
         guard let runtime = runtimes[moduleID],
               engine.stack.contains(where: { $0.moduleID == moduleID && $0.actions.contains { $0.id == actionID } })
         else { return false }
         runtime.handle(actionID: actionID)
         return true
+    }
+
+    public func tick() { engine.tick(at: now()) }
+    public func pin(moduleID: String, stackID: String) { engine.pin(moduleID: moduleID, stackID: stackID) }
+    public func unpin() { engine.unpin() }
+    public func dismiss(moduleID: String, stackID: String) { engine.dismiss(moduleID: moduleID, stackID: stackID) }
+
+    /// User-initiated recovery from quarantine; the module stays disabled until enabled again.
+    public func clearQuarantine(_ id: String) {
+        quarantined.remove(id)
+        failures[id] = nil
+    }
+
+    /// Re-checks running modules after a permission change; any that lost a capability stop.
+    public func capabilitiesChanged() {
+        for id in Array(runtimes.keys) {
+            guard let capabilities = modules[id]?.descriptor.capabilities, !capabilities.allSatisfy(isGranted) else { continue }
+            disable(id)
+            permissionBlocked.insert(id)
+        }
     }
 }
