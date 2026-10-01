@@ -24,9 +24,9 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
         await current?.waitUntilIdle()
     }
 
-    /// Saves now and returns the outcome; `.failed` while the module is disabled or stopped.
-    public func append(_ transcript: Transcript) async -> HistoryAppendResult {
-        guard let current = lock.withLock({ runtime }) else { return .failed }
+    /// Saves now and returns the outcome; nil when the module is disabled, quarantined or stopped, so callers must fall back.
+    public func append(_ transcript: Transcript) async -> HistoryAppendResult? {
+        guard let current = lock.withLock({ runtime }) else { return nil }
         return await current.append(transcript)
     }
 
@@ -82,8 +82,8 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
             retries.forEach(save)
         }
 
-        func append(_ transcript: Transcript) async -> HistoryAppendResult {
-            guard !lock.withLock({ stopped }) else { return .failed }
+        func append(_ transcript: Transcript) async -> HistoryAppendResult? {
+            guard !lock.withLock({ stopped }) else { return nil }
             let result = await port.append(transcript)
             record(transcript: transcript, result: result)
             return result
