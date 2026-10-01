@@ -19,6 +19,8 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Platform event bus + module scopes | `EventBusTests`, `ModuleEventsTests` | missing bus/scope/emit API | 340 | none, in-process | none yet |
 | History module (events, retry, recovery notice) | `HistoryModuleTests` (incl. generic harness) | missing types; later test-bug fix `isFinal` | 347 | Wired: all five `SaysoAppModel` transcript save sites call `HistoryModule.append`; app builds; no runtime check. Failure activities are not rendered yet (no host UI) | batch 1 pending |
 | Shortcuts module (events, release on stop) | `ShortcutsModuleTests` (incl. generic harness) | missing types | 350 | NOT wired: no adapter over `SaysoShortcutManager` yet; app still handles hotkeys directly. Hotkey regressions are not observable in tests | none yet |
+| Studio router | `StudioRouterTests` | missing router/route types | 361 | not wired to any Studio UI | none yet |
+| External API v1 (listModules, publish, clear) + external module | `ExternalAPITests` (validation, no confirmations from scripts, disabled module, generic harness) | missing API types | 368 | handler only: NOT connected to the Unix socket transport; nothing ticks `host.tick()` yet | none yet |
 
 ## Proof boundaries
 
