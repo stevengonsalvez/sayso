@@ -17,7 +17,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 
 | History operation gate | `HistoryOperationGateTests` (truth table of the four legacy busy flags) | missing type | 328 | `SaysoAppModel` busy flags replaced by the gate; app builds; no runtime check of reprocess/import/clear UI | batch 1 pending |
 | Platform event bus + module scopes | `EventBusTests`, `ModuleEventsTests` | missing bus/scope/emit API | 340 | none, in-process | none yet |
-| History module (events, retry, recovery notice) | `HistoryModuleTests` (incl. generic harness) | missing types; later test-bug fix `isFinal` | 345 | `HistoryStore` adapter written but NOT wired: app still appends directly at three dictation sites and uses the inline result for completion notices | batch 1 pending |
+| History module (events, retry, recovery notice) | `HistoryModuleTests` (incl. generic harness) | missing types; later test-bug fix `isFinal` | 347 | Wired: all five `SaysoAppModel` transcript save sites call `HistoryModule.append`; app builds; no runtime check. Failure activities are not rendered yet (no host UI) | batch 1 pending |
 
 ## Proof boundaries
 
@@ -26,7 +26,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 - Per-commit RED/GREEN raw output is not archived here; the commit sequence (test commit, then implementation commit) is the record.
 - TTS wiring in `SaysoNotchApp.swift` has no automated test (app target has no test target); only build success and the pure `SpeechPlan` tests back it. Behavior change: an explicit `.automatic` language now falls back to the settings language.
 - Opus review of gallery UI and TTS found: double-speak dropped the live activity, speak after disable played audio, system Reduce Motion ignored, fake Grant/Retry buttons. TTS items fixed with tests; gallery items assigned and pending (check git log).
-- History module is built and acceptance-proven in isolation only. Dictation does not emit `TranscriptCompleted` yet; wiring needs the inline append result moved to a `HistoryAppended` listener (completion notices depend on it).
+- History module is wired via direct `append` (returns the result for completion notices). Dictation does not yet emit `TranscriptCompleted`; that event path is proven only in module tests.
 - Known gap: TTS commits `4a85c81` to `69b7d49` do not build alone (protocol signature changed across files).
 - Known gap: gallery commits `11e7411` and `af76582` do not build alone (Package.swift precedes sources).
 - Known gap: intermediate commit `1cb32cf` leaves `ActivityEnginePinTests` failing until `3f13213`.
