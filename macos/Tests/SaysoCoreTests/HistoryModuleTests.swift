@@ -107,14 +107,14 @@ private func makeHost(_ port: FakePort) -> (SaysoModuleHost, HistoryModule, Says
     #expect(host.engine.stack.map(\.title) == ["History could not save"])
 }
 
-@Test func directAppendWhileDisabledReportsFailureWithoutTouchingStorage() async {
+@Test func directAppendWhileUnavailableReturnsNilWithoutTouchingStorage() async {
     let port = FakePort()
     let (host, module, _, sink) = makeHost(port)
 
-    #expect(await module.append(transcript()) == .failed)
+    #expect(await module.append(transcript()) == nil)
     host.enable("history")
     host.disable("history")
-    #expect(await module.append(transcript()) == .failed)
+    #expect(await module.append(transcript()) == nil)
     #expect(port.appended.isEmpty)
     #expect(sink.appended.isEmpty)
 }
