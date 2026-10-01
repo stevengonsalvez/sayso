@@ -589,7 +589,7 @@ import Testing
     #expect(hidden.fingerprint == visible.fingerprint)
 }
 
-@Test func desktopFingerprintTracksVisibleObservations() {
+@Test func liveObservationsNeitherStalePlansNorHidePressEffects() {
     let before = DesktopSnapshot(
         processIdentifier: 42,
         applicationName: "Calculator",
@@ -609,7 +609,12 @@ import Testing
         observations: ["36"]
     )
 
-    #expect(before.fingerprint != after.fingerprint)
+    // A clock or result changing between planning and execution must not reject the plan as stale...
+    #expect(before.fingerprint == after.fingerprint)
+    // ...but it is still evidence that a pressed control had an effect.
+    let press = DesktopAction.press(elementID: "equals", expectedFingerprint: before.fingerprint)
+    #expect(ControlOutcome.effect(for: press, before: before, after: after) == .observed)
+    #expect(ControlOutcome.effect(for: press, before: before, after: before) == .unknown)
 }
 
 @Test func controlObservationStopsAtFirstObservedRecapture() async throws {
