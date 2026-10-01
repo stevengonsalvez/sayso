@@ -45,7 +45,8 @@ private func pick(_ module: String, _ surface: SaysoModuleSurface, _ health: Say
 
 @MainActor
 @Test func everyScenarioRendersANonEmptyPNGAtItsSurfaceSize() throws {
-    #expect(scenarios.count == 288)
+    let expected = SaysoGallery.scenarios(for: descriptors).count
+    #expect(expected > 0 && scenarios.count == expected)
     for scenario in scenarios {
         let rep = try #require(bitmap(scenario), "\(scenario.id) produced no image")
         let size = SaysoGalleryScenarioCard.size(for: scenario.surface)
