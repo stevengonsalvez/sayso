@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SaysoCore
 
@@ -15,6 +16,21 @@ import Testing
 
 @Test func jevControlRunRejectsEmptyGoal() {
     #expect(throws: SaysoError.self) { try JevControlRunState(goal: "   ") }
+}
+
+@Test func pendingClarificationOnlyAbsorbsPromptShortChoiceReplies() {
+    // Live repro 2026-09-30: "Which one: 1: Calculator, 2: Safari?" swallowed every later command.
+    let choices = ["1: Calculator", "2: Safari"]
+    let asked = Date(timeIntervalSinceReferenceDate: 1_000)
+    let soon = asked.addingTimeInterval(5)
+
+    #expect(ControlClarification.isAnswer("Safari two", to: choices, askedAt: asked, now: soon))
+    #expect(ControlClarification.isAnswer("the second one", to: choices, askedAt: asked, now: soon))
+    #expect(ControlClarification.isAnswer("Calculator.", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Open ark browser", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Open calculator and calculate 12×3", to: choices, askedAt: asked, now: soon))
+    #expect(!ControlClarification.isAnswer("Safari", to: choices, askedAt: asked, now: asked.addingTimeInterval(61)))
+    #expect(!ControlClarification.isAnswer("Safari", to: [], askedAt: asked, now: soon))
 }
 
 @Test func controlSessionCompletesAfterObservedWork() async {
