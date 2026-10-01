@@ -13,7 +13,7 @@ private final class Recorder: SaysoModuleRuntime, @unchecked Sendable {
         )
     }
     func stop() {}
-    func handle(actionID: String) { handled.append(actionID) }
+    func handle(stackID: String, actionID: String) { handled.append(actionID) }
 }
 
 private final class Holder: @unchecked Sendable { var runtime: Recorder? }
@@ -33,12 +33,12 @@ private struct AskModule: SaysoModule {
     let host = SaysoModuleHost(modules: [AskModule(holder: holder)])
     host.enable("ask")
 
-    #expect(host.perform(actionID: "confirm", moduleID: "ask") == true)
-    #expect(host.perform(actionID: "wipe-disk", moduleID: "ask") == false)
-    #expect(host.perform(actionID: "confirm", moduleID: "other") == false)
+    #expect(host.perform(actionID: "confirm", stackID: "ask", moduleID: "ask") == true)
+    #expect(host.perform(actionID: "wipe-disk", stackID: "ask", moduleID: "ask") == false)
+    #expect(host.perform(actionID: "confirm", stackID: "ask", moduleID: "other") == false)
     #expect(holder.runtime?.handled == ["confirm"])
 
     host.disable("ask")
-    #expect(host.perform(actionID: "confirm", moduleID: "ask") == false)
+    #expect(host.perform(actionID: "confirm", stackID: "ask", moduleID: "ask") == false)
     #expect(holder.runtime?.handled == ["confirm"])
 }
