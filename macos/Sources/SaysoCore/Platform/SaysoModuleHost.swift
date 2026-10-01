@@ -14,6 +14,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
     private let isGranted: @Sendable (SaysoCapability) -> Bool
     private var permissionBlocked: Set<String> = []
     private var generations: [String: Int] = [:]
+    private let events: SaysoEventBus
+    private var scopes: [String: SaysoEventScope] = [:]
 
     private static let quarantineWindow: TimeInterval = 300
     private static let quarantineFailures = 3
@@ -24,8 +26,10 @@ public final class SaysoModuleHost: @unchecked Sendable {
     public init(
         modules: [SaysoModule],
         now: @escaping @Sendable () -> Date = { Date() },
-        isGranted: @escaping @Sendable (SaysoCapability) -> Bool = { _ in true }
+        isGranted: @escaping @Sendable (SaysoCapability) -> Bool = { _ in true },
+        events: SaysoEventBus = SaysoEventBus()
     ) {
+        self.events = events
         self.now = now
         self.isGranted = isGranted
         var seen = Set<String>()
@@ -55,6 +59,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
         failures[id] = nil
         let generation = generations[id, default: 0] + 1
         generations[id] = generation
+        let scope = SaysoEventScope(bus: events)
+        scopes[id] = scope
         let context = SaysoModuleContext(
             moduleID: id,
             publish: { [weak self] in
@@ -77,7 +83,8 @@ public final class SaysoModuleHost: @unchecked Sendable {
                 defer { self.lock.unlock() }
                 guard self.generations[id] == generation else { return }
                 self.state.dismiss(moduleID: id, stackID: stackID)
-            }
+            },
+            events: scope
         )
         let runtime = module.makeRuntime(context: context)
         runtimes[id] = runtime
@@ -90,6 +97,7 @@ public final class SaysoModuleHost: @unchecked Sendable {
         permissionBlocked.remove(id)
         guard let runtime = runtimes.removeValue(forKey: id) else { return }
         generations[id, default: 0] += 1
+        scopes.removeValue(forKey: id)?.close()
         runtime.stop()
         state.dismissAll(moduleID: id)
     }
