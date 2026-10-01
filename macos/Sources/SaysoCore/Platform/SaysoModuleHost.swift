@@ -6,20 +6,31 @@ public final class SaysoModuleHost: @unchecked Sendable {
     public private(set) var engine = SaysoActivityEngine()
     private let modules: [String: SaysoModule]
     private var runtimes: [String: SaysoModuleRuntime] = [:]
+    private var failures: [String: [Date]] = [:]
+    private var quarantined: Set<String> = []
+    private let now: @Sendable () -> Date
 
-    public init(modules: [SaysoModule]) {
+    private static let quarantineWindow: TimeInterval = 300
+    private static let quarantineFailures = 3
+
+    public init(modules: [SaysoModule], now: @escaping @Sendable () -> Date = { Date() }) {
+        self.now = now
         self.modules = Dictionary(uniqueKeysWithValues: modules.map { ($0.descriptor.id, $0) })
     }
 
     public func health(of id: String) -> SaysoModuleHealth {
-        runtimes[id] == nil ? .disabled : .ready
+        if quarantined.contains(id) { return .quarantined }
+        if runtimes[id] == nil { return .disabled }
+        return failures[id, default: []].isEmpty ? .ready : .degraded
     }
 
     public func enable(_ id: String) {
-        guard runtimes[id] == nil, let module = modules[id] else { return }
-        let context = SaysoModuleContext(moduleID: id) { [weak self] activity in
-            self?.engine.publish(activity)
-        }
+        guard runtimes[id] == nil, !quarantined.contains(id), let module = modules[id] else { return }
+        let context = SaysoModuleContext(
+            moduleID: id,
+            publish: { [weak self] in self?.engine.publish($0) },
+            reportFailure: { [weak self] in self?.recordFailure(id) }
+        )
         let runtime = module.makeRuntime(context: context)
         runtimes[id] = runtime
         runtime.start()
@@ -29,5 +40,15 @@ public final class SaysoModuleHost: @unchecked Sendable {
         guard let runtime = runtimes.removeValue(forKey: id) else { return }
         runtime.stop()
         engine.dismissAll(moduleID: id)
+    }
+
+    private func recordFailure(_ id: String) {
+        let current = now()
+        let recent = failures[id, default: []].filter { current.timeIntervalSince($0) < Self.quarantineWindow } + [current]
+        failures[id] = recent
+        if recent.count >= Self.quarantineFailures {
+            quarantined.insert(id)
+            disable(id)
+        }
     }
 }
