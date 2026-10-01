@@ -11,6 +11,11 @@ public struct SaysoGalleryScenarioCard: View {
 
     private let presentation: SaysoGalleryCardPresentation
     @State private var pulse = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var pulseEnabled: Bool { presentation.pulseEnabled(systemReduceMotion: systemReduceMotion) }
+    private var highContrast: Bool { presentation.usesHighContrast(systemIncreaseContrast: colorSchemeContrast == .increased) }
 
     public init(
         scenario: SaysoGalleryScenario,
@@ -47,9 +52,9 @@ public struct SaysoGalleryScenarioCard: View {
 
     private var contentOpacity: Double { presentation.isMuted ? 0.45 : 1 }
     private var primary: Color { .white.opacity(contentOpacity) }
-    private var secondary: Color { .white.opacity((presentation.highContrast ? 0.92 : 0.60) * contentOpacity) }
-    private var borderColor: Color { .white.opacity(presentation.highContrast ? 0.85 : 0.12) }
-    private var borderWidth: CGFloat { presentation.highContrast ? 2 : 1 }
+    private var secondary: Color { .white.opacity(presentation.secondaryTextOpacity(highContrast: highContrast)) }
+    private var borderColor: Color { .white.opacity(highContrast ? 0.85 : 0.12) }
+    private var borderWidth: CGFloat { highContrast ? 2 : 1 }
 
     private var cornerRadius: CGFloat {
         switch scenario.surface {
@@ -62,9 +67,14 @@ public struct SaysoGalleryScenarioCard: View {
     private var surfaceFill: AnyShapeStyle {
         if scenario.surface == .compact { return AnyShapeStyle(Color.black) }
         return AnyShapeStyle(LinearGradient(
-            colors: [Color(red: 0.09, green: 0.10, blue: 0.12), Color(red: 0.03, green: 0.03, blue: 0.04)],
+            colors: [Self.color(SaysoGalleryCardPresentation.surfaceTop),
+                     Self.color(SaysoGalleryCardPresentation.surfaceBottom)],
             startPoint: .top, endPoint: .bottom
         ))
+    }
+
+    private static func color(_ rgb: (r: Double, g: Double, b: Double)) -> Color {
+        Color(red: rgb.r, green: rgb.g, blue: rgb.b)
     }
 
     // MARK: Body
@@ -79,9 +89,9 @@ public struct SaysoGalleryScenarioCard: View {
         }
         .frame(width: size.width, height: size.height)
         .clipShape(shape)
-        .transaction { if !presentation.animationsEnabled { $0.animation = nil } }
-        .onAppear { if presentation.animationsEnabled { pulse = true } }
-        .accessibilityElement(children: .combine)
+        .transaction { if !pulseEnabled { $0.animation = nil } }
+        .onAppear { if pulseEnabled { pulse = true } }
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("\(scenario.title), \(presentation.statusLabel)")
     }
 
@@ -129,7 +139,7 @@ public struct SaysoGalleryScenarioCard: View {
             Image(systemName: statusSymbol).font(.system(size: 10, weight: .bold))
                 .opacity(scenario.health == .ready && pulse ? 0.6 : 1)
                 .animation(
-                    presentation.animationsEnabled ? .easeInOut(duration: 1).repeatForever() : nil,
+                    pulseEnabled ? .easeInOut(duration: 1).repeatForever() : nil,
                     value: pulse
                 )
             Text(presentation.statusLabel).font(.system(size: 11, weight: .semibold))
@@ -158,9 +168,9 @@ public struct SaysoGalleryScenarioCard: View {
             }
             Spacer(minLength: 4)
             if presentation.showsGrantPrompt {
-                actionPill("Grant", symbol: "lock.open.fill", action: onGrant)
+                actionPill(.grant, "Grant", symbol: "lock.open.fill")
             } else if presentation.showsRetry {
-                actionPill("Retry", symbol: "arrow.clockwise", action: onRetry)
+                actionPill(.retry, "Retry", symbol: "arrow.clockwise")
             } else {
                 statusChip
             }
@@ -183,10 +193,10 @@ public struct SaysoGalleryScenarioCard: View {
             }
             if presentation.showsGrantPrompt {
                 message("Sayso needs permission to show \(scenario.title.lowercased()) here.",
-                        button: ("Grant access", "lock.open.fill", onGrant))
+                        button: (.grant, "Grant access", "lock.open.fill"))
             } else if presentation.showsRetry {
                 message("\(scenario.title) stopped responding.",
-                        button: ("Retry", "arrow.clockwise", onRetry), isError: true)
+                        button: (.retry, "Retry", "arrow.clockwise"), isError: true)
             } else {
                 if scenario.health == .degraded {
                     Label("Showing cached data", systemImage: "exclamationmark.circle")
@@ -229,9 +239,9 @@ public struct SaysoGalleryScenarioCard: View {
             }
             if presentation.showsGrantPrompt {
                 message("Grant access to configure \(scenario.title.lowercased()).",
-                        button: ("Grant access", "lock.open.fill", onGrant))
+                        button: (.grant, "Grant access", "lock.open.fill"))
             } else if presentation.showsRetry {
-                message("Settings could not be loaded.", button: ("Retry", "arrow.clockwise", onRetry), isError: true)
+                message("Settings could not be loaded.", button: (.retry, "Retry", "arrow.clockwise"), isError: true)
             } else {
                 ForEach(["Enabled", "Show in pill", "Haptics"], id: \.self) { label in
                     HStack {
@@ -254,27 +264,36 @@ public struct SaysoGalleryScenarioCard: View {
             }
     }
 
-    private func message(_ text: String, button: (String, String, (() -> Void)?), isError: Bool = false) -> some View {
+    private func message(_ text: String, button: (SaysoGalleryCardPresentation.Action, String, String), isError: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "lock.shield.fill")
                 .font(.system(size: 18)).foregroundStyle(accent)
             Text(text).font(.system(size: 12)).foregroundStyle(primary).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 4)
-            actionPill(button.0, symbol: button.1, action: button.2)
+            actionPill(button.0, button.1, symbol: button.2)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(accent.opacity(0.12)))
     }
 
-    private func actionPill(_ title: String, symbol: String, action: (() -> Void)?) -> some View {
-        Label(title, systemImage: symbol)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Capsule().fill(accent))
-            .contentShape(Capsule())
-            .onTapGesture { action?() }
-            .accessibilityAddTraits(.isButton)
+    /// Real button so VoiceOver and keyboard can target it; absent when no handler is wired.
+    @ViewBuilder
+    private func actionPill(_ kind: SaysoGalleryCardPresentation.Action, _ title: String, symbol: String) -> some View {
+        let handler = kind == .grant ? onGrant : onRetry
+        let offered = kind == .grant
+            ? presentation.offersGrantAction(hasHandler: handler != nil)
+            : presentation.offersRetryAction(hasHandler: handler != nil)
+        if offered, let handler {
+            Button(action: handler) {
+                Label(title, systemImage: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Capsule().fill(accent))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private var sample: [String] {
