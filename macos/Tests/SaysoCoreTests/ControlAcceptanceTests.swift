@@ -290,6 +290,24 @@ extension ControlHarness {
         #expect(harness.offers.last?.state.goal.contains("User clarification: second") == true)
     }
 
+    @Test func answeredClarificationThatStaysLowConfidenceAsksForApprovalInsteadOfLooping() async {
+        let harness = harness()
+        harness.decisions = [{ Self.lowConfidenceOpen($0) }, { Self.lowConfidenceOpen($0) }]
+
+        await harness.run("open the editor")
+        await harness.run("second")
+
+        #expect(harness.engine.status.hasPrefix("Review required"))
+        #expect(harness.engine.pendingStep != nil)
+        #expect(harness.desktop.dispatched.isEmpty)
+
+        harness.engine.approvePending()
+        await harness.engine.waitUntilIdle()
+        #expect(harness.desktop.dispatched.count == 1)
+        #expect(harness.desktop.dispatched.first?.approved == true)
+        #expect(harness.desktop.frontmost == FakeDesktop.calculatorID)
+    }
+
     @Test func staleClarificationDoesNotSwallowALaterUnrelatedCommand() async {
         let harness = harness()
         harness.decisions = [{ Self.lowConfidenceOpen($0) }, ControlHarness.openApp(FakeDesktop.calculatorID)]
