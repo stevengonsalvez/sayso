@@ -10,7 +10,7 @@ import Testing
     engine.publish(SaysoActivity(moduleID: "dictation", stackID: "run", kind: .failure, title: "Mic lost"))
     #expect(engine.primary?.title == "Song")
 
-    engine.publish(SaysoActivity(moduleID: "control", stackID: "ask", kind: .confirmation, title: "Delete?"))
+    engine.publish(SaysoActivity(moduleID: "control", stackID: "ask", kind: .confirmation, title: "Delete?", interruption: .critical))
     #expect(engine.primary?.title == "Delete?")
 
     engine.dismiss(moduleID: "control", stackID: "ask")
