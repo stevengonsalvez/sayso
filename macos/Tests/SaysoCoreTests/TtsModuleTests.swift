@@ -2,15 +2,31 @@ import Foundation
 import Testing
 @testable import SaysoCore
 
+/// Mirrors the real boundary: stop and replacement cancel asynchronously, reported later via `pump()`.
 private final class FakeSynth: SpeechSynthesizing, @unchecked Sendable {
     var spoken: [SpeechPlan] = []
     var stops = 0
-    var speaking = false
-    var onFinish: (@Sendable () -> Void)?
-    var isSpeaking: Bool { speaking }
-    func speak(_ plan: SpeechPlan) { spoken.append(plan); speaking = true }
-    func stop() { stops += 1; speaking = false }
-    func finish() { speaking = false; onFinish?() }
+    var current: Int?
+    var nextID = 0
+    var pending: [Int] = []
+    var onFinish: (@Sendable (Int) -> Void)?
+    var isSpeaking: Bool { current != nil }
+
+    func speak(_ plan: SpeechPlan) -> Int {
+        if let current { pending.append(current) }
+        spoken.append(plan)
+        nextID += 1
+        current = nextID
+        return nextID
+    }
+    func stop() {
+        stops += 1
+        if let current { pending.append(current) }
+        current = nil
+    }
+    /// Delivers deferred finish/cancel notifications, like the real delegate's main-actor hop.
+    func pump() { let ids = pending; pending = []; ids.forEach { onFinish?($0) } }
+    func finishNaturally() { if let id = current { current = nil; onFinish?(id) } }
 }
 
 private func makeHost(_ synth: FakeSynth) -> (SaysoModuleHost, TtsModule) {
@@ -39,6 +55,7 @@ private let plan = SpeechPlan(text: "Hello", language: .english, voiceID: nil, r
     module.speak(plan)
 
     #expect(host.perform(actionID: "stop", stackID: "speaking", moduleID: "tts"))
+    synth.pump()
     #expect(synth.stops == 1)
     #expect(host.engine.stack.isEmpty)
 }
@@ -49,7 +66,7 @@ private let plan = SpeechPlan(text: "Hello", language: .english, voiceID: nil, r
     host.enable("tts")
     module.speak(plan)
 
-    synth.finish()
+    synth.finishNaturally()
     #expect(host.engine.stack.isEmpty)
 }
 
@@ -67,4 +84,30 @@ private let plan = SpeechPlan(text: "Hello", language: .english, voiceID: nil, r
 
 @Test func ttsModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: TtsModule(synthesizer: FakeSynth())) == [])
+}
+
+@Test func replacingAnUtteranceKeepsTheActivityOfTheNewOne() {
+    let synth = FakeSynth()
+    let (host, module) = makeHost(synth)
+    host.enable("tts")
+    module.speak(plan)
+    module.speak(SpeechPlan(text: "Second", language: .english, voiceID: nil, rate: 0.5))
+
+    synth.pump()
+    #expect(host.engine.stack.map(\.title) == ["Speaking"])
+
+    synth.finishNaturally()
+    #expect(host.engine.stack.isEmpty)
+}
+
+@Test func speakingWhileDisabledOrAfterDisableDoesNothing() {
+    let synth = FakeSynth()
+    let (host, module) = makeHost(synth)
+    module.speak(plan)
+    #expect(synth.spoken.isEmpty)
+
+    host.enable("tts")
+    host.disable("tts")
+    module.speak(plan)
+    #expect(synth.spoken.isEmpty)
 }
