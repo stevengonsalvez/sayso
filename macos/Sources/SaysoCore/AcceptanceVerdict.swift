@@ -15,7 +15,8 @@ public struct AcceptanceVerdict: Equatable, Sendable {
         expectedText: String,
         partialsApplied: [Bool],
         delivery: Delivery,
-        observedTargetValue: String?
+        observedTargetValue: String?,
+        targetValueBefore: String? = nil
     ) -> AcceptanceVerdict {
         func fail(_ message: String) -> AcceptanceVerdict { .init(ok: false, error: message) }
 
@@ -33,6 +34,9 @@ public struct AcceptanceVerdict: Equatable, Sendable {
         func normalized(_ text: String) -> String { text.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
         guard normalized(observed).contains(normalized(expectedText)) else {
             return fail("Target value does not contain the dictated text.")
+        }
+        if let before = targetValueBefore, normalized(before) == normalized(observed) {
+            return fail("Target value did not change, so insertion is unproven.")
         }
         return .init(ok: true, error: nil)
     }
