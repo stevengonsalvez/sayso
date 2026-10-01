@@ -73,6 +73,7 @@ public final class ControlRunEngine<Target: Sendable> {
     private var executionTask: Task<Void, Never>?
     private var preparationTask: Task<Void, Never>?
     private var preparationID: UUID?
+    private var cancellationTask: Task<Void, Never>?
     private var pendingFinishes = false
 
     public private(set) var status = ""
@@ -93,6 +94,7 @@ public final class ControlRunEngine<Target: Sendable> {
     public func waitUntilIdle() async {
         await preparationTask?.value
         await executionTask?.value
+        await cancellationTask?.value
     }
 
     private func setStatus(_ value: String) {
@@ -184,21 +186,21 @@ public final class ControlRunEngine<Target: Sendable> {
         requestCancellation(run, status: "Action discarded")
     }
 
-    public func cancel() {
+    public func cancel(reason: String? = nil) {
         pendingStep = nil
         pendingFinishes = false
         if preparationTask != nil {
             preparationTask?.cancel()
             preparationTask = nil
             preparationID = nil
-            setStatus("Control command cancelled.")
+            setStatus(reason ?? "Control command cancelled.")
             return
         }
         guard let run else {
             setStatus("No active control task")
             return
         }
-        requestCancellation(run, status: "Cancellation requested. Current macOS action may still finish.")
+        requestCancellation(run, status: reason ?? "Cancellation requested. Current macOS action may still finish.")
     }
 
     private func plan(snapshot: DesktopSnapshot, run: Run) async throws -> (plan: JevCyclePlan, alternatives: [String]) {
@@ -372,7 +374,7 @@ public final class ControlRunEngine<Target: Sendable> {
     private func requestCancellation(_ run: Run, status message: String) {
         executionTask?.cancel()
         setStatus(message)
-        Task { [weak self] in
+        cancellationTask = Task { [weak self] in
             guard let self else { return }
             _ = await session.cancel()
             guard self.run === run else { return }
