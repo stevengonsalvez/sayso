@@ -29,6 +29,9 @@ final class FakeDesktop {
     /// Applied once, between capture and a guarded dispatch, to model a target that changed under the plan.
     var mutateBeforeNextDispatch: (@MainActor (FakeDesktop) -> Void)?
     var scrollChangesScreen = true
+    /// A freshly launched app can answer the first captures with an empty control list.
+    var coldCapturesAfterLaunch = 0
+    private var remainingColdCaptures = 0
     private var calculator = (display: "0", pending: "", operand: "")
 
     static let calculatorID = "com.apple.calculator"
@@ -36,7 +39,11 @@ final class FakeDesktop {
     func install(_ bundleIdentifier: String, _ app: App) { apps[bundleIdentifier] = app }
 
     func capture(_ target: String) throws -> DesktopSnapshot {
-        guard let app = apps[target] else { throw SaysoError.unavailable("Application") }
+        guard var app = apps[target] else { throw SaysoError.unavailable("Application") }
+        if target == Self.calculatorID, remainingColdCaptures > 0 {
+            remainingColdCaptures -= 1
+            app.elements = []
+        }
         return DesktopSnapshot(
             processIdentifier: app.processIdentifier,
             applicationName: app.name,
@@ -98,6 +105,7 @@ final class FakeDesktop {
         case let .activateApplication(bundleIdentifier, _), let .activate(bundleIdentifier):
             guard apps[bundleIdentifier] != nil else { return .notObserved }
             frontmost = bundleIdentifier
+            if bundleIdentifier == Self.calculatorID { remainingColdCaptures = coldCapturesAfterLaunch }
             return .observed
         case let .open(url):
             guard var app = apps[handler(for: url)] else { return .notObserved }
