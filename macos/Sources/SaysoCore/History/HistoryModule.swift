@@ -85,7 +85,7 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
         func append(_ transcript: Transcript) async -> HistoryAppendResult? {
             guard !lock.withLock({ stopped }) else { return nil }
             let result = await port.append(transcript)
-            record(transcript: transcript, result: result)
+            record(transcript: transcript, result: result, retryable: false)
             return result
         }
 
@@ -116,11 +116,11 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
             lock.unlock()
         }
 
-        private func record(transcript: Transcript, result: HistoryAppendResult) {
+        private func record(transcript: Transcript, result: HistoryAppendResult, retryable: Bool = true) {
             lock.lock()
             let isStopped = stopped
             if !isStopped {
-                if result == .failed { failed[transcript.id] = transcript } else { failed[transcript.id] = nil }
+                if retryable { if result == .failed { failed[transcript.id] = transcript } else { failed[transcript.id] = nil } }
             }
             let outstanding = failed.count
             lock.unlock()
@@ -128,7 +128,7 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
 
             context.emit(HistoryAppended(transcriptID: transcript.id, result: result))
             switch result {
-            case .failed:
+            case .failed where retryable:
                 context.publish(
                     stackID: "save-failed", kind: .failure, title: "History could not save",
                     actions: [SaysoAction(id: "retry", title: "Retry")]
@@ -139,7 +139,7 @@ public final class HistoryModule: SaysoModule, @unchecked Sendable {
                     title: "Recovered unreadable history to a local backup",
                     expiresAfter: Self.recoveredNoticeSeconds
                 )
-            case .saved:
+            case .saved, .failed:
                 break
             }
             if outstanding == 0 { context.dismiss(stackID: "save-failed") }
