@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "SaysoCore", targets: ["SaysoCore"]),
+        .library(name: "SaysoGalleryUI", targets: ["SaysoGalleryUI"]),
+        .executable(name: "SaysoGallery", targets: ["SaysoGallery"]),
         .executable(name: "SaysoNotch", targets: ["SaysoNotch"]),
         .executable(name: "sayso", targets: ["SaysoCLI"]),
         .executable(name: "sayso-mcp", targets: ["SaysoMCP"]),
@@ -52,6 +54,9 @@ let package = Package(
             path: "Sources/speak"
         ),
         .executableTarget(name: "SaysoMCP", dependencies: ["SaysoCore", "SpeakUpstreamBridge"], path: "Sources/sayso-mcp"),
+        .target(name: "SaysoGalleryUI", dependencies: ["SaysoCore"]),
+        .executableTarget(name: "SaysoGallery", dependencies: ["SaysoCore", "SaysoGalleryUI"]),
+        .testTarget(name: "SaysoGalleryUITests", dependencies: ["SaysoCore", "SaysoGalleryUI"]),
         .testTarget(name: "SaysoCoreTests", dependencies: ["SaysoCore", .product(name: "SpeakHotKeys", package: "justspeaktoit")]),
     ]
 )
