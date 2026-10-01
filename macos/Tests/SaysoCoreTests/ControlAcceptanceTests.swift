@@ -159,6 +159,27 @@ extension ControlAcceptanceTests {
         #expect(harness.recorded.map(\.effect) == [.observed, .observed])
     }
 
+    @Test func explicitFolderPathOpensInFinderDeterministicallyWithoutJev() async {
+        let harness = harnessWith([Self.finder])
+
+        await harness.run("open folder /Applications")
+
+        #expect(harness.offers.isEmpty)
+        #expect(harness.desktop.apps["com.apple.finder"]?.windowTitle == "Applications")
+        #expect(harness.recorded.map(\.planningSource) == [.deterministic])
+        #expect(harness.engine.status == "Control completed")
+    }
+
+    @Test func explicitFolderPathThatDoesNotExistExecutesNothing() async {
+        let harness = harnessWith([Self.finder])
+
+        await harness.run("open folder /definitely/not/a/real/folder")
+
+        #expect(harness.desktop.dispatched.isEmpty)
+        #expect(harness.offers.isEmpty)
+        #expect(harness.engine.status.contains("No folder exists"))
+    }
+
     @Test func textEditTypesExactTextIntoDisposableEmptyDocument() async {
         let harness = harnessWith([Self.textEdit])
         #expect(harness.desktop.apps["com.apple.TextEdit"]?.focusedValue == "")
