@@ -70,6 +70,13 @@ public final class SaysoModuleHost: @unchecked Sendable {
                 defer { self.lock.unlock() }
                 guard self.generations[id] == generation else { return }
                 self.recordFailure(id)
+            },
+            dismiss: { [weak self] stackID in
+                guard let self else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.generations[id] == generation else { return }
+                self.state.dismiss(moduleID: id, stackID: stackID)
             }
         )
         let runtime = module.makeRuntime(context: context)
