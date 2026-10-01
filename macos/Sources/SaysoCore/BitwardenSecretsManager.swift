@@ -47,6 +47,8 @@ public enum BitwardenSecretsManager {
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
+            // ponytail: fixed 10 s cap; an offline bws must not hang Control readiness or planning.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10) { if process.isRunning { process.terminate() } }
             let data = try output.fileHandleForReading.readToEnd() ?? Data()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else { return nil }
