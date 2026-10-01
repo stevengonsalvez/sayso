@@ -217,7 +217,7 @@ public enum JevControlBridge {
                 throw JevDecisionError.invalidResponse
             }
             let text = tokens[first ... last].joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { throw JevDecisionError.invalidResponse }
             let targetID = String(target.id.dropFirst("focus:".count))
             return .execute(.init(
