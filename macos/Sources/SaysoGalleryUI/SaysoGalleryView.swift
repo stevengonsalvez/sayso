@@ -6,6 +6,7 @@ import SaysoCore
 public struct SaysoGalleryView: View {
     public let scenarios: [SaysoGalleryScenario]
     @State private var filter = SaysoGalleryFilter()
+    @State private var lastAction: String?
 
     public init(scenarios: [SaysoGalleryScenario]) {
         self.scenarios = scenarios
@@ -71,9 +72,15 @@ public struct SaysoGalleryView: View {
 
     private var results: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("\(visible.count) of \(scenarios.count) scenarios")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .padding(.horizontal, 20).padding(.vertical, 12)
+            HStack {
+                Text("\(visible.count) of \(scenarios.count) scenarios")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                Spacer()
+                Text(lastAction ?? "No action yet")
+                    .font(.subheadline.monospaced()).foregroundStyle(.secondary)
+                    .accessibilityLabel("Last action: \(lastAction ?? "none")")
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
             Divider()
             if visible.isEmpty {
                 Text("No scenarios match these filters.")
@@ -100,7 +107,11 @@ public struct SaysoGalleryView: View {
                       alignment: .leading, spacing: 20) {
                 ForEach(items, id: \.id) { scenario in
                     VStack(alignment: .leading, spacing: 6) {
-                        SaysoGalleryScenarioCard(scenario: scenario)
+                        SaysoGalleryScenarioCard(
+                            scenario: scenario,
+                            onGrant: { lastAction = SaysoGalleryCardPresentation.actionSummary(.grant, scenarioID: scenario.id) },
+                            onRetry: { lastAction = SaysoGalleryCardPresentation.actionSummary(.retry, scenarioID: scenario.id) }
+                        )
                         Text(scenario.id).font(.caption2.monospaced()).foregroundStyle(.secondary)
                             .lineLimit(1).frame(width: width, alignment: .leading)
                     }
