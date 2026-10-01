@@ -122,35 +122,6 @@ final class SaysoAppModel: ObservableObject {
         let settings: SaysoSettings
     }
 
-    private final class ControlCommandRun {
-        var cycle: JevControlRunState
-        var target: NSRunningApplication
-        let installedApplications: [InstalledDesktopApplication]
-        let isTryNow: Bool
-        let calculatorTask: CalculatorControlTask?
-        var hasStarted = false
-        var waitCount = 0
-        var previous: String?
-        var clarification: (choices: [String], askedAt: Date)?
-        var apiKey: String?
-        var calculatorWasCleared = false
-        var nextCalculatorCommandIndex = 1
-
-        init(
-            cycle: JevControlRunState,
-            target: NSRunningApplication,
-            installedApplications: [InstalledDesktopApplication],
-            isTryNow: Bool,
-            calculatorTask: CalculatorControlTask?
-        ) {
-            self.cycle = cycle
-            self.target = target
-            self.installedApplications = installedApplications
-            self.isTryNow = isTryNow
-            self.calculatorTask = calculatorTask
-        }
-    }
-
     private final class SlmDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         let onProgress: (Double) -> Void
 
@@ -180,7 +151,6 @@ final class SaysoAppModel: ObservableObject {
     @Published var currentSnapshot: DesktopSnapshot?
     @Published var controlEntries: [ControlAuditEntry] = []
     @Published var pendingControlStep: ControlPlanStep?
-    private var pendingControlFinishes = false
     @Published var selectedTab = 0
     @Published var notice: String? {
         didSet {
@@ -253,10 +223,8 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
-    private var controlRun: ControlCommandRun?
-    private var controlExecutionTask: Task<Void, Never>?
-    private var controlPreparationTask: Task<Void, Never>?
-    private var controlPreparationID: UUID?
+    private var cachedJevKey: String?
+    private lazy var controlEngine = makeControlEngine()
     private var controlTryNowArmed = false
     private var controlReadinessTask: Task<Void, Never>?
     private var controlReadinessID: UUID?
@@ -1965,11 +1933,7 @@ final class SaysoAppModel: ObservableObject {
             startAutomation()
         } else {
             automation.stop()
-            pendingControlStep = nil
-            controlPreparationTask?.cancel()
-            controlPreparationTask = nil
-            controlPreparationID = nil
-            if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
+            controlEngine.cancel(reason: "Desktop control disabled.")
         }
         save()
     }
@@ -2290,346 +2254,78 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    func runControl(_ command: String, isTryNow: Bool = false) {
-        guard desktopControlEnabled() else { return }
-        guard !isTryNow || ControlTryNowPolicy.acceptsTranscript(command) else {
-            controlStatus = "Try now expected Open Calculator."
-            return
+    private func makeControlEngine() -> ControlRunEngine<NSRunningApplication> {
+        let engine = ControlRunEngine<NSRunningApplication>(
+            boundary: .init(
+                isEnabled: { [weak self] in self?.settings.desktopControlEnabled ?? false },
+                bundleIdentifier: { $0.bundleIdentifier },
+                installedApplications: {
+                    await Task.detached(priority: .utility) { InstalledDesktopApplication.available() }.value
+                },
+                capture: { [weak self] target in
+                    guard let self else { throw SaysoError.unavailable("Sayso") }
+                    return try controller.capture(application: target)
+                },
+                execute: { [weak self] step, approved, target in
+                    guard let self else { throw SaysoError.unavailable("Sayso") }
+                    return try await controller.execute(step, approved: approved, targetApplication: target)
+                },
+                decide: { [weak self] offer in
+                    guard let self else { throw SaysoError.unavailable("Sayso") }
+                    return try await jevDecision(for: offer)
+                },
+                record: { [weak self] entry in
+                    guard let self else { return }
+                    await controlAudit.append(entry)
+                    controlEntries = await controlAudit.entries()
+                },
+                retarget: { entry, step, current in
+                    guard entry.effect == .observed, step.action.mayMoveControlTarget,
+                          let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else { return current }
+                    if let bundleIdentifier = step.action.validatedNextTargetBundleIdentifier,
+                       target.bundleIdentifier != bundleIdentifier { return current }
+                    return target
+                },
+                pause: { try await Task.sleep(for: $0) },
+                didCapture: { [weak self] in self?.currentSnapshot = $0 }
+            ),
+            session: desktopControlSession
+        )
+        engine.onChange = { [weak self] in
+            guard let self else { return }
+            controlStatus = engine.status
+            pendingControlStep = engine.pendingStep
         }
-        if let run = controlRun, let pending = run.clarification, controlExecutionTask == nil {
-            if ControlClarification.isAnswer(command, to: pending.choices, askedAt: pending.askedAt) {
-                do {
-                    run.cycle = try JevControlRunState(
-                        goal: "\(run.cycle.goal). User clarification: \(command.trimmingCharacters(in: .whitespacesAndNewlines))",
-                        recentActions: run.cycle.recentActions
-                    )
-                    run.clarification = nil
-                    controlStatus = "Applying clarification"
-                    executeControlRun(run)
-                } catch {
-                    controlStatus = error.localizedDescription
-                }
-                return
-            }
-            // A late or unrelated reply is a new command. beginCommand() resets the session budget.
-            controlRun = nil
-        }
-        guard controlRun == nil, controlPreparationTask == nil else {
-            controlStatus = "Control command already active."
-            return
+        return engine
+    }
+
+    /// The Jev key is resolved once per submitted command: Keychain reads and a bws spawn are not per-cycle work.
+    private func jevDecision(for offer: JevCycleOffer) async throws -> JevDecision {
+        if cachedJevKey == nil { cachedJevKey = await typeSafeKey() }
+        guard let key = cachedJevKey else {
+            throw SaysoError.unavailable("Configure the TypeSafe / Jev key before using Control.")
         }
         do {
-            let target = try controlTarget()
-            let cycle = try JevControlRunState(goal: command)
-            let calculatorTask = ControlPlanner.calculatorTask(from: command)
-            // Open + Clear + each key must fit inside the session action budget, or Equals is never checked.
-            if let calculatorTask, calculatorTask.commands.count + 1 >= ControlSessionLimits().maxActions {
-                throw SaysoError.invalidAction("Calculator control supports shorter numbers. Nothing executed.")
-            }
-            let preparationID = UUID()
-            controlPreparationID = preparationID
-            controlStatus = "Preparing control command"
-            controlPreparationTask = Task { [weak self] in
-                let availableApplications = await Task.detached(priority: .utility) {
-                    InstalledDesktopApplication.available()
-                }.value
-                let applications = isTryNow
-                    ? ControlTryNowPolicy.candidateApplications(from: availableApplications)
-                    : availableApplications
-                guard !Task.isCancelled,
-                      let self,
-                      self.controlPreparationID == preparationID else { return }
-                self.controlPreparationTask = nil
-                self.controlPreparationID = nil
-                guard self.controlRun == nil else { return }
-                let run = ControlCommandRun(
-                    cycle: cycle,
-                    target: target,
-                    installedApplications: applications,
-                    isTryNow: isTryNow,
-                    calculatorTask: calculatorTask
-                )
-                self.controlRun = run
-                self.executeControlRun(run)
-            }
+            return try await JevClient.cycle(state: offer.state, operations: offer.operations, heads: offer.heads, apiKey: key)
+        } catch let error as JevServiceError where error.status == 401 || error.status == 403 {
+            guard let fallback = await bitwardenTypeSafeKey(excluding: key) else { throw error }
+            cachedJevKey = fallback
+            return try await JevClient.cycle(state: offer.state, operations: offer.operations, heads: offer.heads, apiKey: fallback)
+        }
+    }
+
+    func runControl(_ command: String, isTryNow: Bool = false) {
+        cachedJevKey = nil
+        do {
+            controlEngine.submit(command, target: try controlTarget(), isTryNow: isTryNow)
         } catch {
             controlStatus = error.localizedDescription
         }
     }
 
-    func approvePendingControl() {
-        guard desktopControlEnabled() else {
-            pendingControlStep = nil
-            if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
-            return
-        }
-        guard let step = pendingControlStep, let run = controlRun else { return }
-        pendingControlStep = nil
-        let finishes = pendingControlFinishes
-        pendingControlFinishes = false
-        executeControlRun(run, approvedStep: step, approvedFinishes: finishes)
-    }
-
-    func discardPendingControl() {
-        pendingControlStep = nil
-        pendingControlFinishes = false
-        guard let run = controlRun else {
-            controlStatus = "Action discarded"
-            return
-        }
-        requestControlCancellation(run, status: "Action discarded")
-    }
-
-    func cancelControl() {
-        pendingControlStep = nil
-        pendingControlFinishes = false
-        if controlPreparationTask != nil {
-            controlPreparationTask?.cancel()
-            controlPreparationTask = nil
-            controlPreparationID = nil
-            controlStatus = "Control command cancelled."
-            return
-        }
-        guard let run = controlRun else {
-            controlStatus = "No active control task"
-            return
-        }
-        requestControlCancellation(run, status: "Cancellation requested. Current macOS action may still finish.")
-    }
-
-    private func planWithJevCycle(
-        snapshot: DesktopSnapshot,
-        run: ControlCommandRun,
-        apiKey: String
-    ) async throws -> (plan: JevCyclePlan, alternatives: [String]) {
-        controlStatus = "Consulting Jev model..."
-        let offer = JevControlBridge.makeCycleOffer(
-            goal: run.cycle.goal,
-            snapshot: snapshot,
-            recentActions: run.cycle.recentActions,
-            installedApplications: run.installedApplications,
-            previous: run.previous
-        )
-        let decision: JevDecision
-        do {
-            decision = try await JevClient.cycle(
-                state: offer.state,
-                operations: offer.operations,
-                heads: offer.heads,
-                apiKey: apiKey
-            )
-        } catch let error as JevServiceError where error.status == 401 || error.status == 403 {
-            guard let fallback = await bitwardenTypeSafeKey(excluding: apiKey) else { throw error }
-            run.apiKey = fallback
-            decision = try await JevClient.cycle(
-                state: offer.state,
-                operations: offer.operations,
-                heads: offer.heads,
-                apiKey: fallback
-            )
-        }
-        return (
-            try JevControlBridge.planCycleStep(from: decision, offer: offer),
-            JevControlBridge.cycleAlternatives(from: decision, offer: offer)
-        )
-    }
-
-    private func executeControlRun(
-        _ run: ControlCommandRun,
-        approvedStep: ControlPlanStep? = nil,
-        approvedFinishes: Bool = false
-    ) {
-        guard controlRun === run, controlExecutionTask == nil else { return }
-        guard desktopControlEnabled() else {
-            requestControlCancellation(run, status: "Desktop control disabled.")
-            return
-        }
-        controlExecutionTask = Task { [weak self] in
-            guard let self else { return }
-            var actionWasDispatched = false
-            do {
-                if !run.hasStarted {
-                    _ = await desktopControlSession.beginCommand()
-                    run.hasStarted = true
-                }
-                var carriedStep = approvedStep.map { ($0, approvedFinishes) }
-                while true {
-                    try Task.checkCancellation()
-                    let step: ControlPlanStep
-                    let finishes: Bool
-                    var isApprovedStep = false
-                    if let approved = carriedStep {
-                        step = approved.0
-                        finishes = approved.1
-                        carriedStep = nil
-                        isApprovedStep = true
-                    } else {
-                        let snapshot = try controller.capture(application: run.target)
-                        currentSnapshot = snapshot
-                        if let task = run.calculatorTask,
-                           run.target.bundleIdentifier == "com.apple.calculator" {
-                            if run.nextCalculatorCommandIndex >= task.commands.count {
-                                guard task.resultIsVisible(in: snapshot.observations) else {
-                                    throw SaysoError.invalidAction("Calculator did not show the expected result \(task.expectedResult).")
-                                }
-                                await completeControlRun("Control completed: \(task.expectedResult)")
-                                return
-                            }
-                            let command: String
-                            if !run.calculatorWasCleared {
-                                guard let clear = snapshot.elements.first(where: {
-                                    ["All Clear", "Clear"].contains($0.title) && $0.supportsPress
-                                }) else {
-                                    throw SaysoError.invalidAction("Calculator Clear control is unavailable.")
-                                }
-                                command = "click \(clear.title)"
-                                run.calculatorWasCleared = true
-                            } else {
-                                command = task.commands[run.nextCalculatorCommandIndex]
-                                run.nextCalculatorCommandIndex += 1
-                            }
-                            step = try ControlPlanner.plan(
-                                command: command,
-                                snapshot: snapshot,
-                                installedApplications: run.installedApplications
-                            )
-                            finishes = false
-                            isApprovedStep = true
-                            controlStatus = "Planned: verified Calculator step"
-                        } else {
-                            // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
-                            if run.apiKey == nil { run.apiKey = await typeSafeKey() }
-                            guard let jevKey = run.apiKey else {
-                                throw SaysoError.unavailable("Configure the TypeSafe / Jev key before using Control.")
-                            }
-                            let planned = try await planWithJevCycle(snapshot: snapshot, run: run, apiKey: jevKey)
-                            switch planned.plan {
-                            case .done:
-                                await completeControlRun("Control completed")
-                                return
-                            case .blocked:
-                                _ = await desktopControlSession.fail()
-                                controlStatus = "Jev could not find a safe next action."
-                                finishControlRun()
-                                return
-                            case .wait:
-                                run.waitCount += 1
-                                guard run.waitCount <= 2 else {
-                                    throw SaysoError.unavailable("The required control did not appear.")
-                                }
-                                run.cycle.record(action: "WAIT", result: "waited 0.4 seconds", screenChanged: false)
-                                try await Task.sleep(for: .milliseconds(400))
-                                continue
-                            case let .execute(stepCandidate, completesGoal):
-                                step = stepCandidate
-                                finishes = completesGoal && run.calculatorTask == nil
-                            }
-                            controlStatus = "Planned: \(step.reason)"
-                            if step.confidence < ControlPolicy.minimumConfidence {
-                                let choices = planned.alternatives
-                                guard !choices.isEmpty else {
-                                    throw SaysoError.invalidAction("Jev was not confident enough to act.")
-                                }
-                                let question = "Which one: \(choices.joined(separator: ", "))?"
-                                run.previous = question
-                                run.clarification = (choices, Date())
-                                controlStatus = question
-                                controlExecutionTask = nil
-                                return
-                            }
-                            if run.isTryNow, !ControlTryNowPolicy.canApprove(step) {
-                                throw SaysoError.invalidAction("Try now refused an unexpected Jev action.")
-                            }
-                            if ControlPolicy.requiresConfirmation(step) {
-                                if run.isTryNow {
-                                    isApprovedStep = true
-                                } else {
-                                    pendingControlStep = step
-                                    pendingControlFinishes = finishes
-                                    controlStatus = "Review required: \(step.reason)"
-                                    controlExecutionTask = nil
-                                    return
-                                }
-                            }
-                        }
-                    }
-                    try Task.checkCancellation()
-                    actionWasDispatched = true
-                    let entry = try await controller.execute(step, approved: isApprovedStep, targetApplication: run.target)
-                    await controlAudit.append(entry)
-                    controlEntries = await controlAudit.entries()
-                    guard !Task.isCancelled, controlRun === run else { return }
-                    updateControlTarget(after: entry, step: step, run: run)
-                    run.cycle.record(
-                        action: step.reason,
-                        result: entry.result,
-                        screenChanged: entry.effect == .observed
-                    )
-                    run.waitCount = 0
-                    let updated = await desktopControlSession.record(.init(entry.effect))
-                    actionWasDispatched = false
-                    guard updated.canRunAction else {
-                        controlStatus = "\(entry.result), \(updated.result?.rawValue ?? "stopped")"
-                        finishControlRun()
-                        return
-                    }
-                    controlStatus = entry.result
-                    if ControlCycleCompletion.shouldComplete(after: step.action, effect: entry.effect, goal: run.cycle.goal)
-                        || finishes && (entry.effect == .observed || entry.effect == .alreadySatisfied) {
-                        await completeControlRun("Control completed")
-                        return
-                    }
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled, controlRun === run else { return }
-                if actionWasDispatched {
-                    _ = await desktopControlSession.record(.actionFailed)
-                }
-                _ = await desktopControlSession.fail()
-                controlStatus = error.localizedDescription
-                finishControlRun()
-            }
-        }
-    }
-
-    private func completeControlRun(_ status: String) async {
-        let completed = await desktopControlSession.complete()
-        controlStatus = completed.result == .completed ? status : "Control stopped"
-        finishControlRun()
-    }
-
-    private func finishControlRun() {
-        pendingControlStep = nil
-        pendingControlFinishes = false
-        controlRun = nil
-        controlExecutionTask = nil
-    }
-
-    private func updateControlTarget(
-        after entry: ControlAuditEntry,
-        step: ControlPlanStep,
-        run: ControlCommandRun
-    ) {
-        guard entry.effect == .observed, step.action.mayMoveControlTarget,
-              let target = NSWorkspace.shared.frontmostApplication, !target.isTerminated else { return }
-        if let bundleIdentifier = step.action.validatedNextTargetBundleIdentifier,
-           target.bundleIdentifier != bundleIdentifier { return }
-        run.target = target
-    }
-
-    private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
-        controlExecutionTask?.cancel()
-        controlStatus = status
-        Task { [weak self] in
-            guard let self else { return }
-            _ = await desktopControlSession.cancel()
-            guard controlRun === run else { return }
-            controlRun = nil
-            controlExecutionTask = nil
-        }
-    }
+    func approvePendingControl() { controlEngine.approvePending() }
+    func discardPendingControl() { controlEngine.discardPending() }
+    func cancelControl() { controlEngine.cancel() }
 
     private func controlTarget() throws -> NSRunningApplication {
         guard let app = lastExternalApplication else {
