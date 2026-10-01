@@ -96,6 +96,12 @@ final class NotchPanelController {
         reposition()
     }
 
+    /// Collapses only when the shared policy allows the region that was interacted with.
+    private func collapse(from region: NotchInteractionRegion) {
+        guard NotchCollapsePolicy.shouldCollapse(on: region) else { return }
+        collapse()
+    }
+
     private func collapse() {
         guard panel.isVisible, !state.isCollapsed else { return }
         state.isCollapsed = true
@@ -105,11 +111,11 @@ final class NotchPanelController {
     private func installClickMonitors() {
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.panel { self.collapse() }
+            if event.window !== self.panel { self.collapse(from: .outside) }
             return event
         }
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor in self?.collapse() }
+            Task { @MainActor in self?.collapse(from: .outside) }
         }
     }
 
