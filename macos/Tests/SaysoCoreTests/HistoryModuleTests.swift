@@ -91,3 +91,30 @@ private func makeHost(_ port: FakePort) -> (SaysoModuleHost, HistoryModule, Says
 @Test func historyModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: HistoryModule(port: FakePort())) == [])
 }
+
+@Test func directAppendReturnsTheResultAndStillAnnouncesIt() async {
+    let port = FakePort()
+    port.results = [.failed]
+    let (host, module, _, sink) = makeHost(port)
+    host.enable("history")
+    let t = transcript()
+
+    let result = await module.append(t)
+
+    #expect(result == .failed)
+    #expect(port.appended == [t])
+    #expect(sink.appended == [HistoryAppended(transcriptID: t.id, result: .failed)])
+    #expect(host.engine.stack.map(\.title) == ["History could not save"])
+}
+
+@Test func directAppendWhileDisabledReportsFailureWithoutTouchingStorage() async {
+    let port = FakePort()
+    let (host, module, _, sink) = makeHost(port)
+
+    #expect(await module.append(transcript()) == .failed)
+    host.enable("history")
+    host.disable("history")
+    #expect(await module.append(transcript()) == .failed)
+    #expect(port.appended.isEmpty)
+    #expect(sink.appended.isEmpty)
+}
