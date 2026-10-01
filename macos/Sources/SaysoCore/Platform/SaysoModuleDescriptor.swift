@@ -13,10 +13,17 @@ public struct SaysoModuleDescriptor: Equatable, Sendable {
     public let id: String
     public let title: String
     public let capabilities: Set<SaysoCapability>
+    public let surfaces: Set<SaysoModuleSurface>
 
-    public init(id: String, title: String, capabilities: Set<SaysoCapability> = []) {
+    public init(
+        id: String,
+        title: String,
+        capabilities: Set<SaysoCapability> = [],
+        surfaces: Set<SaysoModuleSurface> = [.compact, .expanded]
+    ) {
         self.id = id
         self.title = title
         self.capabilities = capabilities
+        self.surfaces = surfaces
     }
 }
