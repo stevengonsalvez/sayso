@@ -24,12 +24,13 @@ public struct SaysoModuleContext: Sendable {
         kind: SaysoActivityKind,
         title: String,
         expiresAfter: TimeInterval? = nil,
-        actions: [SaysoAction] = []
+        actions: [SaysoAction] = [],
+        interruption: SaysoInterruptionPolicy = .normal
     ) {
         publishActivity(
             SaysoActivity(
                 moduleID: moduleID, stackID: stackID, kind: kind, title: title,
-                expiresAfter: expiresAfter, actions: actions
+                expiresAfter: expiresAfter, actions: actions, interruption: interruption
             )
         )
     }
@@ -40,11 +41,11 @@ public protocol SaysoModuleRuntime: AnyObject, Sendable {
     /// Must release every observer, timer, hook, socket and retained resource.
     func stop()
     /// Called only for actions declared on one of this module's published activities.
-    func handle(actionID: String)
+    func handle(stackID: String, actionID: String)
 }
 
 public extension SaysoModuleRuntime {
-    func handle(actionID: String) {}
+    func handle(stackID: String, actionID: String) {}
 }
 
 public protocol SaysoModule: Sendable {
