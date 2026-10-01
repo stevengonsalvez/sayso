@@ -18,18 +18,21 @@ public struct SaysoActivity: Equatable, Sendable {
     public let title: String
     /// Seconds after publish when the activity disappears; nil means persistent.
     public let expiresAfter: TimeInterval?
+    public let actions: [SaysoAction]
 
     public init(
         moduleID: String,
         stackID: String,
         kind: SaysoActivityKind,
         title: String,
-        expiresAfter: TimeInterval? = nil
+        expiresAfter: TimeInterval? = nil,
+        actions: [SaysoAction] = []
     ) {
         self.moduleID = moduleID
         self.stackID = stackID
         self.kind = kind
         self.title = title
         self.expiresAfter = expiresAfter
+        self.actions = actions
     }
 }
