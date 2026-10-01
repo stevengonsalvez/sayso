@@ -11,7 +11,7 @@ private func plan(
 ) -> SpeechPlan? {
     SpeechPlan.resolve(
         text: text, language: language, settingsLanguage: settingsLanguage,
-        selectedVoiceID: voice, rate: rate, availableVoiceIDs: installed
+        selectedVoiceID: voice, rate: rate, installedVoiceIDs: { _ in installed }
     )
 }
 
@@ -35,4 +35,18 @@ private func plan(
     #expect(plan(rate: 9)?.rate == 0.6)
     #expect(plan(rate: 0)?.rate == 0.2)
     #expect(plan(rate: 0.45)?.rate == 0.45)
+}
+
+@Test func voiceIsCheckedAgainstTheVoicesInstalledForTheResolvedLanguage() {
+    let result = SpeechPlan.resolve(
+        text: "Hi", language: nil, settingsLanguage: .hindi, selectedVoiceID: "hi-voice", rate: 0.5,
+        installedVoiceIDs: { $0 == .hindi ? ["hi-voice"] : [] }
+    )
+    #expect(result?.voiceID == "hi-voice")
+
+    let other = SpeechPlan.resolve(
+        text: "Hi", language: .tamil, settingsLanguage: .hindi, selectedVoiceID: "hi-voice", rate: 0.5,
+        installedVoiceIDs: { $0 == .hindi ? ["hi-voice"] : [] }
+    )
+    #expect(other?.voiceID == nil)
 }
