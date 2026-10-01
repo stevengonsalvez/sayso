@@ -203,6 +203,10 @@ public final class ControlRunEngine<Target: Sendable> {
         requestCancellation(run, status: reason ?? "Cancellation requested. Current macOS action may still finish.")
     }
 
+    private static func clearButton(in snapshot: DesktopSnapshot) -> DesktopElement? {
+        snapshot.elements.first { ["All Clear", "Clear"].contains($0.title) && $0.supportsPress }
+    }
+
     private func plan(snapshot: DesktopSnapshot, run: Run) async throws -> (plan: JevCyclePlan, alternatives: [String]) {
         setStatus("Consulting Jev model...")
         let offer = JevControlBridge.makeCycleOffer(
@@ -242,8 +246,19 @@ public final class ControlRunEngine<Target: Sendable> {
                         carriedStep = nil
                         isApprovedStep = true
                     } else {
-                        let snapshot = try boundary.capture(run.target)
+                        var snapshot = try boundary.capture(run.target)
                         boundary.didCapture(snapshot)
+                        if !run.calculatorWasCleared, run.calculatorTask != nil,
+                           boundary.bundleIdentifier(run.target) == ControlTryNowPolicy.calculatorBundleIdentifier {
+                            // A freshly launched app can expose no controls for its first moments.
+                            var settleAttempts = 0
+                            while Self.clearButton(in: snapshot) == nil, settleAttempts < 5 {
+                                settleAttempts += 1
+                                try await boundary.pause(.milliseconds(400))
+                                snapshot = try boundary.capture(run.target)
+                                boundary.didCapture(snapshot)
+                            }
+                        }
                         if let task = run.calculatorTask, boundary.bundleIdentifier(run.target) == ControlTryNowPolicy.calculatorBundleIdentifier {
                             if run.nextCalculatorCommandIndex >= task.commands.count {
                                 guard task.resultIsVisible(in: snapshot.observations) else {
@@ -254,9 +269,7 @@ public final class ControlRunEngine<Target: Sendable> {
                             }
                             let command: String
                             if !run.calculatorWasCleared {
-                                guard let clear = snapshot.elements.first(where: {
-                                    ["All Clear", "Clear"].contains($0.title) && $0.supportsPress
-                                }) else {
+                                guard let clear = Self.clearButton(in: snapshot) else {
                                     throw SaysoError.invalidAction("Calculator Clear control is unavailable.")
                                 }
                                 command = "click \(clear.title)"
