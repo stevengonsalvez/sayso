@@ -131,7 +131,8 @@ final class SaysoAppModel: ObservableObject {
         var hasStarted = false
         var waitCount = 0
         var previous: String?
-        var awaitingClarification = false
+        var clarification: (choices: [String], askedAt: Date)?
+        var apiKey: String?
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
 
@@ -2295,21 +2296,23 @@ final class SaysoAppModel: ObservableObject {
             controlStatus = "Try now expected Open Calculator."
             return
         }
-        if let run = controlRun, run.awaitingClarification, controlExecutionTask == nil {
-            do {
-                let clarification = command.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !clarification.isEmpty else { throw SaysoError.invalidAction("Say which target you meant.") }
-                run.cycle = try JevControlRunState(
-                    goal: "\(run.cycle.goal). User clarification: \(clarification)",
-                    recentActions: run.cycle.recentActions
-                )
-                run.awaitingClarification = false
-                controlStatus = "Applying clarification"
-                executeControlRun(run)
-            } catch {
-                controlStatus = error.localizedDescription
+        if let run = controlRun, let pending = run.clarification, controlExecutionTask == nil {
+            if ControlClarification.isAnswer(command, to: pending.choices, askedAt: pending.askedAt) {
+                do {
+                    run.cycle = try JevControlRunState(
+                        goal: "\(run.cycle.goal). User clarification: \(command.trimmingCharacters(in: .whitespacesAndNewlines))",
+                        recentActions: run.cycle.recentActions
+                    )
+                    run.clarification = nil
+                    controlStatus = "Applying clarification"
+                    executeControlRun(run)
+                } catch {
+                    controlStatus = error.localizedDescription
+                }
+                return
             }
-            return
+            // A late or unrelated reply is a new command. beginCommand() resets the session budget.
+            controlRun = nil
         }
         guard controlRun == nil, controlPreparationTask == nil else {
             controlStatus = "Control command already active."
@@ -2319,6 +2322,10 @@ final class SaysoAppModel: ObservableObject {
             let target = try controlTarget()
             let cycle = try JevControlRunState(goal: command)
             let calculatorTask = ControlPlanner.calculatorTask(from: command)
+            // Open + Clear + each key must fit inside the session action budget, or Equals is never checked.
+            if let calculatorTask, calculatorTask.commands.count + 1 >= ControlSessionLimits().maxActions {
+                throw SaysoError.invalidAction("Calculator control supports shorter numbers. Nothing executed.")
+            }
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
@@ -2413,6 +2420,7 @@ final class SaysoAppModel: ObservableObject {
             )
         } catch let error as JevServiceError where error.status == 401 || error.status == 403 {
             guard let fallback = await bitwardenTypeSafeKey(excluding: apiKey) else { throw error }
+            run.apiKey = fallback
             decision = try await JevClient.cycle(
                 state: offer.state,
                 operations: offer.operations,
@@ -2464,9 +2472,7 @@ final class SaysoAppModel: ObservableObject {
                                 guard task.resultIsVisible(in: snapshot.observations) else {
                                     throw SaysoError.invalidAction("Calculator did not show the expected result \(task.expectedResult).")
                                 }
-                                let completed = await desktopControlSession.complete()
-                                controlStatus = completed.result == .completed ? "Control completed: \(task.expectedResult)" : "Control stopped"
-                                finishControlRun()
+                                await completeControlRun("Control completed: \(task.expectedResult)")
                                 return
                             }
                             let command: String
@@ -2491,15 +2497,15 @@ final class SaysoAppModel: ObservableObject {
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
                         } else {
-                            guard let jevKey = await typeSafeKey() else {
+                            // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
+                            if run.apiKey == nil { run.apiKey = await typeSafeKey() }
+                            guard let jevKey = run.apiKey else {
                                 throw SaysoError.unavailable("Configure the TypeSafe / Jev key before using Control.")
                             }
                             let planned = try await planWithJevCycle(snapshot: snapshot, run: run, apiKey: jevKey)
                             switch planned.plan {
                             case .done:
-                                let completed = await desktopControlSession.complete()
-                                controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
-                                finishControlRun()
+                                await completeControlRun("Control completed")
                                 return
                             case .blocked:
                                 _ = await desktopControlSession.fail()
@@ -2526,7 +2532,7 @@ final class SaysoAppModel: ObservableObject {
                                 }
                                 let question = "Which one: \(choices.joined(separator: ", "))?"
                                 run.previous = question
-                                run.awaitingClarification = true
+                                run.clarification = (choices, Date())
                                 controlStatus = question
                                 controlExecutionTask = nil
                                 return
@@ -2568,20 +2574,9 @@ final class SaysoAppModel: ObservableObject {
                         return
                     }
                     controlStatus = entry.result
-                    if ControlCycleCompletion.shouldComplete(
-                        after: step.action,
-                        effect: entry.effect,
-                        goal: run.cycle.goal
-                    ) {
-                        let completed = await desktopControlSession.complete()
-                        controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
-                        finishControlRun()
-                        return
-                    }
-                    if finishes, entry.effect == .observed || entry.effect == .alreadySatisfied {
-                        let completed = await desktopControlSession.complete()
-                        controlStatus = completed.result == .completed ? "Control completed" : "Control stopped"
-                        finishControlRun()
+                    if ControlCycleCompletion.shouldComplete(after: step.action, effect: entry.effect, goal: run.cycle.goal)
+                        || finishes && (entry.effect == .observed || entry.effect == .alreadySatisfied) {
+                        await completeControlRun("Control completed")
                         return
                     }
                 }
@@ -2597,6 +2592,12 @@ final class SaysoAppModel: ObservableObject {
                 finishControlRun()
             }
         }
+    }
+
+    private func completeControlRun(_ status: String) async {
+        let completed = await desktopControlSession.complete()
+        controlStatus = completed.result == .completed ? status : "Control stopped"
+        finishControlRun()
     }
 
     private func finishControlRun() {
