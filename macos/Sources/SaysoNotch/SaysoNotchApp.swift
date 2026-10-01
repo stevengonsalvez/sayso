@@ -2053,7 +2053,9 @@ final class SaysoAppModel: ObservableObject {
     /// Every transcript save goes through the history module so failures surface as retryable activities.
     private func appendToHistory(_ transcript: Transcript) async -> HistoryAppendResult {
         modules.enable("history")
-        return await historyModule.append(transcript)
+        // A disabled or quarantined module must never lose a transcript: fall back to the store directly.
+        if let result = await historyModule.append(transcript) { return result }
+        return await history.appendResult(transcript)
     }
 
     private func speak(plan: SpeechPlan?) {
