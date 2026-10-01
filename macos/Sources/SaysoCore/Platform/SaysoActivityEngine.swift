@@ -21,6 +21,9 @@ public struct SaysoActivityEngine: Sendable {
     }
 
     /// A user pin wins over automation; only a critical activity overrides it.
+    /// Earliest pending expiry, or nil when nothing will expire (so no timer is needed).
+    public var nextExpiry: Date? { entries.compactMap(\.expiry).min() }
+
     public var primary: SaysoActivity? {
         let ranked = stack
         let pinnedHit = pinned.flatMap { pin in
