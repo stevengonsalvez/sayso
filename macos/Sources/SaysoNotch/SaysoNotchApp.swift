@@ -201,10 +201,11 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isNotchOverlayVisible = true
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
-    @Published private(set) var reprocessingHistoryID: UUID?
-    @Published private(set) var isImportingHistoryAudio = false
-    @Published private(set) var isClearingHistory = false
-    @Published private(set) var isHistoryAudioTaskRunning = false
+    @Published private(set) var historyGate = HistoryOperationGate()
+    var reprocessingHistoryID: UUID? { historyGate.reprocessingID }
+    var isImportingHistoryAudio: Bool { historyGate.isImporting }
+    var isClearingHistory: Bool { historyGate.isClearing }
+    var isHistoryAudioTaskRunning: Bool { historyGate.isAudioTaskRunning }
     @Published var onboardingDeferredThisLaunch = false
     @Published var isShowingOnboardingWizard = false
     @Published private(set) var isOnboardingTestActive = false
@@ -849,7 +850,7 @@ final class SaysoAppModel: ObservableObject {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
         }
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning else {
+        guard !historyGate.blocksDictation else {
             return .rejected(.alreadyRecording, "Finish the current history audio task before dictating.")
         }
         let pinnedApplication = handsFreeDestinationProcessIdentifier
@@ -2055,10 +2056,11 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func reprocessHistory(_ entry: Transcript) async {
-        guard reprocessingHistoryID == nil, !isImportingHistoryAudio, !isClearingHistory else {
+        guard historyGate.begin(.reprocess(entry.id)) else {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
+        defer { historyGate.end(.reprocess(entry.id)) }
         guard !isStartingDictation, transcriber.phase == .idle else {
             notice = "Stop dictation before reprocessing saved audio."
             return
@@ -2068,8 +2070,6 @@ final class SaysoAppModel: ObservableObject {
             notice = "This history item has no saved audio to reprocess."
             return
         }
-        reprocessingHistoryID = entry.id
-        defer { reprocessingHistoryID = nil }
         let settingsSnapshot = settings
         showPersistentNotice("Reprocessing saved audio.")
         do {
@@ -2105,31 +2105,29 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startReprocessingHistory(_ entry: Transcript) {
-        guard !isHistoryAudioTaskRunning else {
+        guard historyGate.beginAudioTask() else {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
-        isHistoryAudioTaskRunning = true
         historyAudioTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isHistoryAudioTaskRunning = false }
+            defer { self.historyGate.endAudioTask() }
             await self.reprocessHistory(entry)
             self.historyAudioTask = nil
         }
     }
 
     func importHistoryAudio(_ sourceURLs: [URL]) async {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
+        guard historyGate.begin(.importAudio) else {
             notice = "Finish the current history audio task before importing."
             return
         }
+        defer { historyGate.end(.importAudio) }
         guard !isStartingDictation, transcriber.phase == .idle else {
             notice = "Stop dictation before importing audio."
             return
         }
         let settingsSnapshot = settings
-        isImportingHistoryAudio = true
-        defer { isImportingHistoryAudio = false }
         var importedCount = 0
         var failedCount = 0
         var lastFailure: String?
@@ -2205,14 +2203,13 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startImportHistoryAudio(_ sourceURLs: [URL]) {
-        guard !isHistoryAudioTaskRunning else {
+        guard historyGate.beginAudioTask() else {
             notice = "Finish the current history audio task before importing."
             return
         }
-        isHistoryAudioTaskRunning = true
         historyAudioTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isHistoryAudioTaskRunning = false }
+            defer { self.historyGate.endAudioTask() }
             await self.importHistoryAudio(sourceURLs)
             self.historyAudioTask = nil
         }
@@ -2225,12 +2222,11 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func clearHistory() async -> Bool {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning, !isClearingHistory else {
+        guard historyGate.begin(.clear) else {
             notice = "Finish the current history audio task before clearing history."
             return false
         }
-        isClearingHistory = true
-        defer { isClearingHistory = false }
+        defer { historyGate.end(.clear) }
         return await history.clear()
     }
 
