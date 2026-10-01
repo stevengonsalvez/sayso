@@ -88,6 +88,8 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
     }
 
     @Published public private(set) var isSpeaking = false
+    /// Fired on the main actor when an utterance finishes or is cancelled.
+    public var onFinish: (@Sendable () -> Void)?
     private let synthesizer = AVSpeechSynthesizer()
 
     public override init() {
@@ -128,11 +130,17 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
     }
 
     nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didFinish _: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.onFinish?()
+        }
     }
 
     nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didCancel _: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.onFinish?()
+        }
     }
 }
 
