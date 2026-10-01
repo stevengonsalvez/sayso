@@ -34,7 +34,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 
 ## Carried review findings
 
-1. `macos/Sources/speak/main.swift`: mock dictation acceptance can pass without proving a partial insertion. OPEN.
+1. `macos/Sources/speak/main.swift` acceptance: FIXED. `AcceptanceVerdict` (RED: missing type; GREEN, full suite 357) now requires at least one applied partial (for texts over two words), non-clipboard insertion, and a readable target value containing the dictated text. The CLI itself still runs only against a real app and was not run here.
 2. `JevControlBridge.swift` TYPE_TEXT boundary punctuation: FIXED with `JevTypeTextPunctuationTests` (RED: 3 assertion failures, then GREEN, full suite 352). Only a wrapping quote pair is dropped now.
 3. `NotchInteraction.swift` collapse policy: outside-click collapse now calls `NotchCollapsePolicy`. Status and footer buttons still call the toggle directly and the controller has no test target, so this is only partly wired and unverified at runtime. OPEN (partial).
 
