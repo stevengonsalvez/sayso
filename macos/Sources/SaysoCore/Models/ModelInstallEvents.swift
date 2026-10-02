@@ -3,8 +3,9 @@ import Foundation
 public struct ModelInstallProgress: SaysoEvent, Equatable {
     public let modelID: String
     public let displayName: String
-    public let fraction: Double
-    public init(modelID: String, displayName: String, fraction: Double) {
+    /// nil when the manager cannot report progress.
+    public let fraction: Double?
+    public init(modelID: String, displayName: String, fraction: Double?) {
         self.modelID = modelID
         self.displayName = displayName
         self.fraction = fraction
