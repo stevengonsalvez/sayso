@@ -27,6 +27,8 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Vocabulary module (candidate suggestions, accept/dismiss/retry) | `VocabularyModuleTests` (incl. generic harness) | missing types | 407 | bridge `VocabularyBridge` over the real `SaysoCorrectionLearning` tested with a real temp store (409 pass); app enables the module and syncs candidates on store changes; app builds; suggestions are not rendered anywhere yet | none yet |
 | Gallery notch simulator (model with injected clock + view) | `NotchSimulatorModelTests` (15), `NotchSimulatorRenderTests` (7) | missing types, then stub RED on assertions | 401 (agent claimed 22 new tests vs 19 observed delta, unreconciled) | PNGs read for 3 surfaces; no live window interaction | none yet |
 | Vocabulary module (suggest, accept, dismiss, retry) | `VocabularyModuleTests` (incl. generic harness) | missing types | 407 | port adapter over `SaysoCorrectionLearning` and app wiring NOT written; corrections still flow directly | none yet |
+| Activity progress | `ActivityProgressTests` | missing `progress` param | 411 | none | none yet |
+| Models module + install reporter | `ModelsModuleTests` (incl. harness), `ModelInstallReporterTests` | missing types | 419 | wired in app via Combine on the model managers; retry handled for English and Punjabi only (multilingual retry is a silent no-op); downloads never exercised; no UI renders the progress activity | none yet |
 
 ## Proof boundaries
 
