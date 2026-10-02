@@ -13,7 +13,7 @@ public final class ModelInstallReporter: @unchecked Sendable {
     public init(bus: SaysoEventBus) { self.bus = bus }
 
     public func observe(modelID: String, displayName: String, phase: Phase, fraction: Double?) {
-        enum Outcome { case progress, finished(Bool), nothing }
+        enum Outcome { case progress, finished(Bool), cancelled, nothing }
         // Whole percents only, so tiny fraction changes do not flood observers.
         let fraction = fraction.map { ($0 * 100).rounded() / 100 }
         let outcome = lock.withLock { () -> Outcome in
@@ -31,14 +31,16 @@ public final class ModelInstallReporter: @unchecked Sendable {
                 track.fraction = nil
                 return wasInstalling ? .finished(phase == .installed) : .nothing
             case .idle:
+                let wasInstalling = track.phase == .installing
                 track.phase = .idle
                 track.fraction = nil
-                return .nothing
+                return wasInstalling ? .cancelled : .nothing
             }
         }
         switch outcome {
         case .progress: bus.publish(ModelInstallProgress(modelID: modelID, displayName: displayName, fraction: fraction))
         case .finished(let ok): bus.publish(ModelInstallFinished(modelID: modelID, displayName: displayName, succeeded: ok))
+        case .cancelled: bus.publish(ModelInstallCancelled(modelID: modelID))
         case .nothing: break
         }
     }
