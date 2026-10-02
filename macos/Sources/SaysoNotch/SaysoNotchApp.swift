@@ -230,9 +230,14 @@ final class SaysoAppModel: ObservableObject {
     private var controlOutcome: ControlRunFinished.Outcome = .failed
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
+    private let externalActivities = ExternalActivitiesModule()
+    private var moduleSocket: SaysoModuleSocketServer?
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private lazy var modules = SaysoModuleHost(
-        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule()],
+        modules: [
+            tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
+            externalActivities,
+        ],
         events: moduleEvents
     )
     let history = HistoryStore(maximumEntries: nil)
@@ -333,6 +338,7 @@ final class SaysoAppModel: ObservableObject {
             }
         )
         startControlModule()
+        startExternalAPIIfEnabled()
         observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -2104,6 +2110,22 @@ final class SaysoAppModel: ObservableObject {
         case .installing: .installing
         case .installed: .installed
         case .failed: .failed
+        }
+    }
+
+    /// Local scripts can show activities through an owner-only socket, but only when the user opts in:
+    /// `defaults write <bundle id> sayso.externalAPI.enabled -bool true`.
+    private func startExternalAPIIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: "sayso.externalAPI.enabled") else { return }
+        modules.enable("external")
+        let api = SaysoExternalAPI(host: modules, external: externalActivities)
+        let directory = (SaysoAutomationEndpoint.socketPath as NSString).deletingLastPathComponent
+        let server = SaysoModuleSocketServer(path: directory + "/modules.sock") { api.handle($0) }
+        do {
+            try server.start()
+            moduleSocket = server
+        } catch {
+            modules.disable("external")
         }
     }
 
