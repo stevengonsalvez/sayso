@@ -86,3 +86,20 @@ private func setup() -> (SaysoModuleHost, SaysoEventBus, Sink) {
     bus.publish(ModelInstallProgress(modelID: "m", displayName: "M", fraction: 0.1))
     #expect(host.engine.stack.map(\.title) == ["Downloading M"])
 }
+
+@Test func unknownFractionShowsNoPercentAndReporterRoundsToWholePercent() {
+    let (host, bus, _) = setup()
+    bus.publish(ModelInstallProgress(modelID: "sherpa", displayName: "Punjabi model", fraction: nil))
+    #expect(host.engine.stack.first?.progress == nil)
+    #expect(host.engine.stack.first?.title == "Downloading Punjabi model")
+
+    let reporterBus = SaysoEventBus()
+    final class Seen: @unchecked Sendable { var fractions: [Double?] = [] }
+    let seen = Seen()
+    _ = reporterBus.subscribe(ModelInstallProgress.self) { seen.fractions.append($0.fraction) }
+    let reporter = ModelInstallReporter(bus: reporterBus)
+    reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.101)
+    reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.104)
+    reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.11)
+    #expect(seen.fractions == [0.10, 0.11])
+}
