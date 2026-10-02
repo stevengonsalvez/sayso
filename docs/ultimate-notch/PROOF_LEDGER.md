@@ -73,7 +73,7 @@ Still open: `ShortcutsModule` and `ShortcutIntentModule` double-fire if both are
 
 ## Exact-head CI
 
-PR #54 at `057f9d1`: `build` pass and `Test and package` pass (GitHub Actions). Later heads re-run CI; check the PR for the current state. Not proof of runtime behavior.
+PR #54 at `057f9d1` and again at `3110803` (exact head): `build` pass and `Test and package` pass (GitHub Actions). Later heads re-run CI; check the PR for the current state. Not proof of runtime behavior.
 
 PR #54 review round 3 (peer Opus): Control approve/step binding, double or missing `ControlRunFinished`, tap-action allowlist assigned to peer; permission gate (`isGranted`, `capabilitiesChanged`) deliberately NOT enabled yet because it would flip Control/Dictation to permissionRequired and hide their activities; minors fixed here: boolean version rejected, external stack cap (32), cancelled install clears its card, shortcut intent switch lists every ignored edge. One commit (`7359cc9`) carried three test files because of a staging slip.
 
