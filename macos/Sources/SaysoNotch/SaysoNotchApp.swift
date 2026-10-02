@@ -1234,7 +1234,11 @@ final class SaysoAppModel: ObservableObject {
         let local = corrections.apply(to: base).transformedText
 
         let cloudProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
-        let cloudKey = keyForProvider(cloudProvider)
+        let cloudKey = CleanupRoute.needsCloudCredentials(
+            mode: currentSettings.cleanupMode,
+            cloudCleanupEnabled: currentSettings.cloudCleanupEnabled,
+            byokConsentGranted: currentSettings.byokConsentGranted
+        ) ? keyForProvider(cloudProvider) : nil
         let cloudBaseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL
         let cloudModel = currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let route = CleanupRoute.resolve(
