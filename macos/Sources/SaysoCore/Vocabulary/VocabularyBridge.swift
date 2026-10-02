@@ -15,9 +15,15 @@ public final class VocabularyBridge: VocabularyPort {
         self.bus = bus
     }
 
-    /// Emits `CorrectionCandidateReady` once per candidate id.
+    /// Emits `CorrectionCandidateReady` once per candidate id and `CorrectionCandidateResolved` once when one disappears.
     public func sync() {
-        for candidate in learning.candidates where announced.insert(candidate.id).inserted {
+        let current = learning.candidates
+        let currentIDs = Set(current.map(\.id))
+        for gone in announced.subtracting(currentIDs) {
+            announced.remove(gone)
+            bus.publish(CorrectionCandidateResolved(candidateID: gone))
+        }
+        for candidate in current where announced.insert(candidate.id).inserted {
             bus.publish(CorrectionCandidateReady(
                 candidateID: candidate.id, source: candidate.original, replacement: candidate.corrected
             ))
