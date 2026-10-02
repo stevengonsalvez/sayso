@@ -16,11 +16,12 @@ public enum CleanupPipeline {
     /// - Parameters:
     ///   - rulesOutput: text already produced by the local rules path, returned on any fallback.
     ///   - finish: smart formatting, profile post-processing, lexicon, pronunciations and corrections.
+    @MainActor
     public static func run(
         text: String,
         route: CleanupRoute,
         rulesOutput: String,
-        finish: @Sendable (String) -> String,
+        finish: @MainActor (String) -> String,
         localSLM: (@Sendable (String) async throws -> String)?,
         cloud: (@Sendable (String) async throws -> String)?
     ) async -> CleanupOutcome {
