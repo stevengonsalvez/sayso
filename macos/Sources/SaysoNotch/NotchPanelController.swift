@@ -371,6 +371,12 @@ private struct VoiceWorkspaceContent: View {
                     Button("Settings", action: openSettings)
                     Divider()
                     Button(model.settings.overlayPresentation == .notch ? "Detach from Notch" : "Dock to Notch", action: togglePresentation)
+                    if let primary = model.primaryModuleActivity {
+                        Button("Open in Studio") {
+                            model.openStudio(forModule: primary.moduleID)
+                            openApp()
+                        }
+                    }
                     if let primary = model.primaryModuleActivity,
                        primary.interruption != .critical || statusModel.dismissActionID != nil {
                         Button(primary.interruption == .critical ? "Deny" : "Dismiss notification") {
