@@ -34,6 +34,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Cleanup (route + pipeline with local-rules fallback) | `CleanupRouteTests`, `CleanupPipelineTests` | missing types | 415 | wired into `SaysoAppModel.cleaned`; app builds; no live check against Ollama/BYOK; behavior preserved by reading the old branches | none yet |
 | Dictation module (phases as one activity, failure notice) | `DictationModuleTests` (incl. harness) | missing types | 446 | thin slice only: the app still owns the whole pipeline and just publishes `DictationPhaseChanged` from `transcriber.$phase/$error`; the module shows nothing while live (notch already shows live text). Dictation is NOT extracted. | none yet |
 | Control module (run, clarification, review activities + typed answers) | `ControlModuleTests` (incl. generic harness) | missing event/module types | 446 | wired at the existing `controlStatus` sites in `SaysoAppModel`: run/step/clarification/review/finish events out, cancel/approve/deny/choice answers routed back to `cancelControl`, `approvePendingControl`/`discardPendingControl`, `runControl`; app builds; no live Control run, no Jev call, no AX action tested; guarded execution path untouched | none yet |
+| Module socket server + External API transport | `ModuleSocketServerTests` (real Unix socket: framing, 0600/0700, oversize rejected, stop removes, end-to-end publish) | missing server; full suite then FAILED twice in unrelated tests (history, audio archive) because my first version used process-wide `umask` while tests ran in parallel; fixed by dropping umask and relying on a private 0700 directory (two clean 450-test runs after) | 456 | wired opt-in only (`defaults write ... sayso.externalAPI.enabled -bool true`), default off, never run live | none yet |
 
 ## Proof boundaries
 
@@ -60,6 +61,8 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 ## Review round 2026-10-02 (Opus x2, peer Opus)
 
 Fixed with tests: ticker overwrote the change observer; ready notice restored "Downloading 100%"; vocabulary suggestions never cleared when resolved elsewhere; progress noise and unknown fraction. Fixed in app code without tests (build only): the expiry ticker is now attached; module status ranks below control status in Control mode; tapping the status runs the primary action (Retry/Remember/Stop) and the More menu has "Dismiss notification"; multilingual model retry installs for the current language. Cleanup module (`CleanupRoute`, `CleanupPipeline`) merged from peer branch by cherry-pick; its tests pass in the full suite (440).
+
+Pre-existing hazard noticed, not fixed: `SaysoAutomationServer.makeSocket` also toggles process-wide `umask` during socket creation, which can race with other file creation at startup.
 
 Still open: `ShortcutsModule` and `ShortcutIntentModule` double-fire if both are enabled next to the Carbon manager; the off-main key-down/up hop in `AppShortcutIntents` is two unordered tasks (unused today).
 
