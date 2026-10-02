@@ -29,6 +29,8 @@ public struct ModelsModule: SaysoModule {
                     )
                 },
                 context.subscribe(ModelInstallFinished.self) { [context] event in
+                    // Clear first so an expiring notice never shadows (and later restores) the finished download.
+                    context.dismiss(stackID: "install-\(event.modelID)")
                     if event.succeeded {
                         context.publish(
                             stackID: "install-\(event.modelID)", kind: .completion,
