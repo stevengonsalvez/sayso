@@ -397,7 +397,7 @@ private struct VoiceWorkspaceContent: View {
                 .help("More Sayso controls")
             }
 
-            Button(action: { if statusModel.tapRunsPrimaryAction { model.performPrimaryModuleAction() } else { collapse() } }) {
+            Button(action: { if let tap = statusModel.tapAction { model.performModuleAction(tap) } else { collapse() } }) {
                 Text(status)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.white)
@@ -408,7 +408,7 @@ private struct VoiceWorkspaceContent: View {
             .buttonStyle(.plain)
             .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
             .accessibilityValue(status)
-            .help(statusModel.tapRunsPrimaryAction ? "\(status). Click to \(model.modulePrimaryActionTitle ?? "act")." : "\(status). Click to collapse.")
+            .help(statusModel.tapAction.map { "\(status). Click to \($0.title)." } ?? "\(status). Click to collapse.")
 
             if !statusModel.criticalActions.isEmpty {
                 HStack(spacing: 8) {
