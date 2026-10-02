@@ -16,3 +16,9 @@ public struct CorrectionCandidateReady: SaysoEvent, Equatable {
 public struct VocabularyChanged: SaysoEvent, Equatable {
     public init() {}
 }
+
+/// A candidate left the store (promoted or dismissed from another surface); suggestions for it must go.
+public struct CorrectionCandidateResolved: SaysoEvent, Equatable {
+    public let candidateID: UUID
+    public init(candidateID: UUID) { self.candidateID = candidateID }
+}
