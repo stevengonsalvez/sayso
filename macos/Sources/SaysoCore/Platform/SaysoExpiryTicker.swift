@@ -17,7 +17,11 @@ public final class SaysoExpiryTicker: @unchecked Sendable {
     public init(host: SaysoModuleHost, scheduler: SaysoScheduling) {
         self.host = host
         self.scheduler = scheduler
-        host.onActivitiesChanged = { [weak self] in self?.reschedule() }
+        let previous = host.onActivitiesChanged
+        host.onActivitiesChanged = { [weak self] in
+            previous?()
+            self?.reschedule()
+        }
     }
 
     private func reschedule() {
