@@ -2084,6 +2084,23 @@ final class SaysoAppModel: ObservableObject {
     /// The shown module activity, if any.
     var primaryModuleActivity: SaysoActivity? { modules.engine.primary }
 
+    /// Studio tabs by module id; modules without a tab open the first tab.
+    private static let studioTabs = [
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "shortcut-intents": 8, "tts": 9,
+    ]
+
+    /// Selects the Studio tab for a module through the shared router; permission problems open Settings.
+    func openStudio(forModule moduleID: String) {
+        let granted = Set(PermissionKind.allCases.filter { permissions.states[$0] == .granted })
+        let route = SaysoStudioRouter.route(
+            moduleID: moduleID,
+            descriptors: modules.descriptors,
+            health: { [modules] in modules.health(of: $0) },
+            isGranted: { SaysoStudioNavigation.isGranted($0, grantedPermissions: granted) }
+        )
+        selectedTab = SaysoStudioNavigation.tab(for: route, moduleTabs: Self.studioTabs, settingsTab: 10, defaultTab: 0)
+    }
+
     /// Runs one named action of the shown module activity (used for explicit Approve/Deny buttons).
     func performModuleAction(_ actionID: String) {
         guard let primary = modules.engine.primary else { return }
