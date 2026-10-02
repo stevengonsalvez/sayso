@@ -169,3 +169,18 @@ private func setup() -> (SaysoModuleHost, ClipboardModule, FakePort, FakeSchedul
 @Test func clipboardModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: ClipboardModule(port: FakePort(), scheduler: FakeScheduler())) == [])
 }
+
+@Test func afterDisableCopyBackAndTemporaryPasteDoNothingAndNeverTouchTheClipboard() {
+    let (host, module, port, scheduler, _, _) = setup()
+    port.copy("a")
+    scheduler.firePending()
+    let id = module.entries[0].id
+    let writesBefore = port.writes.count
+
+    host.disable("clipboard")
+    #expect(!module.copyBack(id: id))
+    var ran = false
+    #expect(!module.pasteTemporarily("x") { ran = true; return true })
+    #expect(!ran)
+    #expect(port.writes.count == writesBefore)
+}
