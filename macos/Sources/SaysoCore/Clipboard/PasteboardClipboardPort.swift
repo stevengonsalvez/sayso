@@ -9,15 +9,49 @@ public struct PasteboardClipboardPort: ClipboardPort, @unchecked Sendable {
 
     public var changeCount: Int { pasteboard.changeCount }
 
+    /// Reads count, types and text as one consistent view: if the board changes mid-read the read is retried.
     public func snapshot() -> ClipboardSnapshot {
-        let types = Set((pasteboard.types ?? []).map(\.rawValue))
+        var result = read()
+        for _ in 0..<2 where result.changeCount != pasteboard.changeCount { result = read() }
+        return result
+    }
+
+    private func read() -> ClipboardSnapshot {
+        let count = pasteboard.changeCount
+        let front = NSWorkspace.shared.frontmostApplication
         return ClipboardSnapshot(
-            changeCount: pasteboard.changeCount,
-            types: types,
+            changeCount: count,
+            types: Set((pasteboard.types ?? []).map(\.rawValue)),
             text: pasteboard.string(forType: .string),
-            sourceApp: NSWorkspace.shared.frontmostApplication?.localizedName
+            sourceApp: front?.localizedName,
+            sourceBundleID: front?.bundleIdentifier
         )
     }
+
+    public func captureContents() -> ClipboardContents {
+        let items = (pasteboard.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type -> ClipboardRepresentation? in
+                item.data(forType: type).map { ClipboardRepresentation(type: type.rawValue, data: $0) }
+            }
+        }
+        return ClipboardContents(changeCount: pasteboard.changeCount, items: items.filter { !$0.isEmpty })
+    }
+
+    @discardableResult
+    public func restore(_ contents: ClipboardContents) -> Bool {
+        pasteboard.clearContents()
+        guard !contents.items.isEmpty else { return true }
+        let items = contents.items.map { representations -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for representation in representations {
+                item.setData(representation.data, forType: NSPasteboard.PasteboardType(representation.type))
+            }
+            return item
+        }
+        return pasteboard.writeObjects(items)
+    }
+
+    public func clear() { pasteboard.clearContents() }
 
     @discardableResult
     public func write(text: String, concealed: Bool) -> Bool {
