@@ -32,6 +32,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Activity presentation + status line in notch | `ActivityPresentationTests` | missing type | 422 | the notch status text now shows the primary module activity (title and percent) when not live; action buttons are NOT shown (no layout change was made blind); panel behavior unobserved | none yet |
 | Shortcut intent module (events to intents, mirrors original switch) | `ShortcutIntentModuleTests` (incl. harness) | missing types | 425 | wired: `SaysoShortcutManager.onActionTriggered` now publishes `ShortcutTriggered` and the module calls the original handlers via a main-actor hop. HIGH RISK, unobserved: a regression would silently break hotkeys. The Shortcuts registration module itself is still unwired. | none yet |
 | Cleanup (route + pipeline with local-rules fallback) | `CleanupRouteTests`, `CleanupPipelineTests` | missing types | 415 | wired into `SaysoAppModel.cleaned`; app builds; no live check against Ollama/BYOK; behavior preserved by reading the old branches | none yet |
+| Dictation module (phases as one activity, failure notice) | `DictationModuleTests` (incl. harness) | missing types | 446 | thin slice only: the app still owns the whole pipeline and just publishes `DictationPhaseChanged` from `transcriber.$phase/$error`; the module shows nothing while live (notch already shows live text). Dictation is NOT extracted. | none yet |
 
 ## Proof boundaries
 
