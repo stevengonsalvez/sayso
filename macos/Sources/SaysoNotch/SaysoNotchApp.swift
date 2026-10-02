@@ -228,7 +228,10 @@ final class SaysoAppModel: ObservableObject {
     private let moduleEvents = SaysoEventBus()
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
-    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule, vocabularyModule, ModelsModule()], events: moduleEvents)
+    private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
+    private lazy var modules = SaysoModuleHost(
+        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents], events: moduleEvents
+    )
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -343,8 +346,9 @@ final class SaysoAppModel: ObservableObject {
             guard self?.monitoredHotKey == self?.dictationHotKey else { return }
             self?.stopHoldDictation()
         }
+        modules.enable("shortcut-intents")
         shortcutManager.onActionTriggered = { [weak self] action, isKeyDown in
-            self?.handleShortcutAction(action, isKeyDown: isKeyDown)
+            self?.moduleEvents.publish(ShortcutTriggered(action: action, isKeyDown: isKeyDown))
         }
         refreshShortcutRegistrations()
         reopenObserver = DistributedNotificationCenter.default().addObserver(
@@ -461,22 +465,12 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    private func handleShortcutAction(_ action: SaysoShortcutAction, isKeyDown: Bool) {
-        switch action {
-        case .dictation:
-            if isKeyDown {
-                handleTapDictationShortcut()
-            }
-        case .control:
-            if isKeyDown {
-                handleControlHotKeyDown()
-            } else {
-                handleControlHotKeyUp()
-            }
-        case .toggleNotch:
-            if isKeyDown {
-                toggleNotch()
-            }
+    fileprivate func performShortcutIntent(_ intent: AppShortcutIntents.Intent) {
+        switch intent {
+        case .dictation: handleTapDictationShortcut()
+        case .controlDown: handleControlHotKeyDown()
+        case .controlUp: handleControlHotKeyUp()
+        case .toggleNotch: toggleNotch()
         }
     }
 
@@ -9316,4 +9310,26 @@ enum SaysoPalette {
             endPoint: .bottom
         )
     }
+}
+
+
+/// Hops shortcut intents onto the main actor and calls the original handlers; nothing else decides what a shortcut does.
+private final class AppShortcutIntents: ShortcutIntentHandling, @unchecked Sendable {
+    enum Intent { case dictation, controlDown, controlUp, toggleNotch }
+    private weak var model: SaysoAppModel?
+
+    init(model: SaysoAppModel) { self.model = model }
+
+    private func run(_ intent: Intent) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { model?.performShortcutIntent(intent) }
+        } else {
+            Task { @MainActor [weak model] in model?.performShortcutIntent(intent) }
+        }
+    }
+
+    func dictationShortcutPressed() { run(.dictation) }
+    func controlShortcutPressed() { run(.controlDown) }
+    func controlShortcutReleased() { run(.controlUp) }
+    func toggleNotchShortcutPressed() { run(.toggleNotch) }
 }
