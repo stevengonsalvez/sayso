@@ -30,6 +30,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Activity progress | `ActivityProgressTests` | missing `progress` param | 411 | none | none yet |
 | Models module + install reporter | `ModelsModuleTests` (incl. harness), `ModelInstallReporterTests` | missing types | 419 | wired in app via Combine on the model managers; retry handled for English and Punjabi only (multilingual retry is a silent no-op); downloads never exercised; no UI renders the progress activity | none yet |
 | Activity presentation + status line in notch | `ActivityPresentationTests` | missing type | 422 | the notch status text now shows the primary module activity (title and percent) when not live; action buttons are NOT shown (no layout change was made blind); panel behavior unobserved | none yet |
+| Shortcut intent module (events to intents, mirrors original switch) | `ShortcutIntentModuleTests` (incl. harness) | missing types | 425 | wired: `SaysoShortcutManager.onActionTriggered` now publishes `ShortcutTriggered` and the module calls the original handlers via a main-actor hop. HIGH RISK, unobserved: a regression would silently break hotkeys. The Shortcuts registration module itself is still unwired. | none yet |
 
 ## Proof boundaries
 
