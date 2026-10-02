@@ -55,6 +55,12 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 
 `macos/Scripts/package-app.sh` at head `404109d` built the release `SaysoNotch` product (210 s), assembled `.artifacts/Sayso Notch.app` and passed `codesign --verify --deep --strict`; `spctl` rejects it as expected (not notarized). The app was NOT launched: Stevie's installed `/Applications/Sayso Notch.app` is running and shares the automation socket, hotkeys and microphone, so a second instance would break the one-packaged-process rule. No runtime proof of any wired module exists.
 
+## Review round 2026-10-02 (Opus x2, peer Opus)
+
+Fixed with tests: ticker overwrote the change observer; ready notice restored "Downloading 100%"; vocabulary suggestions never cleared when resolved elsewhere; progress noise and unknown fraction. Fixed in app code without tests (build only): the expiry ticker is now attached; module status ranks below control status in Control mode; tapping the status runs the primary action (Retry/Remember/Stop) and the More menu has "Dismiss notification"; multilingual model retry installs for the current language. Cleanup module (`CleanupRoute`, `CleanupPipeline`) merged from peer branch by cherry-pick; its tests pass in the full suite (440).
+
+Still open: `ShortcutsModule` and `ShortcutIntentModule` double-fire if both are enabled next to the Carbon manager; the off-main key-down/up hop in `AppShortcutIntents` is two unordered tasks (unused today).
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
