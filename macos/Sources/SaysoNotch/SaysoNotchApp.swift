@@ -225,7 +225,10 @@ final class SaysoAppModel: ObservableObject {
     let speech = SpeechOutput()
     private lazy var tts = TtsModule(synthesizer: speech)
     private lazy var historyModule = HistoryModule(port: history)
-    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule])
+    private let moduleEvents = SaysoEventBus()
+    private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
+    private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
+    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule, vocabularyModule], events: moduleEvents)
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -306,8 +309,11 @@ final class SaysoAppModel: ObservableObject {
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        modules.enable("vocabulary")
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+            // objectWillChange fires before the store updates, so read the candidates on the next turn.
+            DispatchQueue.main.async { self?.vocabularyBridge.sync() }
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.handleMonitoredHotKeyGesture(.singleTap)
