@@ -13,12 +13,16 @@ private final class FakePort: FileShelfPort, @unchecked Sendable {
 
     func resolve(_ url: URL) -> FileShelfFile? { lock.withLock { files[url.path] } }
     func acquire(_ url: URL) -> FileShelfAccess? {
-        lock.withLock {
-            guard !refuseAccess.contains(url.path) else { return nil }
+        let granted = lock.withLock { () -> Bool in
+            if refuseAccess.contains(url.path) { return false }
             acquires += 1
             held.insert(url.path)
+            return true
         }
-        return FileShelfAccess { [weak self] in self?.lock.withLock { self?.held.remove(url.path) } }
+        guard granted else { return nil }
+        return FileShelfAccess { [weak self] in
+            self?.lock.withLock { _ = self?.held.remove(url.path) }
+        }
     }
     func open(_ url: URL) { lock.withLock { opened.append(url) } }
     func reveal(_ url: URL) { lock.withLock { revealed.append(url) } }
