@@ -42,3 +42,18 @@ private func setup() -> (ModelInstallReporter, Seen) {
     reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.2)
     #expect(seen.progress.map(\.fraction) == [0.2, 0.2])
 }
+
+@Test func installingThenIdleCancelsTheCardInsteadOfLeavingItForever() {
+    let bus = SaysoEventBus()
+    final class Seen: @unchecked Sendable { var cancelled: [String] = [] }
+    let seen = Seen()
+    _ = bus.subscribe(ModelInstallCancelled.self) { seen.cancelled.append($0.modelID) }
+    let reporter = ModelInstallReporter(bus: bus)
+
+    reporter.observe(modelID: "m", displayName: "M", phase: .idle, fraction: 0)
+    #expect(seen.cancelled.isEmpty)
+    reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.3)
+    reporter.observe(modelID: "m", displayName: "M", phase: .idle, fraction: 0)
+    reporter.observe(modelID: "m", displayName: "M", phase: .idle, fraction: 0)
+    #expect(seen.cancelled == ["m"])
+}

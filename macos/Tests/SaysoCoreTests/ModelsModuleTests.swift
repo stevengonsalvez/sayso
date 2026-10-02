@@ -103,3 +103,11 @@ private func setup() -> (SaysoModuleHost, SaysoEventBus, Sink) {
     reporter.observe(modelID: "m", displayName: "M", phase: .installing, fraction: 0.11)
     #expect(seen.fractions == [0.10, 0.11])
 }
+
+@Test func cancelledInstallClearsItsCard() {
+    let (host, bus, _) = setup()
+    bus.publish(ModelInstallProgress(modelID: "m", displayName: "M", fraction: 0.4))
+    #expect(host.engine.stack.count == 1)
+    bus.publish(ModelInstallCancelled(modelID: "m"))
+    #expect(host.engine.stack.isEmpty)
+}

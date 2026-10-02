@@ -73,3 +73,22 @@ private func call(_ api: SaysoExternalAPI, _ json: String) throws -> [String: An
 @Test func externalModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: ExternalActivitiesModule()) == [])
 }
+
+@Test func booleanVersionIsNotAVersion() throws {
+    let (api, _) = makeAPI()
+    #expect(try call(api, #"{"v":true,"op":"listModules"}"#)["error"] as? String == "unsupported_version")
+    #expect(try call(api, #"{"v":1.0,"op":"listModules"}"#)["modules"] != nil)
+}
+
+@Test func scriptsCannotCreateUnboundedStacksButMayUpdateAndFreeThem() throws {
+    let (api, host) = makeAPI()
+    for n in 0..<SaysoExternalAPI.maxStacks {
+        #expect(try call(api, #"{"v":1,"op":"publish","stackID":"s\#(n)","kind":"ambient","title":"x"}"#)["ok"] as? Bool == true)
+    }
+    #expect(try call(api, #"{"v":1,"op":"publish","stackID":"overflow","kind":"ambient","title":"x"}"#)["error"] as? String == "limit_reached")
+    #expect(try call(api, #"{"v":1,"op":"publish","stackID":"s0","kind":"failure","title":"y"}"#)["ok"] as? Bool == true)
+    #expect(host.engine.stack.count == SaysoExternalAPI.maxStacks)
+
+    _ = try call(api, #"{"v":1,"op":"clear","stackID":"s1"}"#)
+    #expect(try call(api, #"{"v":1,"op":"publish","stackID":"overflow","kind":"ambient","title":"x"}"#)["ok"] as? Bool == true)
+}
