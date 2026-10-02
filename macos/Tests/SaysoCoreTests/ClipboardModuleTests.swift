@@ -2,30 +2,52 @@ import Foundation
 import Testing
 @testable import SaysoCore
 
+private func rep(_ type: String, _ data: Data) -> ClipboardRepresentation { ClipboardRepresentation(type: type, data: data) }
+private let plainType = "public.utf8-plain-text"
+
 private final class FakePort: ClipboardPort, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
-    private var types: Set<String> = []
-    private var text: String?
+    private var items: [[ClipboardRepresentation]] = []
     var writes: [(text: String, concealed: Bool)] = []
+    var restores = 0
+    var clears = 0
 
     var changeCount: Int { lock.withLock { count } }
+    var currentItems: [[ClipboardRepresentation]] { lock.withLock { items } }
+
     func snapshot() -> ClipboardSnapshot {
-        lock.withLock { ClipboardSnapshot(changeCount: count, types: types, text: text, sourceApp: "Safari") }
+        lock.withLock {
+            let types = Set(items.flatMap { $0.map(\.type) })
+            let text = items.first?.first { $0.type == plainType }.flatMap { String(data: $0.data, encoding: .utf8) }
+            return ClipboardSnapshot(changeCount: count, types: types, text: text, sourceApp: "Safari", sourceBundleID: "com.apple.Safari")
+        }
     }
+    func captureContents() -> ClipboardContents { lock.withLock { ClipboardContents(changeCount: count, items: items) } }
+    func restore(_ contents: ClipboardContents) -> Bool {
+        lock.withLock { count += 1; items = contents.items; restores += 1 }
+        return true
+    }
+    func clear() { lock.withLock { count += 1; items = []; clears += 1 } }
     func write(text newText: String, concealed: Bool) -> Bool {
         lock.withLock {
             count += 1
-            text = newText
-            types = concealed ? ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"] : ["public.utf8-plain-text"]
+            var item = [rep(plainType, Data(newText.utf8))]
+            if concealed { item.append(rep("org.nspasteboard.ConcealedType", Data())) }
+            items = [item]
             writes.append((newText, concealed))
         }
         return true
     }
-    /// Another app copies something.
-    func copy(_ newText: String, types newTypes: Set<String> = ["public.utf8-plain-text"]) {
-        lock.withLock { count += 1; text = newText; types = newTypes }
+    /// Another app copies text with extra marker types.
+    func copy(_ newText: String, types newTypes: Set<String> = [plainType]) {
+        lock.withLock {
+            count += 1
+            items = [newTypes.sorted().map { $0 == plainType ? rep($0, Data(newText.utf8)) : rep($0, Data()) }]
+        }
     }
+    /// Another app copies arbitrary items (images, files, rich text).
+    func copyItems(_ newItems: [[ClipboardRepresentation]]) { lock.withLock { count += 1; items = newItems } }
 }
 
 private final class FakeScheduler: SaysoScheduling, @unchecked Sendable {
@@ -124,15 +146,16 @@ private func setup() -> (SaysoModuleHost, ClipboardModule, FakePort, FakeSchedul
     #expect(!module.copyBack(id: UUID()))
 }
 
-@Test func pastingTemporaryTextRestoresThePreviousClipboardOnlyAfterSuccessAndOnlyIfUntouched() {
+@Test func pastingTemporaryTextRestoresTheExactPreviousContentsOnlyAfterSuccessAndOnlyIfUntouched() {
     let (_, module, port, scheduler, _, _) = setup()
     port.copy("previous")
     scheduler.firePending()
+    let before = port.currentItems
 
     var pasted: [String?] = []
     #expect(module.pasteTemporarily("dictated") { pasted.append(port.snapshot().text); return true })
     #expect(pasted == ["dictated"])
-    #expect(port.snapshot().text == "previous")
+    #expect(port.currentItems == before)
     scheduler.firePending()
     #expect(module.entries.map(\.text) == ["previous"])
 
@@ -144,13 +167,38 @@ private func setup() -> (SaysoModuleHost, ClipboardModule, FakePort, FakeSchedul
     #expect(port.snapshot().text == "user copied meanwhile")
 }
 
-@Test func restoringAConcealedPreviousItemKeepsItConcealed() {
-    let (_, module, port, scheduler, _, _) = setup()
-    port.copy("p4ss", types: ["public.utf8-plain-text", "org.nspasteboard.ConcealedType"])
-    scheduler.firePending()
+@Test func imagesFilesAndRichTextOnTheClipboardComeBackVerbatimAfterADictationPaste() {
+    let (_, module, port, _, _, _) = setup()
+    let png = Data([0x89, 0x50, 0x4E, 0x47, 1, 2, 3])
+    let rtf = Data("{\\rtf1 hi}".utf8)
+    let mixed: [[ClipboardRepresentation]] = [
+        [rep("public.png", png), rep("public.tiff", Data([9, 9]))],
+        [rep("public.file-url", Data("file:///tmp/a.txt".utf8))],
+        [rep("public.rtf", rtf), rep(plainType, Data("hi".utf8))],
+    ]
+    port.copyItems(mixed)
+
     #expect(module.pasteTemporarily("dictated") { true })
-    #expect(port.writes.last?.text == "p4ss")
-    #expect(port.writes.last?.concealed == true)
+    #expect(port.currentItems == mixed)
+    #expect(port.restores == 1)
+}
+
+@Test func anEmptyClipboardIsLeftEmptyAfterTheDictationPaste() {
+    let (_, module, port, _, _, _) = setup()
+    #expect(module.pasteTemporarily("dictated") { true })
+    #expect(port.currentItems.isEmpty)
+    #expect(port.snapshot().text == nil)
+}
+
+@Test func aSensitivePreviousItemIsClearedNotRestored() {
+    for marker in ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "com.agilebits.onepassword"] {
+        let (_, module, port, _, _, _) = setup()
+        port.copy("p4ss", types: [plainType, marker])
+        #expect(module.pasteTemporarily("dictated") { true })
+        #expect(port.currentItems.isEmpty)
+        #expect(port.restores == 0)
+        #expect(port.clears == 1)
+    }
 }
 
 @Test func disablingStopsPollingAndClearingEmptiesHistory() {
