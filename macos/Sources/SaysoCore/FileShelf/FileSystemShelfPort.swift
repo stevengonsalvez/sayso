@@ -1,6 +1,11 @@
 import AppKit
 
 /// FileManager and NSWorkspace adapter for the shelf. Staged files are referenced in place, not copied.
+///
+/// Decision (copy-in vs security scope): reference in place and hold a security-scoped grant while the item is
+/// shelved. Copying would double disk use for large files, make drag-out hand back a different file, and leave
+/// private copies behind after a crash. Cost: if the original moves or is deleted the item is pruned, and a
+/// sandboxed build must carry the user-selected-file entitlement for the grant to exist.
 // ponytail: FileManager.default is documented thread-safe for these calls; custom managers must be too.
 public struct FileSystemShelfPort: FileShelfPort, @unchecked Sendable {
     private let fileManager: FileManager
