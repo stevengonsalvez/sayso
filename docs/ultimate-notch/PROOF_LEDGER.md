@@ -49,6 +49,10 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 2. `JevControlBridge.swift` TYPE_TEXT boundary punctuation: FIXED with `JevTypeTextPunctuationTests` (RED: 3 assertion failures, then GREEN, full suite 352). Only a wrapping quote pair is dropped now.
 3. `NotchInteraction.swift` collapse policy: outside-click collapse now calls `NotchCollapsePolicy`. Status and footer buttons still call the toggle directly and the controller has no test target, so this is only partly wired and unverified at runtime. OPEN (partial).
 
+## Packaging proof (2026-10-02)
+
+`macos/Scripts/package-app.sh` at head `404109d` built the release `SaysoNotch` product (210 s), assembled `.artifacts/Sayso Notch.app` and passed `codesign --verify --deep --strict`; `spctl` rejects it as expected (not notarized). The app was NOT launched: Stevie's installed `/Applications/Sayso Notch.app` is running and shares the automation socket, hotkeys and microphone, so a second instance would break the one-packaged-process rule. No runtime proof of any wired module exists.
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
