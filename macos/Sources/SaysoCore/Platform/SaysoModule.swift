@@ -43,12 +43,13 @@ public struct SaysoModuleContext: Sendable {
         title: String,
         expiresAfter: TimeInterval? = nil,
         actions: [SaysoAction] = [],
-        interruption: SaysoInterruptionPolicy = .normal
+        interruption: SaysoInterruptionPolicy = .normal,
+        progress: Double? = nil
     ) {
         publishActivity(
             SaysoActivity(
                 moduleID: moduleID, stackID: stackID, kind: kind, title: title,
-                expiresAfter: expiresAfter, actions: actions, interruption: interruption
+                expiresAfter: expiresAfter, actions: actions, interruption: interruption, progress: progress
             )
         )
     }
