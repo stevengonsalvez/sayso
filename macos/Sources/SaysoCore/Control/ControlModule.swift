@@ -21,6 +21,7 @@ public struct ControlModule: SaysoModule {
         private let lock = NSLock()
         private var subscriptions: [SaysoSubscription] = []
         private var choices: [String] = []
+        private var reviewStep: UUID?
 
         init(context: SaysoModuleContext) { self.context = context }
 
@@ -31,7 +32,8 @@ public struct ControlModule: SaysoModule {
                 context.subscribe(ControlRunStarted.self) { [weak self] in self?.showRun($0.goal) },
                 context.subscribe(ControlStepPlanned.self) { [weak self] in self?.showRun($0.reason) },
                 context.subscribe(ControlClarificationAsked.self) { [weak self] in self?.ask($0) },
-                context.subscribe(ControlConfirmationRequired.self) { [weak self] in self?.review($0.reason) },
+                context.subscribe(ControlConfirmationRequired.self) { [weak self] in self?.review($0) },
+                context.subscribe(ControlConfirmationResolved.self) { [weak self] in self?.resolve($0.stepID) },
                 context.subscribe(ControlRunFinished.self) { [weak self] in self?.finish($0) },
             ].compactMap { $0 }
             lock.withLock { subscriptions = made }
@@ -49,9 +51,13 @@ public struct ControlModule: SaysoModule {
             switch (stackID, actionID) {
             case ("run", "cancel"):
                 context.emit(ControlCancelRequested())
-            case ("confirmation", "approve"), ("confirmation", "deny"):
+            case ("confirmation", _) where actionID.hasPrefix("approve-") || actionID.hasPrefix("deny-"):
+                let approved = actionID.hasPrefix("approve-")
+                guard let step = UUID(uuidString: String(actionID.dropFirst(approved ? "approve-".count : "deny-".count))),
+                      lock.withLock({ reviewStep == step }) else { return }
+                lock.withLock { reviewStep = nil }
                 context.dismiss(stackID: "confirmation")
-                context.emit(ControlConfirmationAnswered(approved: actionID == "approve"))
+                context.emit(ControlConfirmationAnswered(approved: approved, stepID: step))
             case ("clarification", _) where actionID.hasPrefix("choice-"):
                 guard let index = Int(actionID.dropFirst("choice-".count)),
                       let choice = lock.withLock({ choices.indices.contains(index) ? choices[index] : nil }) else { return }
@@ -78,17 +84,30 @@ public struct ControlModule: SaysoModule {
             )
         }
 
-        private func review(_ reason: String) {
+        private func review(_ request: ControlConfirmationRequired) {
+            lock.withLock { reviewStep = request.stepID }
             context.publish(
-                stackID: "confirmation", kind: .confirmation, title: "Review required: \(reason)",
-                actions: [SaysoAction(id: "approve", title: "Approve"), SaysoAction(id: "deny", title: "Deny")],
+                stackID: "confirmation", kind: .confirmation, title: "Review required: \(request.reason)",
+                actions: [
+                    SaysoAction(id: "approve-\(request.stepID)", title: "Approve"),
+                    SaysoAction(id: "deny-\(request.stepID)", title: "Deny"),
+                ],
                 interruption: .critical
             )
         }
 
+        private func resolve(_ step: UUID) {
+            guard lock.withLock({ () -> Bool in
+                guard reviewStep == step else { return false }
+                reviewStep = nil
+                return true
+            }) else { return }
+            context.dismiss(stackID: "confirmation")
+        }
+
         private func finish(_ result: ControlRunFinished) {
             for stack in ["run", "clarification", "confirmation"] { context.dismiss(stackID: stack) }
-            lock.withLock { choices = [] }
+            lock.withLock { choices = []; reviewStep = nil }
             switch result.outcome {
             case .completed:
                 context.publish(stackID: "outcome", kind: .completion, title: result.message, expiresAfter: Self.completedSeconds)
