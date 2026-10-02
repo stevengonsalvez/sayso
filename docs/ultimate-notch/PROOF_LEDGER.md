@@ -29,6 +29,7 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | Vocabulary module (suggest, accept, dismiss, retry) | `VocabularyModuleTests` (incl. generic harness) | missing types | 407 | port adapter over `SaysoCorrectionLearning` and app wiring NOT written; corrections still flow directly | none yet |
 | Activity progress | `ActivityProgressTests` | missing `progress` param | 411 | none | none yet |
 | Models module + install reporter | `ModelsModuleTests` (incl. harness), `ModelInstallReporterTests` | missing types | 419 | wired in app via Combine on the model managers; retry handled for English and Punjabi only (multilingual retry is a silent no-op); downloads never exercised; no UI renders the progress activity | none yet |
+| Activity presentation + status line in notch | `ActivityPresentationTests` | missing type | 422 | the notch status text now shows the primary module activity (title and percent) when not live; action buttons are NOT shown (no layout change was made blind); panel behavior unobserved | none yet |
 
 ## Proof boundaries
 
