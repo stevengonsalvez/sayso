@@ -44,6 +44,9 @@ public struct ModelsModule: SaysoModule {
                         )
                     }
                 },
+                context.subscribe(ModelInstallCancelled.self) { [context] in
+                    context.dismiss(stackID: "install-\($0.modelID)")
+                },
             ].compactMap { $0 }
             lock.withLock { subscriptions = made }
         }
