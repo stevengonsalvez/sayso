@@ -61,16 +61,18 @@ Fail if any hotkey does nothing or fires twice. Known risk: `ShortcutsModule` an
 
 ## 4. Dictation into editable targets (HANDOVER Wave 1 first E2E)
 
-Use `./.artifacts/../.build/release/sayso` is NOT the app. The CLI is the `sayso` product; build it with `swift build -c release --product sayso` if needed.
+The CLI is the `sayso` product (`swift build -c release --product sayso`, binary under `.build/release/`); it is separate from the app bundle.
 
 Deterministic acceptance first (no speech): `sayso acceptance --target <bundle-id> "<text of more than two words>"` with the target frontmost and a fresh empty field. The verdict requires: at least one applied partial insertion, final insertion (not clipboard), a readable target value that changed and contains the text.
+
+Bundle ids: only TextEdit (`com.apple.TextEdit`) and Finder (`com.apple.finder`) were verified on the authoring machine. Resolve the others at run time with `osascript -e 'id of app "<name>"'` and record the result; the ids below marked `?` are unverified guesses.
 
 | Target | Bundle id | Setup | Pass |
 |---|---|---|---|
 | TextEdit | `com.apple.TextEdit` | New empty document, plain text | Text appears incrementally, final text exact, clipboard untouched afterwards |
-| Orca | `com.stablyai.orca` (confirm with `osascript -e 'id of app "Orca"'`) | Focus an empty editable field | Same as TextEdit, or a documented limitation |
-| Arc | `company.thebrowser.Browser` | Focus a text input on a scratch page, not the address bar | Same |
-| WhatsApp | `net.whatsapp.WhatsApp` | Open a chat with a disposable contact, type in the draft field | Draft text exact; MESSAGE IS NEVER SENT; clear the draft afterwards |
+| Orca | `?` (resolve at run time) | Focus an empty editable field | Same as TextEdit, or a documented limitation |
+| Arc | `?` (Arc is commonly `company.thebrowser.Browser`; resolve at run time) | Focus a text input on a scratch page, not the address bar | Same |
+| WhatsApp | `?` (resolve at run time) | Open a chat with a disposable contact, type in the draft field | Draft text exact; MESSAGE IS NEVER SENT; clear the draft afterwards |
 | Finder | `com.apple.finder` | Rename field of a scratch file, or Spotlight-style field | Same, or a documented non-editable result |
 
 Pass criteria per HANDOVER: partial transcript chunks reach the focused target; the clipboard is not used for normal streaming; a temporary clipboard is only a fallback; the previous clipboard is restored after verified insertion; dictated text stays available only when insertion fails. Note: the clipboard module's `pasteTemporarily` is NOT wired; the existing `TextOutput` logic is what is being tested.
