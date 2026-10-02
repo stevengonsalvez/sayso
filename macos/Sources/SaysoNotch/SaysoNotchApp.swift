@@ -264,6 +264,7 @@ final class SaysoAppModel: ObservableObject {
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
     private var modelInstallObservers: [AnyCancellable] = []
+    private var expiryTicker: SaysoExpiryTicker?
     private var modelRetrySubscription: SaysoSubscription?
     private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
     private var controlRun: ControlCommandRun?
@@ -318,6 +319,7 @@ final class SaysoAppModel: ObservableObject {
         modules.onActivitiesChanged = { [weak self] in
             DispatchQueue.main.async { self?.objectWillChange.send() }
         }
+        expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
         observeModelInstalls()
@@ -2062,6 +2064,25 @@ final class SaysoAppModel: ObservableObject {
         return [presentation.title, presentation.subtitle].compactMap { $0 }.joined(separator: " · ")
     }
 
+    /// Title of the primary action of the shown module activity (Retry, Remember, Stop), if it has one.
+    var modulePrimaryActionTitle: String? { modules.engine.primary?.actions.first?.title }
+
+    /// Runs the first action of the shown module activity, e.g. Retry a failed model download.
+    func performPrimaryModuleAction() {
+        guard let primary = modules.engine.primary, let action = primary.actions.first else { return }
+        modules.perform(actionID: action.id, stackID: primary.stackID, moduleID: primary.moduleID)
+    }
+
+    /// Dismisses the shown module activity: its own dismiss action if it has one, otherwise just clears it.
+    func dismissPrimaryModuleActivity() {
+        guard let primary = modules.engine.primary else { return }
+        if primary.actions.contains(where: { $0.id == "dismiss" }) {
+            modules.perform(actionID: "dismiss", stackID: primary.stackID, moduleID: primary.moduleID)
+        } else {
+            modules.dismiss(moduleID: primary.moduleID, stackID: primary.stackID)
+        }
+    }
+
     private func phase(_ state: FluidAudioLocalModelState) -> ModelInstallReporter.Phase {
         switch state {
         case .notInstalled: .idle
@@ -2101,7 +2122,7 @@ final class SaysoAppModel: ObservableObject {
                 }
                 reporter.observe(
                     modelID: SherpaPunjabiModelManager.modelID, displayName: SherpaPunjabiModelManager.displayName,
-                    phase: phase, fraction: 0
+                    phase: phase, fraction: nil
                 )
             },
         ]
@@ -2110,6 +2131,8 @@ final class SaysoAppModel: ObservableObject {
                 guard let self else { return }
                 switch request.modelID {
                 case FluidAudioLocalModelManager.modelID: await self.localEnglishModel.install()
+                case FluidAudioLocalModelManager.multilingualModelID:
+                    await self.localEnglishModel.install(language: self.settings.language)
                 case SherpaPunjabiModelManager.modelID: await self.localPunjabiModel.install()
                 default: break
                 }
