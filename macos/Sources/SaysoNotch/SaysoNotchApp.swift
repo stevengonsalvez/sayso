@@ -2081,6 +2081,15 @@ final class SaysoAppModel: ObservableObject {
         return [presentation.title, presentation.subtitle].compactMap { $0 }.joined(separator: " · ")
     }
 
+    /// The shown module activity, if any.
+    var primaryModuleActivity: SaysoActivity? { modules.engine.primary }
+
+    /// Runs one named action of the shown module activity (used for explicit Approve/Deny buttons).
+    func performModuleAction(_ actionID: String) {
+        guard let primary = modules.engine.primary else { return }
+        modules.perform(actionID: actionID, stackID: primary.stackID, moduleID: primary.moduleID)
+    }
+
     /// Title of the primary action of the shown module activity (Retry, Remember, Stop), if it has one.
     var modulePrimaryActionTitle: String? { modules.engine.primary?.actions.first?.title }
 
