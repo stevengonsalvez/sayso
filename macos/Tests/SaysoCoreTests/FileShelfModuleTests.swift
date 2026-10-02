@@ -5,7 +5,12 @@ import Testing
 private final class FakePort: FileShelfPort, @unchecked Sendable {
     private let lock = NSLock()
     var files: [String: FileShelfFile] = [:]
-    var held: Set<String> = []
+    private var heldCounts: [String: Int] = [:]
+    var onAcquire: (@Sendable () -> Void)?
+    /// Paths with at least one live grant.
+    var held: Set<String> { lock.withLock { Set(heldCounts.filter { $0.value > 0 }.keys) } }
+    /// Every live grant, so a leaked second grant for the same path is visible.
+    var totalHeld: Int { lock.withLock { heldCounts.values.reduce(0, +) } }
     var opened: [URL] = []
     var revealed: [URL] = []
     var acquires = 0
@@ -16,12 +21,13 @@ private final class FakePort: FileShelfPort, @unchecked Sendable {
         let granted = lock.withLock { () -> Bool in
             if refuseAccess.contains(url.path) { return false }
             acquires += 1
-            held.insert(url.path)
+            heldCounts[url.path, default: 0] += 1
             return true
         }
         guard granted else { return nil }
+        onAcquire?()
         return FileShelfAccess { [weak self] in
-            self?.lock.withLock { _ = self?.held.remove(url.path) }
+            self?.lock.withLock { self?.heldCounts[url.path, default: 0] -= 1 }
         }
     }
     func open(_ url: URL) { lock.withLock { opened.append(url) } }
@@ -80,7 +86,7 @@ private func setup(ttl: TimeInterval? = nil) -> (SaysoModuleHost, FileShelfModul
 
     #expect(module.items.map(\.name) == ["a.txt", "b.txt"])
     #expect(module.items.first?.addedAt == clock.now)
-    #expect(port.acquires == 2)
+    #expect(port.totalHeld == 2)
     #expect(port.held == ["/tmp/a.txt", "/tmp/b.txt"])
 }
 
@@ -93,7 +99,7 @@ private func setup(ttl: TimeInterval? = nil) -> (SaysoModuleHost, FileShelfModul
     #expect(module.items.first?.name == "f11")
     #expect(module.items.last?.name == "f2")
     #expect(!port.held.contains("/tmp/f0") && !port.held.contains("/tmp/f1"))
-    #expect(port.held.count == 10)
+    #expect(port.totalHeld == 10)
 
     module.setLimit(7)
     #expect(module.items.count == 10)
@@ -124,7 +130,7 @@ private func setup(ttl: TimeInterval? = nil) -> (SaysoModuleHost, FileShelfModul
 
     #expect(host.perform(actionID: "clear", stackID: "shelf", moduleID: "file-shelf"))
     #expect(module.items.isEmpty)
-    #expect(port.held.isEmpty)
+    #expect(port.totalHeld == 0)
     #expect(!host.engine.stack.contains { $0.stackID == "shelf" })
 }
 
@@ -173,4 +179,39 @@ private func setup(ttl: TimeInterval? = nil) -> (SaysoModuleHost, FileShelfModul
 
 @Test func fileShelfModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: FileShelfModule(port: FakePort(), scheduler: FakeScheduler())) == [])
+}
+
+@Test func addingTheSameFileManyTimesNeverLeaksGrants() {
+    let (_, module, port, _, _) = setup()
+    port.add("/tmp/a.txt")
+    for _ in 0..<5 { module.add([url("/tmp/a.txt")]) }
+    #expect(module.items.count == 1)
+    #expect(port.totalHeld == 1)
+}
+
+@Test func stoppingWhileFilesAreBeingAddedLeavesNoGrantsAndNoStaleItems() {
+    let (host, module, port, _, _) = setup()
+    port.add("/tmp/a.txt")
+    port.onAcquire = { host.disable("file-shelf") }
+
+    module.add([url("/tmp/a.txt")])
+
+    #expect(port.totalHeld == 0)
+    #expect(module.items.isEmpty)
+    host.enable("file-shelf")
+    #expect(module.items.isEmpty)
+}
+
+@Test func pruningSeveralMissingFilesLeavesTheCorrectCountAndPublishesOnce() {
+    let (host, module, port, scheduler, _) = setup()
+    for n in 0..<5 { port.add("/tmp/f\(n)") }
+    module.add((0..<5).map { url("/tmp/f\($0)") })
+    for n in 0..<3 { port.delete("/tmp/f\(n)") }
+
+    scheduler.fire()
+
+    #expect(module.items.count == 2)
+    #expect(host.engine.stack.first(where: { $0.stackID == "shelf" })?.title == "File shelf · 2 files")
+    #expect(scheduler.jobs.count == 1)
+    #expect(port.totalHeld == 2)
 }
