@@ -12,6 +12,7 @@ private final class FakePort: ClipboardPort, @unchecked Sendable {
     var writes: [(text: String, concealed: Bool)] = []
     var restores = 0
     var clears = 0
+    var sourceBundleID = "com.apple.Safari"
 
     var changeCount: Int { lock.withLock { count } }
     var currentItems: [[ClipboardRepresentation]] { lock.withLock { items } }
@@ -20,7 +21,7 @@ private final class FakePort: ClipboardPort, @unchecked Sendable {
         lock.withLock {
             let types = Set(items.flatMap { $0.map(\.type) })
             let text = items.first?.first { $0.type == plainType }.flatMap { String(data: $0.data, encoding: .utf8) }
-            return ClipboardSnapshot(changeCount: count, types: types, text: text, sourceApp: "Safari", sourceBundleID: "com.apple.Safari")
+            return ClipboardSnapshot(changeCount: count, types: types, text: text, sourceApp: "Safari", sourceBundleID: sourceBundleID)
         }
     }
     func captureContents() -> ClipboardContents { lock.withLock { ClipboardContents(changeCount: count, items: items) } }
@@ -231,4 +232,54 @@ private func setup() -> (SaysoModuleHost, ClipboardModule, FakePort, FakeSchedul
     #expect(!module.pasteTemporarily("x") { ran = true; return true })
     #expect(!ran)
     #expect(port.writes.count == writesBefore)
+}
+
+@Test func theCleanOfferDiesWhenSomethingElseIsCopiedAndALateCleanNeverOverwritesIt() {
+    let (host, _, port, scheduler, _, _) = setup()
+    port.copy("https://example.com/p?utm_source=a")
+    scheduler.firePending()
+    #expect(host.engine.stack.contains { $0.stackID == "clean-link" })
+
+    port.copy("foo")
+    // Before the next poll runs the offer is still painted, but its action must already be refused.
+    _ = host.perform(actionID: "clean", stackID: "clean-link", moduleID: "clipboard")
+    #expect(port.writes.isEmpty)
+    #expect(port.snapshot().text == "foo")
+
+    scheduler.firePending()
+    #expect(!host.engine.stack.contains { $0.stackID == "clean-link" })
+}
+
+@Test func enableDisableEnableKeepsOnePollChainAndRecordsCopies() {
+    let (host, module, port, scheduler, _, _) = setup()
+    host.disable("clipboard")
+    host.enable("clipboard")
+    #expect(scheduler.jobs.count == 1)
+
+    port.copy("after cycle")
+    scheduler.firePending()
+    #expect(module.entries.map(\.text) == ["after cycle"])
+    #expect(scheduler.jobs.count == 1)
+}
+
+@Test func aCopyMadeJustBeforeOurOwnWriteIsStillRecorded() {
+    let (_, module, port, scheduler, _, _) = setup()
+    port.copy("first")
+    scheduler.firePending()
+    port.copy("copied a moment ago")
+    let id = module.entries[0].id
+
+    #expect(module.copyBack(id: id))
+    #expect(module.entries.map(\.text).contains("copied a moment ago"))
+}
+
+@Test func oversizedAndPasswordManagerCopiesAreNeverRecordedOrAnnounced() {
+    let (_, module, port, scheduler, _, sink) = setup()
+    port.copy(String(repeating: "a", count: ClipboardPrivacy.maximumRecordedBytes + 1))
+    scheduler.firePending()
+    port.sourceBundleID = "com.bitwarden.desktop"
+    port.copy("hunter2")
+    scheduler.firePending()
+    #expect(module.entries.isEmpty)
+    #expect(sink.recorded.isEmpty)
 }
