@@ -63,3 +63,26 @@ private func setup() -> (SaysoModuleHost, SaysoEventBus, Sink) {
 @Test func modelsModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: ModelsModule()) == [])
 }
+
+@Test func expiredReadyNoticeDoesNotBringBackTheDownloadProgress() {
+    let t0 = Date(timeIntervalSince1970: 100)
+    let bus = SaysoEventBus()
+    final class Clock: @unchecked Sendable { var now: Date; init(_ n: Date) { now = n } }
+    let clock = Clock(t0)
+    let host = SaysoModuleHost(modules: [ModelsModule()], now: { clock.now }, events: bus)
+    host.enable("models")
+    bus.publish(ModelInstallProgress(modelID: "m", displayName: "M", fraction: 1))
+    bus.publish(ModelInstallFinished(modelID: "m", displayName: "M", succeeded: true))
+    #expect(host.engine.stack.map(\.title) == ["M ready"])
+
+    clock.now += 10
+    host.tick()
+    #expect(host.engine.stack.isEmpty)
+}
+
+@Test func retryAfterFailureShowsFreshProgressNotTheOldFailure() {
+    let (host, bus, _) = setup()
+    bus.publish(ModelInstallFinished(modelID: "m", displayName: "M", succeeded: false))
+    bus.publish(ModelInstallProgress(modelID: "m", displayName: "M", fraction: 0.1))
+    #expect(host.engine.stack.map(\.title) == ["Downloading M"])
+}
