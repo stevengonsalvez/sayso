@@ -228,7 +228,7 @@ final class SaysoAppModel: ObservableObject {
     private let moduleEvents = SaysoEventBus()
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
-    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule, vocabularyModule], events: moduleEvents)
+    private lazy var modules = SaysoModuleHost(modules: [tts, historyModule, vocabularyModule, ModelsModule()], events: moduleEvents)
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -260,6 +260,9 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
+    private var modelInstallObservers: [AnyCancellable] = []
+    private var modelRetrySubscription: SaysoSubscription?
+    private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -310,6 +313,8 @@ final class SaysoAppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         modules.enable("vocabulary")
+        modules.enable("models")
+        observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
             // objectWillChange fires before the store updates, so read the candidates on the next turn.
@@ -2062,6 +2067,61 @@ final class SaysoAppModel: ObservableObject {
         // A disabled or quarantined module must never lose a transcript: fall back to the store directly.
         if let result = await historyModule.append(transcript) { return result }
         return await history.appendResult(transcript)
+    }
+
+    private func phase(_ state: FluidAudioLocalModelState) -> ModelInstallReporter.Phase {
+        switch state {
+        case .notInstalled: .idle
+        case .installing: .installing
+        case .installed: .installed
+        case .failed: .failed
+        }
+    }
+
+    /// Feeds model manager state into install events and runs retries requested from the activity.
+    private func observeModelInstalls() {
+        let reporter = modelInstallReporter
+        modelInstallObservers = [
+            localEnglishModel.$state.combineLatest(localEnglishModel.$downloadProgress)
+                .sink { [weak self] state, fraction in
+                    guard let self else { return }
+                    reporter.observe(
+                        modelID: FluidAudioLocalModelManager.modelID, displayName: FluidAudioLocalModelManager.displayName,
+                        phase: self.phase(state), fraction: fraction
+                    )
+                },
+            localEnglishModel.$multilingualState.combineLatest(localEnglishModel.$multilingualDownloadProgress)
+                .sink { [weak self] state, fraction in
+                    guard let self else { return }
+                    reporter.observe(
+                        modelID: FluidAudioLocalModelManager.multilingualModelID,
+                        displayName: FluidAudioLocalModelManager.multilingualDisplayName,
+                        phase: self.phase(state), fraction: fraction
+                    )
+                },
+            localPunjabiModel.$state.sink { state in
+                let phase: ModelInstallReporter.Phase = switch state {
+                case .notInstalled: .idle
+                case .installing: .installing
+                case .installed: .installed
+                case .failed: .failed
+                }
+                reporter.observe(
+                    modelID: SherpaPunjabiModelManager.modelID, displayName: SherpaPunjabiModelManager.displayName,
+                    phase: phase, fraction: 0
+                )
+            },
+        ]
+        modelRetrySubscription = moduleEvents.subscribe(ModelInstallRetryRequested.self) { [weak self] request in
+            Task { @MainActor in
+                guard let self else { return }
+                switch request.modelID {
+                case FluidAudioLocalModelManager.modelID: await self.localEnglishModel.install()
+                case SherpaPunjabiModelManager.modelID: await self.localPunjabiModel.install()
+                default: break
+                }
+            }
+        }
     }
 
     private func speak(plan: SpeechPlan?) {
