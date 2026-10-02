@@ -230,6 +230,8 @@ final class SaysoAppModel: ObservableObject {
     private var dictationPhaseBridge: DictationPhaseBridge?
     private var dictationStopSubscription: SaysoSubscription?
     private var controlOutcome: ControlRunFinished.Outcome = .failed
+    private var pendingControlStepID: UUID?
+    private var controlRunAnnounced = true
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
     private let externalActivities = ExternalActivitiesModule()
@@ -1985,10 +1987,11 @@ final class SaysoAppModel: ObservableObject {
             startAutomation()
         } else {
             automation.stop()
-            pendingControlStep = nil
+            clearPendingControlStep()
             controlPreparationTask?.cancel()
             controlPreparationTask = nil
             controlPreparationID = nil
+            endControl(.cancelled, message: "Desktop control disabled.")
             if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
         }
         save()
@@ -2463,6 +2466,7 @@ final class SaysoAppModel: ObservableObject {
                 return
             }
             // A late or unrelated reply is a new command. beginCommand() resets the session budget.
+            endControl(.cancelled, message: controlStatus)
             controlRun = nil
         }
         guard controlRun == nil, controlPreparationTask == nil else {
@@ -2480,6 +2484,7 @@ final class SaysoAppModel: ObservableObject {
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
+            controlRunAnnounced = false
             moduleEvents.publish(ControlRunStarted(goal: command))
             controlPreparationTask = Task { [weak self] in
                 let availableApplications = await Task.detached(priority: .utility) {
@@ -2511,19 +2516,19 @@ final class SaysoAppModel: ObservableObject {
 
     func approvePendingControl() {
         guard desktopControlEnabled() else {
-            pendingControlStep = nil
+            clearPendingControlStep()
             if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
             return
         }
         guard let step = pendingControlStep, let run = controlRun else { return }
-        pendingControlStep = nil
+        clearPendingControlStep()
         let finishes = pendingControlFinishes
         pendingControlFinishes = false
         executeControlRun(run, approvedStep: step, approvedFinishes: finishes)
     }
 
     func discardPendingControl() {
-        pendingControlStep = nil
+        clearPendingControlStep()
         pendingControlFinishes = false
         guard let run = controlRun else {
             controlStatus = "Action discarded"
@@ -2553,6 +2558,8 @@ final class SaysoAppModel: ObservableObject {
             },
             moduleEvents.subscribe(ControlConfirmationAnswered.self) { [weak self] answer in
                 MainActor.assumeIsolated {
+                    // An answer for any step other than the one now pending is stale and must not run it.
+                    guard answer.stepID == self?.pendingControlStepID else { return }
                     if answer.approved { self?.approvePendingControl() } else { self?.discardPendingControl() }
                 }
             },
@@ -2563,14 +2570,14 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func cancelControl() {
-        pendingControlStep = nil
+        clearPendingControlStep()
         pendingControlFinishes = false
         if controlPreparationTask != nil {
             controlPreparationTask?.cancel()
             controlPreparationTask = nil
             controlPreparationID = nil
             controlStatus = "Control command cancelled."
-            moduleEvents.publish(ControlRunFinished(outcome: .cancelled, message: controlStatus))
+            endControl(.cancelled, message: controlStatus)
             return
         }
         guard let run = controlRun else {
@@ -2731,9 +2738,11 @@ final class SaysoAppModel: ObservableObject {
                                     isApprovedStep = true
                                 } else {
                                     pendingControlStep = step
+                                    let stepID = UUID()
+                                    pendingControlStepID = stepID
                                     pendingControlFinishes = finishes
                                     controlStatus = "Review required: \(step.reason)"
-                                    moduleEvents.publish(ControlConfirmationRequired(reason: step.reason))
+                                    moduleEvents.publish(ControlConfirmationRequired(reason: step.reason, stepID: stepID))
                                     controlExecutionTask = nil
                                     return
                                 }
@@ -2788,13 +2797,27 @@ final class SaysoAppModel: ObservableObject {
         finishControlRun()
     }
 
-    private func finishControlRun() {
-        // A run already cancelled has announced itself and cleared controlRun.
-        if controlRun != nil {
-            moduleEvents.publish(ControlRunFinished(outcome: controlOutcome, message: controlStatus))
-        }
-        controlOutcome = .failed
+    /// Tells the control module the pending review no longer applies, whichever path resolved it.
+    private func clearPendingControlStep() {
         pendingControlStep = nil
+        guard let stepID = pendingControlStepID else { return }
+        pendingControlStepID = nil
+        moduleEvents.publish(ControlConfirmationResolved(stepID: stepID))
+    }
+
+    /// The only place a Control run is announced as finished; later calls for the same run are ignored,
+    /// so a cancel followed by a late completion cannot show "completed" after the user cancelled.
+    private func endControl(_ outcome: ControlRunFinished.Outcome, message: String) {
+        clearPendingControlStep()
+        guard !controlRunAnnounced else { return }
+        controlRunAnnounced = true
+        moduleEvents.publish(ControlRunFinished(outcome: outcome, message: message))
+    }
+
+    private func finishControlRun() {
+        endControl(controlOutcome, message: controlStatus)
+        controlOutcome = .failed
+        clearPendingControlStep()
         pendingControlFinishes = false
         controlRun = nil
         controlExecutionTask = nil
@@ -2815,7 +2838,7 @@ final class SaysoAppModel: ObservableObject {
     private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
         controlExecutionTask?.cancel()
         controlStatus = status
-        moduleEvents.publish(ControlRunFinished(outcome: .cancelled, message: status))
+        endControl(.cancelled, message: status)
         Task { [weak self] in
             guard let self else { return }
             _ = await desktopControlSession.cancel()
