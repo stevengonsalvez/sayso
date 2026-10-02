@@ -129,6 +129,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
 
     @Published public private(set) var phase: SessionPhase = .idle
     @Published public private(set) var partialText = ""
+    @Published public private(set) var audioLevel: Float = 0
     @Published public private(set) var error: SaysoError?
 
     private var audioEngine = AVAudioEngine()
@@ -153,6 +154,11 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     private var retainsCloudAudio = false
     private var usesCloudTranscription = false
     private var cloudPreviewTask: SFSpeechRecognitionTask?
+    private var activeExecutionMode: TranscriptionExecutionMode = .streaming
+    private var usesBatchFileTranscription = false
+    private var batchTranscriptionRunID: UUID?
+    private var retainsBatchAudio = false
+    private var batchAudioURL: URL?
     private var onFinal: (@Sendable (Transcript) -> Void)?
     private var onPartial: (@Sendable (String) -> Void)?
     private var onTermination: (@Sendable (TranscriptionTermination) -> Void)?
@@ -230,6 +236,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         preferredAudioInputUID: AudioInputDeviceUID? = nil,
         saveAudio: Bool = false,
         cloudTranscription: OpenAICompatibleAudioTranscriptionConfiguration? = nil,
+        executionMode: TranscriptionExecutionMode = .streaming,
         onPartial: @escaping @Sendable (String) -> Void = { _ in },
         onTermination: @escaping @Sendable (TranscriptionTermination) -> Void = { _ in },
         onFinal: @escaping @Sendable (Transcript) -> Void
@@ -253,6 +260,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         self.onTermination = onTermination
         activeLanguage = language
         activeRoute = route
+        self.activeExecutionMode = executionMode
         self.handsFree = handsFree
         handsFreeSpeechGate = .init()
         cancelHandsFreeTimers()
@@ -273,6 +281,17 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                 language: language,
                 route: route,
                 configuration: cloudTranscription,
+                preferredAudioInputUID: preferredAudioInputUID,
+                saveAudio: saveAudio,
+                attempt: attempt
+            )
+        }
+
+        if executionMode == .batch {
+            guard await microphoneAuthorized(attempt: attempt), isStartCurrent(attempt) else { return false }
+            return await startBatchLocalTranscription(
+                language: language,
+                route: route,
                 preferredAudioInputUID: preferredAudioInputUID,
                 saveAudio: saveAudio,
                 attempt: attempt
@@ -383,6 +402,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     public func stop() {
+        audioLevel = 0
         cancelHandsFreeTimers()
         if startGate.isPending {
             cancelStartAttempt()
@@ -394,6 +414,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         }
         if usesCloudTranscription {
             stopCloudTranscription()
+            return
+        }
+        if usesBatchFileTranscription {
+            stopBatchLocalTranscription()
             return
         }
         if usesFluidAudio {
@@ -410,6 +434,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func observeAudio(level: Float) {
+        audioLevel = level
         guard handsFree, phase == .listening else { return }
         handsFreeSpeechGate.observe(level: level, threshold: Self.handsFreeSpeechThreshold)
         if level > Self.handsFreeSpeechThreshold {
@@ -687,7 +712,8 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
 
             var previewRequest: SFSpeechAudioBufferRecognitionRequest?
-            if SFSpeechRecognizer.authorizationStatus() == .authorized,
+            if activeExecutionMode == .streaming,
+               SFSpeechRecognizer.authorizationStatus() == .authorized,
                let recognizer = SFSpeechRecognizer(), recognizer.isAvailable {
                 let req = SFSpeechAudioBufferRecognitionRequest()
                 req.shouldReportPartialResults = true
@@ -810,6 +836,136 @@ public final class LiveTranscriber: NSObject, ObservableObject {
         cloudAudioURL = nil
         retainsCloudAudio = false
         usesCloudTranscription = false
+    }
+
+    private func startBatchLocalTranscription(
+        language: DictationLanguage,
+        route: ProviderRoute,
+        preferredAudioInputUID: AudioInputDeviceUID?,
+        saveAudio: Bool,
+        attempt: UUID
+    ) async -> Bool {
+        await prepareAudioInput(preferredAudioInputUID)
+        guard isStartCurrent(attempt) else {
+            stopAudioEngine()
+            return false
+        }
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        do {
+            try prepareSessionAudio(enabled: true, inputFormat: format)
+            guard let archive = sessionAudioArchive else {
+                fail(.unavailable("Audio capture"))
+                return false
+            }
+            let runID = UUID()
+            batchTranscriptionRunID = runID
+            retainsBatchAudio = saveAudio
+            usesBatchFileTranscription = true
+            let levelReporter = AudioLevelReporter { [weak self] level in self?.observeAudio(level: level) }
+
+            input.installTap(
+                onBus: 0,
+                bufferSize: 1_024,
+                format: format,
+                block: makeArchiveTap(archive: archive, levelReporter: levelReporter)
+            )
+            audioEngine.prepare()
+            try audioEngine.start()
+            phase = .listening
+            scheduleHandsFreeStopsIfNeeded()
+            return true
+        } catch {
+            guard isStartCurrent(attempt) else { return false }
+            stopAudioEngine()
+            discardSessionAudio()
+            clearBatchLocalTranscriptionRun()
+            fail(.unavailable("Audio capture could not start: \(error.localizedDescription)"))
+            return false
+        }
+    }
+
+    private func stopBatchLocalTranscription() {
+        guard usesBatchFileTranscription, phase == .listening,
+              let runID = batchTranscriptionRunID else { return }
+        phase = .processing
+        stopAudioEngine()
+        cancelHandsFreeTimers()
+        let audioFileURL = sessionAudioArchive?.finish()
+        sessionAudioArchive = nil
+        guard let audioFileURL else {
+            clearBatchLocalTranscriptionRun()
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
+        batchAudioURL = audioFileURL
+        let language = activeLanguage
+        let route = activeRoute
+        Task { [weak self] in
+            do {
+                let transcript = try await FileTranscriber.transcribe(
+                    fileURL: audioFileURL,
+                    language: language,
+                    route: route
+                )
+                self?.finishBatchLocalTranscription(runID: runID, transcript: transcript, audioFileURL: audioFileURL)
+            } catch {
+                self?.failBatchLocalTranscription(runID: runID, audioFileURL: audioFileURL, error: error)
+            }
+        }
+    }
+
+    private func finishBatchLocalTranscription(runID: UUID, transcript: Transcript, audioFileURL: URL) {
+        guard batchTranscriptionRunID == runID else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            return
+        }
+        let keepAudio = retainsBatchAudio
+        clearBatchLocalTranscriptionRun()
+        guard !transcript.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            phase = .idle
+            terminate(.cancelled)
+            return
+        }
+        if !keepAudio { SessionAudioArchive.deleteManagedRecording(audioFileURL) }
+        var result = transcript
+        if keepAudio {
+            result = Transcript(
+                id: transcript.id,
+                createdAt: transcript.createdAt,
+                text: transcript.text,
+                translatedText: transcript.translatedText,
+                translatedLanguage: transcript.translatedLanguage,
+                language: transcript.language,
+                route: transcript.route,
+                isFinal: true,
+                audioFileURL: audioFileURL
+            )
+        }
+        phase = .idle
+        onFinal?(result)
+        onFinal = nil
+        onPartial = nil
+        onTermination = nil
+    }
+
+    private func failBatchLocalTranscription(runID: UUID, audioFileURL: URL, error: Error) {
+        guard batchTranscriptionRunID == runID else {
+            SessionAudioArchive.deleteManagedRecording(audioFileURL)
+            return
+        }
+        SessionAudioArchive.deleteManagedRecording(audioFileURL)
+        clearBatchLocalTranscriptionRun()
+        fail(.unavailable("Batch transcription failed: \(error.localizedDescription)"))
+    }
+
+    private func clearBatchLocalTranscriptionRun() {
+        usesBatchFileTranscription = false
+        batchTranscriptionRunID = nil
+        retainsBatchAudio = false
+        batchAudioURL = nil
     }
 
     private func stopFluidAudio() {
@@ -1030,6 +1186,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
     }
 
     private func fail(_ error: SaysoError) {
+        audioLevel = 0
         cancelStartAttempt()
         stopAppleAudioCapture()
         discardSessionAudio()
@@ -1037,6 +1194,10 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             SessionAudioArchive.deleteManagedRecording(cloudAudioURL)
         }
         clearCloudTranscriptionRun()
+        if let batchAudioURL {
+            SessionAudioArchive.deleteManagedRecording(batchAudioURL)
+        }
+        clearBatchLocalTranscriptionRun()
         self.error = error
         phase = .failed
         terminate(.failed(error.localizedDescription))

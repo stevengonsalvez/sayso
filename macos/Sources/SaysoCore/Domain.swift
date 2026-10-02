@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import AVFoundation
 
 public enum SaysoMode: String, Codable, CaseIterable, Sendable {
     case dictation
@@ -193,6 +194,20 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
     public var route: ProviderRoute
     public var isFinal: Bool
     public var audioFileURL: URL?
+    public var duration: Double?
+
+    public var effectiveDuration: Double? {
+        if let duration, duration > 0 {
+            return duration
+        }
+        if let audioFileURL,
+           let file = try? AVAudioFile(forReading: audioFileURL),
+           file.processingFormat.sampleRate > 0 {
+            let fileDuration = Double(file.length) / file.processingFormat.sampleRate
+            return fileDuration > 0 ? fileDuration : nil
+        }
+        return nil
+    }
 
     public var hasTranslation: Bool {
         !(translatedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -215,7 +230,8 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         language: DictationLanguage,
         route: ProviderRoute,
         isFinal: Bool,
-        audioFileURL: URL? = nil
+        audioFileURL: URL? = nil,
+        duration: Double? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -226,6 +242,28 @@ public struct Transcript: Codable, Equatable, Identifiable, Sendable {
         self.route = route
         self.isFinal = isFinal
         self.audioFileURL = audioFileURL
+        self.duration = duration
+    }
+}
+
+public enum TranscriptionExecutionMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    case streaming = "streaming"
+    case batch = "batch"
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .streaming: "Streaming"
+        case .batch: "Batch"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .streaming: "Transcribes live as you speak. Instant feedback in notch."
+        case .batch: "Transcribes finished audio in one pass on stop. Highest accuracy and punctuation."
+        }
     }
 }
 
@@ -234,13 +272,14 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var overlayPresentation: OverlayPresentation = .notch
     public var language: DictationLanguage = .english
     public var route: ProviderRoute = .local
+    public var transcriptionExecutionMode: TranscriptionExecutionMode = .streaming
     public var translationEnabled = false
     public var outputLanguage: DictationLanguage = .english
     public var speechLanguage: DictationLanguage = .english
     public var speechVoiceIdentifier: String?
     public var speechRate: Double = 0.5
     public var autoInsert = true
-    public var livePartialInsertion = true
+    public var livePartialInsertion = false
     public var restoreClipboardAfterPaste = true
     public var handsFree = false
     public var handsFreeContinuous = false
@@ -332,7 +371,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, overlayPresentation, language, route, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
+        case mode, overlayPresentation, language, route, transcriptionExecutionMode, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
@@ -354,6 +393,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         overlayPresentation = decoded(OverlayPresentation.self, .overlayPresentation, fallback: overlayPresentation)
         language = decoded(DictationLanguage.self, .language, fallback: language)
         route = decoded(ProviderRoute.self, .route, fallback: route)
+        transcriptionExecutionMode = decoded(TranscriptionExecutionMode.self, .transcriptionExecutionMode, fallback: transcriptionExecutionMode)
         translationEnabled = decoded(Bool.self, .translationEnabled, fallback: translationEnabled)
         outputLanguage = decoded(DictationLanguage.self, .outputLanguage, fallback: outputLanguage)
         let legacySpeechLanguage = outputLanguage == .automatic ? speechLanguage : outputLanguage
