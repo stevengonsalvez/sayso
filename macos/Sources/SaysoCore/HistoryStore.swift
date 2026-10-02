@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import AVFoundation
 
 public enum HistoryScope: String, CaseIterable, Identifiable, Sendable {
     case all
@@ -62,17 +63,87 @@ public enum HistoryFilter {
 }
 
 public struct HistoryInsights: Equatable, Sendable {
+    public static let defaultCloudCostPerMinuteUSD: Double = 0.006
+
     public let entries: Int
     public let words: Int
     public let activeDays: Int
+    public let totalDurationSeconds: Double
+    public let formattedDuration: String
+    public let averageWordsPerMinute: Double
+    public let estimatedCloudSpendUSD: Double
 
-    public init(entries: Int, words: Int, activeDays: Int) {
-        self.entries = entries; self.words = words; self.activeDays = activeDays
+    public init(
+        entries: Int,
+        words: Int,
+        activeDays: Int,
+        totalDurationSeconds: Double = 0,
+        formattedDuration: String = "0s",
+        averageWordsPerMinute: Double = 0,
+        estimatedCloudSpendUSD: Double = 0
+    ) {
+        self.entries = entries
+        self.words = words
+        self.activeDays = activeDays
+        self.totalDurationSeconds = totalDurationSeconds
+        self.formattedDuration = formattedDuration
+        self.averageWordsPerMinute = averageWordsPerMinute
+        self.estimatedCloudSpendUSD = estimatedCloudSpendUSD
     }
 
-    public static func make(from entries: [Transcript], calendar: Calendar = .current) -> HistoryInsights {
+    public static func make(
+        from entries: [Transcript],
+        calendar: Calendar = .current,
+        cloudCostPerMinuteUSD: Double = defaultCloudCostPerMinuteUSD
+    ) -> HistoryInsights {
         let days = Set(entries.map { calendar.startOfDay(for: $0.createdAt) })
-        return .init(entries: entries.count, words: entries.reduce(0) { $0 + $1.displayText.split(whereSeparator: \.isWhitespace).count }, activeDays: days.count)
+        let words = entries.reduce(0) { $0 + $1.displayText.split(whereSeparator: \.isWhitespace).count }
+        let totalDurationSeconds = entries.reduce(0.0) { $0 + ($1.effectiveDuration ?? 0) }
+        let formattedDuration = formatDuration(totalDurationSeconds)
+        let durationMinutes = totalDurationSeconds / 60.0
+        let averageWordsPerMinute = durationMinutes > 0 ? (Double(words) / durationMinutes) : 0
+
+        let cloudDurationSeconds = entries
+            .filter { $0.route == .byok }
+            .reduce(0.0) { $0 + ($1.effectiveDuration ?? 0) }
+        let estimatedCloudSpendUSD = (cloudDurationSeconds / 60.0) * cloudCostPerMinuteUSD
+
+        return .init(
+            entries: entries.count,
+            words: words,
+            activeDays: days.count,
+            totalDurationSeconds: totalDurationSeconds,
+            formattedDuration: formattedDuration,
+            averageWordsPerMinute: averageWordsPerMinute,
+            estimatedCloudSpendUSD: estimatedCloudSpendUSD
+        )
+    }
+
+    public static func formatDuration(_ totalSeconds: Double) -> String {
+        let rounded = max(0, Int(totalSeconds.rounded()))
+        let hours = rounded / 3600
+        let minutes = (rounded % 3600) / 60
+        let seconds = rounded % 60
+
+        if hours > 0 {
+            if minutes > 0 && seconds > 0 {
+                return "\(hours)h \(minutes)m \(seconds)s"
+            } else if minutes > 0 {
+                return "\(hours)h \(minutes)m"
+            } else if seconds > 0 {
+                return "\(hours)h \(seconds)s"
+            } else {
+                return "\(hours)h"
+            }
+        } else if minutes > 0 {
+            if seconds > 0 {
+                return "\(minutes)m \(seconds)s"
+            } else {
+                return "\(minutes)m"
+            }
+        } else {
+            return "\(seconds)s"
+        }
     }
 }
 
@@ -157,6 +228,10 @@ public actor HistoryStore {
 
     public func matching(_ query: String) -> [Transcript] {
         HistoryFilter.matching(all(), query: query)
+    }
+
+    public func insights() -> HistoryInsights {
+        HistoryInsights.make(from: all())
     }
 
     @discardableResult
