@@ -1231,66 +1231,55 @@ final class SaysoAppModel: ObservableObject {
         base = LexiconCorrections.apply(base, pronunciations: currentSettings.pronunciations)
         let local = corrections.apply(to: base).transformedText
 
-        if currentSettings.cleanupMode == .localSLM {
-            if let localEndpoint = URL(string: "http://127.0.0.1:11434/v1") {
-                let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
-                do {
-                    let localCleaner = OpenAICompatibleTranscriptCleaner(
-                        baseURL: localEndpoint,
-                        apiKey: "ollama",
-                        model: slmModelName
-                    )
-                    let slmCleaned = try await localCleaner.clean(
-                        text,
-                        language: language,
-                        lexiconDirectives: currentSettings.dictationProfile.cleanupDirectives
-                    )
-                    var cleaned = TranscriptCleanup.smartFormat(
-                        slmCleaned,
-                        capitalizesFirstLetter: true,
-                        capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-                        addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
-                    )
-                    cleaned = currentSettings.dictationProfile.postProcess(cleaned)
-                    cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
-                    cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
-                    return corrections.apply(to: cleaned).transformedText
-                } catch {
-                    // Local server offline, continue with smart rules
-                }
+        let cloudProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
+        let cloudKey = keyForProvider(cloudProvider)
+        let cloudBaseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL
+        let cloudModel = currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route = CleanupRoute.resolve(
+            mode: currentSettings.cleanupMode,
+            cloudCleanupEnabled: currentSettings.cloudCleanupEnabled,
+            byokConsentGranted: currentSettings.byokConsentGranted,
+            hasCloudKey: cloudKey != nil,
+            hasCloudBaseURL: cloudBaseURL != nil,
+            hasCloudModel: !cloudModel.isEmpty
+        )
+        let directives = currentSettings.dictationProfile.cleanupDirectives
+        var localSLM: (@Sendable (String) async throws -> String)?
+        if let endpoint = URL(string: "http://127.0.0.1:11434/v1") {
+            let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
+            localSLM = { raw in
+                try await OpenAICompatibleTranscriptCleaner(baseURL: endpoint, apiKey: "ollama", model: slmModelName)
+                    .clean(raw, language: language, lexiconDirectives: directives)
             }
-            return local
         }
-
-        guard currentSettings.cleanupMode == .cloudLLM || currentSettings.cloudCleanupEnabled,
-              currentSettings.byokConsentGranted else {
-            return local
+        var cloud: (@Sendable (String) async throws -> String)?
+        if let key = cloudKey, let baseURL = cloudBaseURL {
+            cloud = { raw in
+                try await OpenAICompatibleTranscriptCleaner(baseURL: baseURL, apiKey: key, model: cloudModel)
+                    .clean(raw, language: language, lexiconDirectives: directives)
+            }
         }
-        let cleanupProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
-        guard let key = keyForProvider(cleanupProvider),
-              let baseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL,
-              !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return local
-        }
-        do {
-            let directives = currentSettings.dictationProfile.cleanupDirectives
-            let cloud = try await OpenAICompatibleTranscriptCleaner(
-                baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
-            ).clean(text, language: language, lexiconDirectives: directives)
-            var cleaned = TranscriptCleanup.smartFormat(
-                cloud,
-                capitalizesFirstLetter: true,
-                capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-                addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
-            )
-            cleaned = currentSettings.dictationProfile.postProcess(cleaned)
-            cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
-            cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
-            return corrections.apply(to: cleaned).transformedText
-        } catch {
-            transcriptProcessingNotice = "Cloud cleanup unavailable. Applied smart rules."
-            return local
-        }
+        let outcome = await CleanupPipeline.run(
+            text: text,
+            route: route,
+            rulesOutput: local,
+            finish: { [self] provided in
+                var cleaned = TranscriptCleanup.smartFormat(
+                    provided,
+                    capitalizesFirstLetter: true,
+                    capitalizesSentences: currentSettings.cleanupPreset != .minimal,
+                    addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
+                )
+                cleaned = currentSettings.dictationProfile.postProcess(cleaned)
+                cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
+                cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
+                return corrections.apply(to: cleaned).transformedText
+            },
+            localSLM: localSLM,
+            cloud: cloud
+        )
+        if let notice = outcome.notice { transcriptProcessingNotice = notice }
+        return outcome.text
     }
 
     private func setTranscriptCompletionNotice(_ completion: String) {
