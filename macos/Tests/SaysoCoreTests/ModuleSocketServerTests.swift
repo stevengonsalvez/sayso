@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import SaysoCore
 
-private func tempSocketPath() -> String { "/tmp/sayso-t-\(UUID().uuidString.prefix(8)).sock" }
+private func tempSocketPath() -> String { "/tmp/sayso-t-\(UUID().uuidString.prefix(8))/s.sock" }
 
 private func connectClient(_ path: String) -> Int32? {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -76,7 +76,7 @@ private final class Calls: @unchecked Sendable {
         return Data("echo:".utf8) + request
     }
     try server.start()
-    defer { server.stop() }
+    defer { server.stop(); try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
 
     #expect(roundTrip(path, Data("hi".utf8)) == Data("echo:hi".utf8))
     #expect(roundTrip(path, Data("again".utf8)) == Data("echo:again".utf8))
@@ -84,6 +84,9 @@ private final class Calls: @unchecked Sendable {
 
     let permissions = try FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber
     #expect((permissions?.intValue ?? 0) & 0o777 == 0o600)
+    let directory = (path as NSString).deletingLastPathComponent
+    let dirPermissions = try FileManager.default.attributesOfItem(atPath: directory)[.posixPermissions] as? NSNumber
+    #expect((dirPermissions?.intValue ?? 0) & 0o777 == 0o700)
 }
 
 @Test func oversizedFramesAreRejectedWithoutCallingTheHandler() throws {
