@@ -19,4 +19,9 @@ public enum CleanupRoute: Equatable, Sendable {
               hasCloudKey, hasCloudBaseURL, hasCloudModel else { return .rules }
         return .cloud
     }
+
+    /// True only when the route could be cloud, so secrets are never read for rules or local-model cleanup.
+    public static func needsCloudCredentials(mode: CleanupMode, cloudCleanupEnabled: Bool, byokConsentGranted: Bool) -> Bool {
+        mode != .localSLM && (mode == .cloudLLM || cloudCleanupEnabled) && byokConsentGranted
+    }
 }
