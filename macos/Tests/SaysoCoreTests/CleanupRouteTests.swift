@@ -27,3 +27,11 @@ private func route(
     #expect(route(mode: .cloudLLM, hasBaseURL: false) == .rules)
     #expect(route(mode: .cloudLLM, hasModel: false) == .rules)
 }
+
+@Test func cloudCredentialsAreOnlyNeededWhenTheRouteCouldBeCloud() {
+    #expect(!CleanupRoute.needsCloudCredentials(mode: .rules, cloudCleanupEnabled: false, byokConsentGranted: true))
+    #expect(!CleanupRoute.needsCloudCredentials(mode: .localSLM, cloudCleanupEnabled: true, byokConsentGranted: true))
+    #expect(!CleanupRoute.needsCloudCredentials(mode: .cloudLLM, cloudCleanupEnabled: false, byokConsentGranted: false))
+    #expect(CleanupRoute.needsCloudCredentials(mode: .cloudLLM, cloudCleanupEnabled: false, byokConsentGranted: true))
+    #expect(CleanupRoute.needsCloudCredentials(mode: .rules, cloudCleanupEnabled: true, byokConsentGranted: true))
+}
