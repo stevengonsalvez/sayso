@@ -32,7 +32,7 @@ public struct ShortcutIntentModule: SaysoModule {
                 case (.control, true): handler.controlShortcutPressed()
                 case (.control, false): handler.controlShortcutReleased()
                 case (.toggleNotch, true): handler.toggleNotchShortcutPressed()
-                default: break
+                case (.dictation, false), (.toggleNotch, false): break
                 }
             }
             lock.withLock { subscription = made }
