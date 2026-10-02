@@ -230,7 +230,8 @@ final class SaysoAppModel: ObservableObject {
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private lazy var modules = SaysoModuleHost(
-        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents], events: moduleEvents
+        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule()],
+        events: moduleEvents
     )
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
@@ -265,6 +266,7 @@ final class SaysoAppModel: ObservableObject {
     private var correctionChanges: AnyCancellable?
     private var modelInstallObservers: [AnyCancellable] = []
     private var expiryTicker: SaysoExpiryTicker?
+    private var dictationPhaseObserver: AnyCancellable?
     private var modelRetrySubscription: SaysoSubscription?
     private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
     private var controlRun: ControlCommandRun?
@@ -322,6 +324,12 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
+        modules.enable("dictation")
+        dictationPhaseObserver = (
+            transcriber.$phase.combineLatest(transcriber.$error).sink { [weak self] phase, error in
+                self?.moduleEvents.publish(DictationPhaseChanged(phase: phase, errorMessage: error?.localizedDescription))
+            }
+        )
         observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
