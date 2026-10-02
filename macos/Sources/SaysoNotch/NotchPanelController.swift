@@ -341,6 +341,7 @@ private struct VoiceWorkspaceContent: View {
         let isControl = model.settings.mode == .control
         if !model.transcriber.partialText.isEmpty, isLive || !isControl { return model.transcriber.partialText }
         if let notice = model.notice { return notice }
+        if !isLive, let activity = model.moduleActivityStatus { return activity }
         if isControl { return model.controlStatus }
         if model.transcriber.phase == .listening { return "Listening for dictation" }
         return "Ready to dictate into the focused app"
