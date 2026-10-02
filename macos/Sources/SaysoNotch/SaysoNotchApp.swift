@@ -226,11 +226,13 @@ final class SaysoAppModel: ObservableObject {
     private lazy var tts = TtsModule(synthesizer: speech)
     private lazy var historyModule = HistoryModule(port: history)
     private let moduleEvents = SaysoEventBus()
+    private var controlAnswerSubscriptions: [SaysoSubscription] = []
+    private var controlOutcome: ControlRunFinished.Outcome = .failed
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private lazy var modules = SaysoModuleHost(
-        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule()],
+        modules: [tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule()],
         events: moduleEvents
     )
     let history = HistoryStore(maximumEntries: nil)
@@ -330,6 +332,7 @@ final class SaysoAppModel: ObservableObject {
                 self?.moduleEvents.publish(DictationPhaseChanged(phase: phase, errorMessage: error?.localizedDescription))
             }
         )
+        startControlModule()
         observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -2433,6 +2436,7 @@ final class SaysoAppModel: ObservableObject {
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
+            moduleEvents.publish(ControlRunStarted(goal: command))
             controlPreparationTask = Task { [weak self] in
                 let availableApplications = await Task.detached(priority: .utility) {
                     InstalledDesktopApplication.available()
@@ -2484,6 +2488,24 @@ final class SaysoAppModel: ObservableObject {
         requestControlCancellation(run, status: "Action discarded")
     }
 
+    /// Turns the control module's answers back into the existing guarded control paths.
+    private func startControlModule() {
+        modules.enable("control")
+        controlAnswerSubscriptions = [
+            moduleEvents.subscribe(ControlCancelRequested.self) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cancelControl() }
+            },
+            moduleEvents.subscribe(ControlConfirmationAnswered.self) { [weak self] answer in
+                MainActor.assumeIsolated {
+                    if answer.approved { self?.approvePendingControl() } else { self?.discardPendingControl() }
+                }
+            },
+            moduleEvents.subscribe(ControlClarificationChosen.self) { [weak self] chosen in
+                MainActor.assumeIsolated { self?.runControl(chosen.choice) }
+            },
+        ]
+    }
+
     func cancelControl() {
         pendingControlStep = nil
         pendingControlFinishes = false
@@ -2492,6 +2514,7 @@ final class SaysoAppModel: ObservableObject {
             controlPreparationTask = nil
             controlPreparationID = nil
             controlStatus = "Control command cancelled."
+            moduleEvents.publish(ControlRunFinished(outcome: .cancelled, message: controlStatus))
             return
         }
         guard let run = controlRun else {
@@ -2600,6 +2623,7 @@ final class SaysoAppModel: ObservableObject {
                             finishes = false
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
+                            moduleEvents.publish(ControlStepPlanned(reason: "verified Calculator step"))
                         } else {
                             // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
                             if run.apiKey == nil { run.apiKey = await typeSafeKey() }
@@ -2629,6 +2653,7 @@ final class SaysoAppModel: ObservableObject {
                                 finishes = completesGoal && run.calculatorTask == nil
                             }
                             controlStatus = "Planned: \(step.reason)"
+                            moduleEvents.publish(ControlStepPlanned(reason: step.reason))
                             if step.confidence < ControlPolicy.minimumConfidence {
                                 let choices = planned.alternatives
                                 guard !choices.isEmpty else {
@@ -2638,6 +2663,7 @@ final class SaysoAppModel: ObservableObject {
                                 run.previous = question
                                 run.clarification = (choices, Date())
                                 controlStatus = question
+                                moduleEvents.publish(ControlClarificationAsked(question: question, choices: choices, askedAt: Date()))
                                 controlExecutionTask = nil
                                 return
                             }
@@ -2651,6 +2677,7 @@ final class SaysoAppModel: ObservableObject {
                                     pendingControlStep = step
                                     pendingControlFinishes = finishes
                                     controlStatus = "Review required: \(step.reason)"
+                                    moduleEvents.publish(ControlConfirmationRequired(reason: step.reason))
                                     controlExecutionTask = nil
                                     return
                                 }
@@ -2701,10 +2728,16 @@ final class SaysoAppModel: ObservableObject {
     private func completeControlRun(_ status: String) async {
         let completed = await desktopControlSession.complete()
         controlStatus = completed.result == .completed ? status : "Control stopped"
+        controlOutcome = completed.result == .completed ? .completed : .failed
         finishControlRun()
     }
 
     private func finishControlRun() {
+        // A run already cancelled has announced itself and cleared controlRun.
+        if controlRun != nil {
+            moduleEvents.publish(ControlRunFinished(outcome: controlOutcome, message: controlStatus))
+        }
+        controlOutcome = .failed
         pendingControlStep = nil
         pendingControlFinishes = false
         controlRun = nil
@@ -2726,6 +2759,7 @@ final class SaysoAppModel: ObservableObject {
     private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
         controlExecutionTask?.cancel()
         controlStatus = status
+        moduleEvents.publish(ControlRunFinished(outcome: .cancelled, message: status))
         Task { [weak self] in
             guard let self else { return }
             _ = await desktopControlSession.cancel()
