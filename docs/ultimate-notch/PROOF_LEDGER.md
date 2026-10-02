@@ -23,6 +23,8 @@ Every RED below was a focused `swift test --filter <name>` run observed before p
 | External API v1 (listModules, publish, clear) + external module | `ExternalAPITests` (validation, no confirmations from scripts, disabled module, generic harness) | missing API types | 368 | handler only: NOT connected to the Unix socket transport; expiry ticker exists but is not attached to an app host | none yet |
 | Expiry ticker + dispatch scheduler | `ExpiryTickerTests`, `DispatchSchedulerTests` | missing types; first scheduler test run on the main queue was flaky in the full suite, moved to a private queue | 374 | not yet attached to the app host (nothing renders or ticks activities yet) | none yet |
 | Notch surface machine (hover 60ms peek, click pin, outside collapse, swipe, jump, top-edge) | `NotchSurfaceMachineTests` | missing type; first GREEN failed on float timing at exactly 60ms, fixed with epsilon | 382 | NOT wired: `NotchPanelController` still uses its own isCollapsed toggle | none yet |
+| Gallery interactive notch simulator | `NotchSimulatorModelTests`, `NotchSimulatorRenderTests` | missing types, then stubbed assertion failures | 401 (agent reported 22 new vs 19 counted; I did not reconcile) | window never driven live; 3 rendered PNGs viewed by the agent | none yet |
+| Vocabulary module (candidate suggestions, accept/dismiss/retry) | `VocabularyModuleTests` (incl. generic harness) | missing types | 407 | NOT wired: no `VocabularyPort` adapter over `SaysoCorrectionLearning`, nothing emits `CorrectionCandidateReady` | none yet |
 
 ## Proof boundaries
 
