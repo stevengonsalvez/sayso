@@ -227,6 +227,8 @@ final class SaysoAppModel: ObservableObject {
     private lazy var historyModule = HistoryModule(port: history)
     private let moduleEvents = SaysoEventBus()
     private var controlAnswerSubscriptions: [SaysoSubscription] = []
+    private var dictationPhaseBridge: DictationPhaseBridge?
+    private var dictationStopSubscription: SaysoSubscription?
     private var controlOutcome: ControlRunFinished.Outcome = .failed
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
@@ -273,7 +275,6 @@ final class SaysoAppModel: ObservableObject {
     private var correctionChanges: AnyCancellable?
     private var modelInstallObservers: [AnyCancellable] = []
     private var expiryTicker: SaysoExpiryTicker?
-    private var dictationPhaseObserver: AnyCancellable?
     private var modelRetrySubscription: SaysoSubscription?
     private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
     private var controlRun: ControlCommandRun?
@@ -331,14 +332,9 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
-        modules.enable("dictation")
-        dictationPhaseObserver = (
-            transcriber.$phase.combineLatest(transcriber.$error).sink { [weak self] phase, error in
-                self?.moduleEvents.publish(DictationPhaseChanged(phase: phase, errorMessage: error?.localizedDescription))
-            }
-        )
         startControlModule()
         startExternalAPIIfEnabled()
+        startDictationModule()
         observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -2508,6 +2504,18 @@ final class SaysoAppModel: ObservableObject {
             return
         }
         requestControlCancellation(run, status: "Action discarded")
+    }
+
+    /// Mirrors transcriber phases as dictation activities; the Stop action reuses the existing stop path.
+    private func startDictationModule() {
+        modules.enable("dictation")
+        dictationPhaseBridge = DictationPhaseBridge(phases: transcriber.$phase.eraseToAnyPublisher(), bus: moduleEvents)
+        dictationStopSubscription = moduleEvents.subscribe(DictationStopRequested.self) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.transcriber.canStop || self.isStartingDictation else { return }
+                self.startOrStopDictation()
+            }
+        }
     }
 
     /// Turns the control module's answers back into the existing guarded control paths.
