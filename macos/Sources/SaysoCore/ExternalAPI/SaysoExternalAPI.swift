@@ -6,6 +6,8 @@ public struct SaysoExternalAPI: Sendable {
     static let maxTitleLength = 120
     static let maxStackIDLength = 64
     static let maxExpirySeconds: TimeInterval = 3600
+    /// Distinct stacks a script may hold at once, so a runaway script cannot flood the notch.
+    public static let maxStacks = 32
     /// Scripts may never raise confirmations: those can interrupt a user pin and approve actions.
     private static let allowedKinds: [String: SaysoActivityKind] = [
         "ambient": .ambient, "activeTask": .activeTask, "completion": .completion, "failure": .failure,
@@ -23,7 +25,10 @@ public struct SaysoExternalAPI: Sendable {
         guard let object = try? JSONSerialization.jsonObject(with: request) as? [String: Any] else {
             return Self.encode(["error": "bad_request"])
         }
-        guard object["v"] as? Int == Self.version else { return Self.encode(["error": "unsupported_version"]) }
+        guard let number = object["v"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue == Double(Self.version) else {
+            return Self.encode(["error": "unsupported_version"])
+        }
         switch object["op"] as? String {
         case "listModules": return listModules()
         case "publish": return publish(object)
@@ -54,8 +59,11 @@ public struct SaysoExternalAPI: Sendable {
             }
             expiry = seconds
         }
-        return external.publish(stackID: stackID, kind: kind, title: title, expiresAfter: expiry)
-            ? Self.encode(["ok": true]) : Self.encode(["error": "module_unavailable"])
+        switch external.publish(stackID: stackID, kind: kind, title: title, expiresAfter: expiry, maxStacks: Self.maxStacks) {
+        case .published: return Self.encode(["ok": true])
+        case .unavailable: return Self.encode(["error": "module_unavailable"])
+        case .limitReached: return Self.encode(["error": "limit_reached"])
+        }
     }
 
     private func clear(_ object: [String: Any]) -> Data {
