@@ -25,7 +25,7 @@ public final class VocabularyModule: SaysoModule, @unchecked Sendable {
         let port: VocabularyPort
         let context: SaysoModuleContext
         private let lock = NSLock()
-        private var subscription: SaysoSubscription?
+        private var subscriptions: [SaysoSubscription] = []
         private var tasks: [UUID: Task<Void, Never>] = [:]
         private var pending: [UUID: CorrectionCandidateReady] = [:]
         private var stopped = false
@@ -35,20 +35,21 @@ public final class VocabularyModule: SaysoModule, @unchecked Sendable {
             self.context = context
         }
 
-        var retainedResources: Int { lock.withLock { tasks.count + (subscription == nil ? 0 : 1) } }
+        var retainedResources: Int { lock.withLock { tasks.count + subscriptions.count } }
 
         func start() {
             let made = context.subscribe(CorrectionCandidateReady.self) { [weak self] in self?.offer($0) }
-            lock.withLock { subscription = made }
+            let resolved = context.subscribe(CorrectionCandidateResolved.self) { [weak self] in self?.clear($0.candidateID) }
+            lock.withLock { subscriptions = [made, resolved].compactMap { $0 } }
         }
 
         func stop() {
-            let (running, made) = lock.withLock { () -> ([Task<Void, Never>], SaysoSubscription?) in
+            let (running, made) = lock.withLock { () -> ([Task<Void, Never>], [SaysoSubscription]) in
                 stopped = true
-                defer { tasks = [:]; pending = [:]; subscription = nil }
-                return (Array(tasks.values), subscription)
+                defer { tasks = [:]; pending = [:]; subscriptions = [] }
+                return (Array(tasks.values), subscriptions)
             }
-            made?.cancel()
+            made.forEach { $0.cancel() }
             running.forEach { $0.cancel() }
         }
 
