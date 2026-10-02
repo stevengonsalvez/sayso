@@ -336,16 +336,20 @@ private struct VoiceWorkspaceContent: View {
         model.transcriber.canStop || model.transcriber.phase == .listening
     }
 
-    private var status: String {
+    private var statusModel: NotchStatus {
         // Once a Control utterance ends, its stale transcript must not hide planning, questions, or results.
-        let isControl = model.settings.mode == .control
-        if !model.transcriber.partialText.isEmpty, isLive || !isControl { return model.transcriber.partialText }
-        if let notice = model.notice { return notice }
-        if !isLive, !isControl, let activity = model.moduleActivityStatus { return activity }
-        if isControl { return model.controlStatus }
-        if model.transcriber.phase == .listening { return "Listening for dictation" }
-        return "Ready to dictate into the focused app"
+        NotchStatusPolicy.resolve(
+            partialText: model.transcriber.partialText,
+            isLive: isLive,
+            isControl: model.settings.mode == .control,
+            notice: model.notice,
+            controlStatus: model.controlStatus,
+            primary: model.primaryModuleActivity,
+            isListening: model.transcriber.phase == .listening
+        )
     }
+
+    private var status: String { statusModel.text }
 
     private var actionTitle: String {
         if model.settings.mode == .control {
@@ -367,8 +371,11 @@ private struct VoiceWorkspaceContent: View {
                     Button("Settings", action: openSettings)
                     Divider()
                     Button(model.settings.overlayPresentation == .notch ? "Detach from Notch" : "Dock to Notch", action: togglePresentation)
-                    if model.moduleActivityStatus != nil {
-                        Button("Dismiss notification", action: model.dismissPrimaryModuleActivity)
+                    if let primary = model.primaryModuleActivity,
+                       primary.interruption != .critical || statusModel.dismissActionID != nil {
+                        Button(primary.interruption == .critical ? "Deny" : "Dismiss notification") {
+                            if let id = statusModel.dismissActionID { model.performModuleAction(id) } else { model.dismissPrimaryModuleActivity() }
+                        }
                     }
                     Button("Collapse", action: collapse)
                     Button("Hide", action: dismiss)
@@ -384,7 +391,7 @@ private struct VoiceWorkspaceContent: View {
                 .help("More Sayso controls")
             }
 
-            Button(action: { if !isLive, model.modulePrimaryActionTitle != nil, model.moduleActivityStatus == status { model.performPrimaryModuleAction() } else { collapse() } }) {
+            Button(action: { if statusModel.tapRunsPrimaryAction { model.performPrimaryModuleAction() } else { collapse() } }) {
                 Text(status)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.white)
@@ -395,7 +402,18 @@ private struct VoiceWorkspaceContent: View {
             .buttonStyle(.plain)
             .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
             .accessibilityValue(status)
-            .help(!isLive && model.modulePrimaryActionTitle != nil && model.moduleActivityStatus == status ? "\(status). Click to \(model.modulePrimaryActionTitle ?? "act")." : "\(status). Click to collapse.")
+            .help(statusModel.tapRunsPrimaryAction ? "\(status). Click to \(model.modulePrimaryActionTitle ?? "act")." : "\(status). Click to collapse.")
+
+            if !statusModel.criticalActions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(statusModel.criticalActions, id: \.id) { action in
+                        Button(action.title) { model.performModuleAction(action.id) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(action.id == "approve" ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                            .accessibilityLabel("\(action.title): \(status)")
+                    }
+                }
+            }
 
             if model.settings.mode == .control, !isLive, model.transcriber.canStart {
                 Button(model.isCheckingControlTryNowReadiness ? "Checking readiness..." : "Try now: Open Calculator") {
