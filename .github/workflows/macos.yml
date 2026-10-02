@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   native:
-    name: Test and package
+    name: Build & Test (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
     defaults:
@@ -28,14 +28,33 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check Package.resolved drift
+        run: git diff --exit-code Package.resolved
+
       - name: Install icon tooling
         run: |
           if ! command -v rsvg-convert >/dev/null; then
             brew install librsvg
           fi
 
-      - name: Run native tests
-        run: swift test --parallel
+      - name: Run native tests with test keychain
+        run: python3 Scripts/with-test-keychain.py swift test --enable-code-coverage --parallel
+
+      - name: Report Coverage
+        if: always()
+        run: |
+          BIN_PATH=$(swift build --show-bin-path)
+          XCTEST_PATH=$(find "$BIN_PATH" -name '*.xctest' -type d | head -1)
+          if [ -n "$XCTEST_PATH" ]; then
+            EXEC_PATH="$XCTEST_PATH/Contents/MacOS/$(basename "$XCTEST_PATH" .xctest)"
+            COV_DIR=$(swift test --show-codecov-path 2>/dev/null || echo "")
+            if [ -n "$COV_DIR" ] && [ -f "$COV_DIR" ]; then
+              echo "### Test Coverage Summary" >> "$GITHUB_STEP_SUMMARY"
+              xcrun llvm-cov report "$EXEC_PATH" \
+                --instr-profile="$(dirname "$COV_DIR")/default.profdata" \
+                --ignore-filename-regex='\.build|Tests/' 2>/dev/null | head -30 >> "$GITHUB_STEP_SUMMARY" || true
+            fi
+          fi
 
       - name: Package development artifact
         env:
@@ -50,8 +69,6 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           codesign -d --entitlements :- "$app_path" 2>&1 | grep -q 'com.apple.security.device.audio-input'
 
-      # This artifact is ad-hoc signed for CI. Gatekeeper rejection is expected
-      # and acceptance would not demonstrate signing or notarization readiness.
       - name: Report Gatekeeper development-artifact status
         continue-on-error: true
         run: spctl --assess --type execute --verbose=4 '.artifacts/Sayso Notch.app'
