@@ -95,3 +95,17 @@ private func setup() -> (SaysoModuleHost, SaysoExpiryTicker, FakeScheduler, Cloc
     host.disable("alerts")
     #expect(scheduler.jobs.isEmpty)
 }
+
+@Test func tickerKeepsAnObserverInstalledBeforeIt() {
+    final class Count: @unchecked Sendable { var value = 0 }
+    let clock = Clock(), scheduler = FakeScheduler(), slot = Slot(), count = Count()
+    let host = SaysoModuleHost(modules: [Alerter(slot: slot)], now: { clock.now })
+    host.onActivitiesChanged = { count.value += 1 }
+    let ticker = SaysoExpiryTicker(host: host, scheduler: scheduler)
+    _ = ticker
+    host.enable("alerts")
+
+    slot.context?.publish(stackID: "a", kind: .completion, title: "A", expiresAfter: 5)
+    #expect(count.value == 1)
+    #expect(scheduler.jobs.count == 1)
+}
