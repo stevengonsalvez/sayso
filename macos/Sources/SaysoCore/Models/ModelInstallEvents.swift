@@ -28,3 +28,9 @@ public struct ModelInstallRetryRequested: SaysoEvent, Equatable {
     public let modelID: String
     public init(modelID: String) { self.modelID = modelID }
 }
+
+/// An install stopped without finishing or failing (state went back to not installed); its card must go.
+public struct ModelInstallCancelled: SaysoEvent, Equatable {
+    public let modelID: String
+    public init(modelID: String) { self.modelID = modelID }
+}
