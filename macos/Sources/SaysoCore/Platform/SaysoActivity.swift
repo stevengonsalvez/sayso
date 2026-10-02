@@ -1,7 +1,7 @@
 import Foundation
 
 /// Cost-to-miss ordering: a higher raw value outranks a lower one.
-public enum SaysoActivityKind: Int, Comparable, Sendable {
+public enum SaysoActivityKind: Int, Comparable, CaseIterable, Sendable {
     case ambient = 0
     case activeTask
     case completion
