@@ -101,3 +101,13 @@ private func candidate(_ id: UUID = UUID()) -> CorrectionCandidateReady {
 @Test func vocabularyModulePassesTheGenericAcceptanceHarness() {
     #expect(SaysoModuleAcceptance.violations(for: VocabularyModule(port: FakePort())) == [])
 }
+
+@Test func resolvedCandidateElsewhereClearsItsSuggestion() {
+    let (host, _, bus, _, _) = setup()
+    let id = UUID()
+    bus.publish(candidate(id))
+    #expect(host.engine.stack.count == 1)
+
+    bus.publish(CorrectionCandidateResolved(candidateID: id))
+    #expect(host.engine.stack.isEmpty)
+}
