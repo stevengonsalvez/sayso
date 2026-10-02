@@ -79,6 +79,12 @@ PR #54 review round 3 (peer Opus): Control approve/step binding, double or missi
 
 Control review fixes (peer, cherry-picked): confirmations bound to a step id (stale answers rejected), single `endControl` exit so exactly one `ControlRunFinished` per run, status tap runs only an allowlisted retry on the painted activity. One transient `index.lock` made my cherry-pick skip one commit; head `c622c0a` was pushed with an app build error for about a minute before `736151b` fixed it (474 pass, builds).
 
+## Installed-app smoke, partial (2026-10-02, head `0f61b77`)
+
+Stevie's installed app was not running, so a copy packaged to `macos/.artifacts` (not the `/Applications` app) was launched from tmux and quit by exact pid. OBSERVED: the app launches with all modules wired and no crash; `sayso status` returns ok (microphone granted, dictation idle); `sayso history` returns the existing history entries (data intact); with the opt-in default set, `modules.sock` appears and a real framed JSON session returned all 8 modules (vocabulary, models, shortcut-intents, dictation, control, external `ready`; tts and history `disabled` until first use because they enable lazily), `publish` returned ok and a `confirmation` publish was rejected `invalid_kind`. The temporary default and sockets were removed afterwards.
+
+NOT OBSERVED: the status-line text of the published activity (the screenshot showed a collapsed Dictation pill and a partly hidden window, nothing conclusive), TTS audio, hotkeys, dictation into TextEdit/Arc/WhatsApp/Finder, Control approve/deny, model download progress. The batch-1 runbook is still unrun.
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
