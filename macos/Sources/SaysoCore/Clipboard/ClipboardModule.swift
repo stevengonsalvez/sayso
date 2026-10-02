@@ -42,8 +42,14 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
         return runtime.ownWrite(entry.text, concealed: false, recordAs: entry.text)
     }
 
-    /// Dictation fallback: puts `text` on the clipboard, runs the paste, then restores the previous clipboard
-    /// only when the paste succeeded and nobody else copied meanwhile. A failed paste leaves `text` available.
+    /// Dictation fallback: puts `text` on the clipboard, runs `perform`, then puts the user's previous clipboard
+    /// back exactly (every item and flavour). The previous contents are cleared instead of restored when they
+    /// were sensitive, and left alone when someone else copied meanwhile.
+    ///
+    /// Contract: `perform` must return true only after the target has really received the text (for example by
+    /// reading the field value back through Accessibility). A synthetic Cmd+V that returns before the target reads
+    /// the pasteboard would let the restore land first and paste the old clipboard. A false return leaves `text`
+    /// on the clipboard so the user can paste it by hand.
     public func pasteTemporarily(_ text: String, perform: () -> Bool) -> Bool {
         guard let runtime = lock.withLock({ runtime }) else { return false }
         return runtime.pasteTemporarily(text, perform: perform)
@@ -62,8 +68,10 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
         private let lock = NSLock()
         private var job: SaysoSubscription?
         private var lastChange = 0
-        private var cleanedLink: String?
-        private var stopped = true
+        private var offer: (change: Int, link: String)?
+        private var running = false
+        /// Bumped on every start and stop so a poll scheduled by an older run can never act or re-arm.
+        private var generation = 0
 
         init(module: ClipboardModule, context: SaysoModuleContext) {
             self.module = module
@@ -71,18 +79,23 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
         }
 
         var retainedResources: Int { lock.withLock { job == nil ? 0 : 1 } }
+        var isRunning: Bool { lock.withLock { running } }
 
         func start() {
-            lock.withLock {
-                stopped = false
+            let current = lock.withLock { () -> Int in
+                running = true
+                generation += 1
                 lastChange = module.port.changeCount
+                return generation
             }
-            arm()
+            arm(current)
         }
 
         func stop() {
             let pending = lock.withLock { () -> SaysoSubscription? in
-                stopped = true
+                running = false
+                generation += 1
+                offer = nil
                 defer { job = nil }
                 return job
             }
@@ -90,16 +103,21 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
         }
 
         func handle(stackID: String, actionID: String) {
-            guard stackID == "clean-link", actionID == "clean",
-                  let cleaned = lock.withLock({ cleanedLink }) else { return }
+            guard stackID == "clean-link", actionID == "clean" else { return }
+            let pending = lock.withLock { () -> (change: Int, link: String)? in
+                defer { offer = nil }
+                return offer
+            }
             context.dismiss(stackID: "clean-link")
-            _ = ownWrite(cleaned, concealed: false, recordAs: cleaned)
+            // The offer belongs to one specific copy; if anything was copied since, writing now would overwrite it.
+            guard let pending, module.port.changeCount == pending.change else { return }
+            _ = ownWrite(pending.link, concealed: false, recordAs: pending.link)
         }
 
-        var isRunning: Bool { lock.withLock { !stopped } }
-
         func ownWrite(_ text: String, concealed: Bool, recordAs recorded: String?) -> Bool {
-            guard isRunning, module.port.write(text: text, concealed: concealed) else { return false }
+            guard isRunning else { return false }
+            drain()
+            guard module.port.write(text: text, concealed: concealed) else { return false }
             lock.withLock { lastChange = module.port.changeCount }
             if let recorded { _ = module.record(recorded, at: module.now()) }
             return true
@@ -107,49 +125,58 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
 
         func pasteTemporarily(_ text: String, perform: () -> Bool) -> Bool {
             guard isRunning else { return false }
-            let previous = module.port.snapshot()
+            drain()
+            let previous = module.port.captureContents()
             guard module.port.write(text: text, concealed: false) else { return false }
             let afterWrite = module.port.changeCount
             lock.withLock { lastChange = afterWrite }
-            let pasted = perform()
-            guard pasted else { return false }
-            if module.port.changeCount == afterWrite, let old = previous.text {
-                let concealed = !previous.types.isDisjoint(with: ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"])
-                _ = module.port.write(text: old, concealed: concealed)
+            guard perform() else { return false }
+            if module.port.changeCount == afterWrite {
+                if ClipboardPrivacy.isSensitive(types: previous.types, sourceBundleID: nil) {
+                    module.port.clear()
+                } else {
+                    module.port.restore(previous)
+                }
                 lock.withLock { lastChange = module.port.changeCount }
             }
             return true
         }
 
-        private func arm() {
+        private func arm(_ expected: Int) {
             let next = module.now().addingTimeInterval(ClipboardModule.pollInterval)
-            let made = module.scheduler.schedule(at: next) { [weak self] in self?.poll() }
+            let made = module.scheduler.schedule(at: next) { [weak self] in self?.poll(expected) }
             let accepted = lock.withLock { () -> Bool in
-                guard !stopped else { return false }
+                guard running, generation == expected else { return false }
+                job?.cancel()
                 job = made
                 return true
             }
             if !accepted { made.cancel() }
         }
 
-        private func poll() {
-            guard !lock.withLock({ stopped }) else { return }
-            let count = module.port.changeCount
-            let changed = lock.withLock { () -> Bool in
-                guard count != lastChange else { return false }
-                lastChange = count
-                return true
-            }
-            if changed { observe(module.port.snapshot()) }
-            arm()
+        private func poll(_ expected: Int) {
+            guard lock.withLock({ running && generation == expected }) else { return }
+            drain()
+            arm(expected)
+        }
+
+        /// Records a pending copy now, so our own write never hides something copied a moment earlier.
+        private func drain() {
+            guard module.port.changeCount != lock.withLock({ lastChange }) else { return }
+            let snapshot = module.port.snapshot()
+            lock.withLock { lastChange = snapshot.changeCount }
+            observe(snapshot)
         }
 
         private func observe(_ snapshot: ClipboardSnapshot) {
+            // Any newer copy invalidates an earlier clean-link offer.
+            lock.withLock { offer = nil }
+            context.dismiss(stackID: "clean-link")
             guard ClipboardPrivacy.shouldRecord(snapshot), let text = snapshot.text,
                   let entry = module.record(text, at: module.now()) else { return }
             context.emit(ClipboardItemRecorded(id: entry.id, text: text, sourceApp: snapshot.sourceApp))
             if let cleaned = ClipboardLinkCleaner.cleaned(text) {
-                lock.withLock { cleanedLink = cleaned }
+                lock.withLock { offer = (snapshot.changeCount, cleaned) }
                 context.publish(
                     stackID: "clean-link", kind: .ambient, title: "Clean link",
                     expiresAfter: ClipboardModule.cleanOfferSeconds,
