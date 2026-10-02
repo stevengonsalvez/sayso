@@ -2110,13 +2110,12 @@ final class SaysoAppModel: ObservableObject {
         modules.perform(actionID: actionID, stackID: primary.stackID, moduleID: primary.moduleID)
     }
 
-    /// Title of the primary action of the shown module activity (Retry, Remember, Stop), if it has one.
-    var modulePrimaryActionTitle: String? { modules.engine.primary?.actions.first?.title }
-
-    /// Runs the first action of the shown module activity, e.g. Retry a failed model download.
-    func performPrimaryModuleAction() {
-        guard let primary = modules.engine.primary, let action = primary.actions.first else { return }
-        modules.perform(actionID: action.id, stackID: primary.stackID, moduleID: primary.moduleID)
+    /// Runs the action a tap was bound to, only if that exact activity is still shown (never a replacement).
+    func performModuleAction(_ tap: NotchTapAction) {
+        guard let primary = modules.engine.primary,
+              primary.moduleID == tap.moduleID, primary.stackID == tap.stackID,
+              primary.actions.contains(where: { $0.id == tap.actionID }) else { return }
+        modules.perform(actionID: tap.actionID, stackID: tap.stackID, moduleID: tap.moduleID)
     }
 
     /// Dismisses the shown module activity: its own dismiss action if it has one, otherwise just clears it.
