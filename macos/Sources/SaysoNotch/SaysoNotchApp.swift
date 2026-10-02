@@ -312,6 +312,9 @@ final class SaysoAppModel: ObservableObject {
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        modules.onActivitiesChanged = { [weak self] in
+            DispatchQueue.main.async { self?.objectWillChange.send() }
+        }
         modules.enable("vocabulary")
         modules.enable("models")
         observeModelInstalls()
@@ -2067,6 +2070,13 @@ final class SaysoAppModel: ObservableObject {
         // A disabled or quarantined module must never lose a transcript: fall back to the store directly.
         if let result = await historyModule.append(transcript) { return result }
         return await history.appendResult(transcript)
+    }
+
+    /// One-line status for the primary module activity (download progress, history failure, suggestions).
+    var moduleActivityStatus: String? {
+        guard let primary = modules.engine.primary else { return nil }
+        let presentation = SaysoActivityPresentation(primary)
+        return [presentation.title, presentation.subtitle].compactMap { $0 }.joined(separator: " · ")
     }
 
     private func phase(_ state: FluidAudioLocalModelState) -> ModelInstallReporter.Phase {
