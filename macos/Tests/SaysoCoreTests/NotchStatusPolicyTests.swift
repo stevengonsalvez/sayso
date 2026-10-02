@@ -28,7 +28,7 @@ private func status(
             let result = status(partial: "open calc", live: live, control: control, notice: "Saved", controlStatus: "Planned", primary: review)
             #expect(result.text == "Review required: Delete file")
             #expect(result.criticalActions.map(\.id) == ["approve", "deny"])
-            #expect(!result.tapRunsPrimaryAction)
+            #expect(result.tapAction == nil)
         }
     }
 }
@@ -46,17 +46,35 @@ private func status(
     let idle = status(primary: retry)
     #expect(idle.text == "Could not install Model")
     #expect(idle.criticalActions.isEmpty)
-    #expect(idle.tapRunsPrimaryAction)
+    #expect(idle.tapAction == NotchTapAction(moduleID: "models", stackID: "install-m", actionID: "retry", title: "Retry"))
     #expect(idle.dismissActionID == nil)
 
     #expect(status(partial: "hello", primary: retry).text == "hello")
     #expect(status(notice: "Saved", primary: retry).text == "Saved")
-    #expect(!status(live: true, primary: retry).tapRunsPrimaryAction)
+    #expect(status(live: true, primary: retry).tapAction == nil)
 }
 
 @Test func controlModeShowsControlStatusAndOtherwiseDictationDefaults() {
     #expect(status(control: true, controlStatus: "Planned: open", primary: retry).text == "Planned: open")
     #expect(status().text == "Ready to dictate into the focused app")
     #expect(status(live: true).text == "Listening for dictation")
-    #expect(!status(control: true, controlStatus: "Planned: open", primary: retry).tapRunsPrimaryAction)
+    #expect(status(control: true, controlStatus: "Planned: open", primary: retry).tapAction == nil)
+}
+
+@Test func tappingTheStatusNeverRunsAClarificationChoiceACancelOrAConfirmation() {
+    let clarification = SaysoActivity(
+        moduleID: "control", stackID: "clarification", kind: .confirmation, title: "Which one: Steve, Steven?",
+        actions: [SaysoAction(id: "choice-0", title: "Steve"), SaysoAction(id: "choice-1", title: "Steven")]
+    )
+    let run = SaysoActivity(
+        moduleID: "control", stackID: "run", kind: .activeTask, title: "Control: Open Calculator",
+        actions: [SaysoAction(id: "cancel", title: "Cancel")]
+    )
+    let suggestion = SaysoActivity(
+        moduleID: "vocabulary", stackID: "candidate-1", kind: .activeTask, title: "Remember?",
+        actions: [SaysoAction(id: "accept", title: "Remember"), SaysoAction(id: "dismiss", title: "Dismiss")]
+    )
+    #expect(status(primary: clarification).tapAction == nil)
+    #expect(status(primary: run).tapAction == nil)
+    #expect(status(primary: suggestion).tapAction == nil)
 }
