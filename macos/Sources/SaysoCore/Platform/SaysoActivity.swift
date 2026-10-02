@@ -26,6 +26,8 @@ public struct SaysoActivity: Equatable, Sendable {
     public let expiresAfter: TimeInterval?
     public let actions: [SaysoAction]
     public let interruption: SaysoInterruptionPolicy
+    /// Fraction 0...1, clamped; nil when unknown or not applicable.
+    public let progress: Double?
 
     public init(
         moduleID: String,
@@ -34,7 +36,8 @@ public struct SaysoActivity: Equatable, Sendable {
         title: String,
         expiresAfter: TimeInterval? = nil,
         actions: [SaysoAction] = [],
-        interruption: SaysoInterruptionPolicy = .normal
+        interruption: SaysoInterruptionPolicy = .normal,
+        progress: Double? = nil
     ) {
         self.moduleID = moduleID
         self.stackID = stackID
@@ -43,5 +46,6 @@ public struct SaysoActivity: Equatable, Sendable {
         self.expiresAfter = expiresAfter
         self.actions = actions
         self.interruption = interruption
+        self.progress = progress.flatMap { $0.isNaN ? nil : min(max($0, 0), 1) }
     }
 }
