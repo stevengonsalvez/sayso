@@ -72,7 +72,12 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
 
     private var currentLimit: Int { lock.withLock { limit } }
 
-    private final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
+    /// Forgets a stopped runtime so later calls are no-ops instead of reaching a dead shelf.
+    fileprivate func detach(_ stopped: Runtime) {
+        lock.withLock { if runtime === stopped { runtime = nil } }
+    }
+
+    fileprivate final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
         private struct Held { var item: FileShelfItem; let access: FileShelfAccess }
 
         unowned let module: FileShelfModule
@@ -100,6 +105,7 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
             }
             made?.cancel()
             pending.forEach { $0.access.release() }
+            module.detach(self)
         }
 
         func handle(stackID: String, actionID: String) {
@@ -128,7 +134,13 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
                     id: UUID(), url: url, name: file.name, byteCount: file.byteCount,
                     isDirectory: file.isDirectory, addedAt: module.now()
                 )
-                lock.withLock { held.insert(Held(item: item, access: access), at: 0) }
+                let inserted = lock.withLock { () -> Bool in
+                    guard running else { return false }
+                    held.insert(Held(item: item, access: access), at: 0)
+                    return true
+                }
+                // A stop that landed while this file was being resolved must not leave a grant behind.
+                guard inserted else { access.release(); break }
                 accepted += 1
             }
             trim()
@@ -163,13 +175,15 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
             return true
         }
 
-        func remove(id: FileShelfItem.ID) -> Bool {
+        func remove(id: FileShelfItem.ID) -> Bool { remove(id: id, refreshing: true) }
+
+        private func remove(id: FileShelfItem.ID, refreshing: Bool) -> Bool {
             let removed = lock.withLock { () -> Held? in
                 guard let index = held.firstIndex(where: { $0.item.id == id }) else { return nil }
                 return held.remove(at: index)
             }
             removed?.access.release()
-            if removed != nil { refresh() }
+            if removed != nil, refreshing { refresh() }
             return removed != nil
         }
 
@@ -196,31 +210,32 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
             let cutoff = module.itemLifetime.map { module.now().addingTimeInterval(-$0) }
             for item in current {
                 let expired = cutoff.map { item.addedAt <= $0 } ?? false
-                if expired || module.port.resolve(item.url) == nil { _ = remove(id: item.id) }
+                if expired || module.port.resolve(item.url) == nil { _ = remove(id: item.id, refreshing: false) }
             }
         }
 
         /// Keeps the shelf activity and the single check timer in step with the items.
         private func refresh() {
-            let count = items.count
-            let made = lock.withLock { () -> (arm: Bool, cancel: SaysoSubscription?) in
-                guard running else { return (false, nil) }
-                if count == 0 {
+            // Count, running state and timer decision are read in one critical section so they cannot disagree.
+            let state = lock.withLock { () -> (count: Int, arm: Bool, cancel: SaysoSubscription?)? in
+                guard running else { return nil }
+                if held.isEmpty {
                     defer { job = nil }
-                    return (false, job)
+                    return (0, false, job)
                 }
-                return (job == nil, nil)
+                return (held.count, job == nil, nil)
             }
-            made.cancel?.cancel()
-            if count == 0 {
+            guard let state else { return }
+            state.cancel?.cancel()
+            if state.count == 0 {
                 context.dismiss(stackID: "shelf")
                 return
             }
             context.publish(
-                stackID: "shelf", kind: .ambient, title: "File shelf · \(Self.noun(count))",
+                stackID: "shelf", kind: .ambient, title: "File shelf · \(Self.noun(state.count))",
                 actions: [SaysoAction(id: "clear", title: "Clear")]
             )
-            if made.arm { arm() }
+            if state.arm { arm() }
         }
 
         private func arm() {
