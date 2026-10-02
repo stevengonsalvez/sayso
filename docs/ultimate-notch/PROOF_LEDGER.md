@@ -75,6 +75,8 @@ PR #54 at `057f9d1`: `build` pass and `Test and package` pass (GitHub Actions). 
 
 PR #54 review round 3 (peer Opus): Control approve/step binding, double or missing `ControlRunFinished`, tap-action allowlist assigned to peer; permission gate (`isGranted`, `capabilitiesChanged`) deliberately NOT enabled yet because it would flip Control/Dictation to permissionRequired and hide their activities; minors fixed here: boolean version rejected, external stack cap (32), cancelled install clears its card, shortcut intent switch lists every ignored edge. One commit (`7359cc9`) carried three test files because of a staging slip.
 
+Control review fixes (peer, cherry-picked): confirmations bound to a step id (stale answers rejected), single `endControl` exit so exactly one `ControlRunFinished` per run, status tap runs only an allowlisted retry on the painted activity. One transient `index.lock` made my cherry-pick skip one commit; head `c622c0a` was pushed with an app build error for about a minute before `736151b` fixed it (474 pass, builds).
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
