@@ -12,8 +12,10 @@ public final class ModelInstallReporter: @unchecked Sendable {
 
     public init(bus: SaysoEventBus) { self.bus = bus }
 
-    public func observe(modelID: String, displayName: String, phase: Phase, fraction: Double) {
+    public func observe(modelID: String, displayName: String, phase: Phase, fraction: Double?) {
         enum Outcome { case progress, finished(Bool), nothing }
+        // Whole percents only, so tiny fraction changes do not flood observers.
+        let fraction = fraction.map { ($0 * 100).rounded() / 100 }
         let outcome = lock.withLock { () -> Outcome in
             var track = tracks[modelID] ?? Track()
             defer { tracks[modelID] = track }
