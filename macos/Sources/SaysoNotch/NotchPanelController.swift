@@ -341,7 +341,7 @@ private struct VoiceWorkspaceContent: View {
         let isControl = model.settings.mode == .control
         if !model.transcriber.partialText.isEmpty, isLive || !isControl { return model.transcriber.partialText }
         if let notice = model.notice { return notice }
-        if !isLive, let activity = model.moduleActivityStatus { return activity }
+        if !isLive, !isControl, let activity = model.moduleActivityStatus { return activity }
         if isControl { return model.controlStatus }
         if model.transcriber.phase == .listening { return "Listening for dictation" }
         return "Ready to dictate into the focused app"
@@ -367,6 +367,9 @@ private struct VoiceWorkspaceContent: View {
                     Button("Settings", action: openSettings)
                     Divider()
                     Button(model.settings.overlayPresentation == .notch ? "Detach from Notch" : "Dock to Notch", action: togglePresentation)
+                    if model.moduleActivityStatus != nil {
+                        Button("Dismiss notification", action: model.dismissPrimaryModuleActivity)
+                    }
                     Button("Collapse", action: collapse)
                     Button("Hide", action: dismiss)
                     Divider()
@@ -381,7 +384,7 @@ private struct VoiceWorkspaceContent: View {
                 .help("More Sayso controls")
             }
 
-            Button(action: collapse) {
+            Button(action: { if !isLive, model.modulePrimaryActionTitle != nil, model.moduleActivityStatus == status { model.performPrimaryModuleAction() } else { collapse() } }) {
                 Text(status)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.white)
@@ -392,7 +395,7 @@ private struct VoiceWorkspaceContent: View {
             .buttonStyle(.plain)
             .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
             .accessibilityValue(status)
-            .help("\(status). Click to collapse.")
+            .help(!isLive && model.modulePrimaryActionTitle != nil && model.moduleActivityStatus == status ? "\(status). Click to \(model.modulePrimaryActionTitle ?? "act")." : "\(status). Click to collapse.")
 
             if model.settings.mode == .control, !isLive, model.transcriber.canStart {
                 Button(model.isCheckingControlTryNowReadiness ? "Checking readiness..." : "Try now: Open Calculator") {
