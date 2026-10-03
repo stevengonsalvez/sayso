@@ -96,6 +96,12 @@ final class NotchPanelController {
         reposition()
     }
 
+    /// Collapses only when the shared policy allows the region that was interacted with.
+    private func collapse(from region: NotchInteractionRegion) {
+        guard NotchCollapsePolicy.shouldCollapse(on: region) else { return }
+        collapse()
+    }
+
     private func collapse() {
         guard panel.isVisible, !state.isCollapsed else { return }
         state.isCollapsed = true
@@ -105,11 +111,11 @@ final class NotchPanelController {
     private func installClickMonitors() {
         localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.panel { self.collapse() }
+            if event.window !== self.panel { self.collapse(from: .outside) }
             return event
         }
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor in self?.collapse() }
+            Task { @MainActor in self?.collapse(from: .outside) }
         }
     }
 
@@ -340,16 +346,22 @@ private struct VoiceWorkspaceContent: View {
         model.transcriber.canStop || model.transcriber.phase == .listening
     }
 
-    private var status: String {
+    private var statusModel: NotchStatus {
         // Once a Control utterance ends, its stale transcript must not hide planning, questions, or results.
-        let isControl = model.settings.mode == .control
+        // Main's live preview wins over the raw partial, as before the module status policy.
         let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
-        if !activeText.isEmpty, isLive || !isControl { return activeText }
-        if let notice = model.notice { return notice }
-        if isControl { return model.controlStatus }
-        if model.transcriber.phase == .listening { return "Listening for dictation" }
-        return "Ready to dictate into the focused app"
+        return NotchStatusPolicy.resolve(
+            partialText: activeText,
+            isLive: isLive,
+            isControl: model.settings.mode == .control,
+            notice: model.notice,
+            controlStatus: model.controlStatus,
+            primary: model.primaryModuleActivity,
+            isListening: model.transcriber.phase == .listening
+        )
     }
+
+    private var status: String { statusModel.text }
 
     private var actionTitle: String {
         if model.settings.mode == .control {
@@ -381,6 +393,18 @@ private struct VoiceWorkspaceContent: View {
                     Button("Settings", action: openSettings)
                     Divider()
                     Button(model.settings.overlayPresentation == .notch ? "Detach from Notch" : "Dock to Notch", action: togglePresentation)
+                    if let primary = model.primaryModuleActivity {
+                        Button("Open in Studio") {
+                            model.openStudio(forModule: primary.moduleID)
+                            openApp()
+                        }
+                    }
+                    if let primary = model.primaryModuleActivity,
+                       primary.interruption != .critical || statusModel.dismissActionID != nil {
+                        Button(primary.interruption == .critical ? "Deny" : "Dismiss notification") {
+                            if let id = statusModel.dismissActionID { model.performModuleAction(id) } else { model.dismissPrimaryModuleActivity() }
+                        }
+                    }
                     Button("Collapse", action: collapse)
                     Button("Hide", action: dismiss)
                     Divider()
@@ -395,7 +419,7 @@ private struct VoiceWorkspaceContent: View {
                 .help("More Sayso controls")
             }
 
-            Button(action: collapse) {
+            Button(action: { if let tap = statusModel.tapAction { model.performModuleAction(tap) } else { collapse() } }) {
                 Text(status)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.white)
@@ -406,7 +430,18 @@ private struct VoiceWorkspaceContent: View {
             .buttonStyle(.plain)
             .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
             .accessibilityValue(status)
-            .help("\(status). Click to collapse.")
+            .help(statusModel.tapAction.map { "\(status). Click to \($0.title)." } ?? "\(status). Click to collapse.")
+
+            if !statusModel.criticalActions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(statusModel.criticalActions, id: \.id) { action in
+                        Button(action.title) { model.performModuleAction(action.id) }
+                            .buttonStyle(.borderedProminent)
+                            .tint(action.id == "approve" ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                            .accessibilityLabel("\(action.title): \(status)")
+                    }
+                }
+            }
 
             if model.settings.mode == .control, !isLive, model.transcriber.canStart {
                 Button(model.isCheckingControlTryNowReadiness ? "Checking readiness..." : "Try now: Open Calculator") {

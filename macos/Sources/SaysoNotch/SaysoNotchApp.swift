@@ -201,10 +201,11 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isNotchOverlayVisible = true
     @Published private(set) var lastVoiceEditRewrite: String?
     @Published private(set) var isStartingDictation = false
-    @Published private(set) var reprocessingHistoryID: UUID?
-    @Published private(set) var isImportingHistoryAudio = false
-    @Published private(set) var isClearingHistory = false
-    @Published private(set) var isHistoryAudioTaskRunning = false
+    @Published private(set) var historyGate = HistoryOperationGate()
+    var reprocessingHistoryID: UUID? { historyGate.reprocessingID }
+    var isImportingHistoryAudio: Bool { historyGate.isImporting }
+    var isClearingHistory: Bool { historyGate.isClearing }
+    var isHistoryAudioTaskRunning: Bool { historyGate.isAudioTaskRunning }
     @Published var onboardingDeferredThisLaunch = false
     @Published var isShowingOnboardingWizard = false
     @Published private(set) var isOnboardingTestActive = false
@@ -223,6 +224,27 @@ final class SaysoAppModel: ObservableObject {
     let localPunjabiModel: SherpaPunjabiModelManager
     let audioInputDeviceController = CoreAudioInputDeviceController()
     let speech = SpeechOutput()
+    private lazy var tts = TtsModule(synthesizer: speech)
+    private lazy var historyModule = HistoryModule(port: history)
+    private let moduleEvents = SaysoEventBus()
+    private var controlAnswerSubscriptions: [SaysoSubscription] = []
+    private var dictationPhaseBridge: DictationPhaseBridge?
+    private var dictationStopSubscription: SaysoSubscription?
+    private var controlOutcome: ControlRunFinished.Outcome = .failed
+    private var pendingControlStepID: UUID?
+    private var controlRunAnnounced = true
+    private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
+    private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
+    private let externalActivities = ExternalActivitiesModule()
+    private var moduleSocket: SaysoModuleSocketServer?
+    private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
+    private lazy var modules = SaysoModuleHost(
+        modules: [
+            tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
+            externalActivities,
+        ],
+        events: moduleEvents
+    )
     let history = HistoryStore(maximumEntries: nil)
     let corrections: SaysoCorrectionLearning
     let sessions = RecordingSessionStore()
@@ -254,6 +276,10 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
+    private var modelInstallObservers: [AnyCancellable] = []
+    private var expiryTicker: SaysoExpiryTicker?
+    private var modelRetrySubscription: SaysoSubscription?
+    private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
     private var transcriberChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
@@ -304,8 +330,20 @@ final class SaysoAppModel: ObservableObject {
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        modules.onActivitiesChanged = { [weak self] in
+            DispatchQueue.main.async { self?.objectWillChange.send() }
+        }
+        expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
+        modules.enable("vocabulary")
+        modules.enable("models")
+        startControlModule()
+        startExternalAPIIfEnabled()
+        startDictationModule()
+        observeModelInstalls()
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+            // objectWillChange fires before the store updates, so read the candidates on the next turn.
+            DispatchQueue.main.async { self?.vocabularyBridge.sync() }
         }
         transcriberChangeObserver = transcriber.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -330,8 +368,9 @@ final class SaysoAppModel: ObservableObject {
             guard self?.monitoredHotKey == self?.dictationHotKey else { return }
             self?.stopHoldDictation()
         }
+        modules.enable("shortcut-intents")
         shortcutManager.onActionTriggered = { [weak self] action, isKeyDown in
-            self?.handleShortcutAction(action, isKeyDown: isKeyDown)
+            self?.moduleEvents.publish(ShortcutTriggered(action: action, isKeyDown: isKeyDown))
         }
         refreshShortcutRegistrations()
         reopenObserver = DistributedNotificationCenter.default().addObserver(
@@ -454,22 +493,12 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    private func handleShortcutAction(_ action: SaysoShortcutAction, isKeyDown: Bool) {
-        switch action {
-        case .dictation:
-            if isKeyDown {
-                handleTapDictationShortcut()
-            }
-        case .control:
-            if isKeyDown {
-                handleControlHotKeyDown()
-            } else {
-                handleControlHotKeyUp()
-            }
-        case .toggleNotch:
-            if isKeyDown {
-                toggleNotch()
-            }
+    fileprivate func performShortcutIntent(_ intent: AppShortcutIntents.Intent) {
+        switch intent {
+        case .dictation: handleTapDictationShortcut()
+        case .controlDown: handleControlHotKeyDown()
+        case .controlUp: handleControlHotKeyUp()
+        case .toggleNotch: toggleNotch()
         }
     }
 
@@ -858,7 +887,7 @@ final class SaysoAppModel: ObservableObject {
             let message = isStartingDictation || transcriber.isStarting ? "Dictation is already starting." : "Finishing current dictation."
             return .rejected(.alreadyRecording, message)
         }
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning else {
+        guard !historyGate.blocksDictation else {
             return .rejected(.alreadyRecording, "Finish the current history audio task before dictating.")
         }
         let pinnedApplication = handsFreeDestinationProcessIdentifier
@@ -1125,7 +1154,7 @@ final class SaysoAppModel: ObservableObject {
                 updated.translatedLanguage = nil
                 lastTranscript = updated
                 Task {
-                    let historyResult = await history.appendResult(updated)
+                    let historyResult = await appendToHistory(updated)
                     guard lastTranscript?.id == updated.id else { return }
                     if historyResult == .recovered {
                         notice = "Voice edit applied. Recovered unreadable history to a local backup."
@@ -1169,7 +1198,7 @@ final class SaysoAppModel: ObservableObject {
         let settingsSnapshot = settings
         let completed = await translated(transcript, settings: settingsSnapshot)
         lastTranscript = completed
-        let historyResult = await history.appendResult(completed)
+        let historyResult = await appendToHistory(completed)
         let finalText = completed.displayText
         let copied = TextOutput.copy(finalText)
         if historyResult == .recovered {
@@ -1236,66 +1265,59 @@ final class SaysoAppModel: ObservableObject {
         base = LexiconCorrections.apply(base, pronunciations: currentSettings.pronunciations)
         let local = corrections.apply(to: base).transformedText
 
-        if currentSettings.cleanupMode == .localSLM {
-            if let localEndpoint = URL(string: "http://127.0.0.1:11434/v1") {
-                let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
-                do {
-                    let localCleaner = OpenAICompatibleTranscriptCleaner(
-                        baseURL: localEndpoint,
-                        apiKey: "ollama",
-                        model: slmModelName
-                    )
-                    let slmCleaned = try await localCleaner.clean(
-                        text,
-                        language: language,
-                        lexiconDirectives: currentSettings.dictationProfile.cleanupDirectives
-                    )
-                    var cleaned = TranscriptCleanup.smartFormat(
-                        slmCleaned,
-                        capitalizesFirstLetter: true,
-                        capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-                        addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
-                    )
-                    cleaned = currentSettings.dictationProfile.postProcess(cleaned)
-                    cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
-                    cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
-                    return corrections.apply(to: cleaned).transformedText
-                } catch {
-                    // Local server offline, continue with smart rules
-                }
+        let cloudProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
+        let cloudKey = CleanupRoute.needsCloudCredentials(
+            mode: currentSettings.cleanupMode,
+            cloudCleanupEnabled: currentSettings.cloudCleanupEnabled,
+            byokConsentGranted: currentSettings.byokConsentGranted
+        ) ? keyForProvider(cloudProvider) : nil
+        let cloudBaseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL
+        let cloudModel = currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let route = CleanupRoute.resolve(
+            mode: currentSettings.cleanupMode,
+            cloudCleanupEnabled: currentSettings.cloudCleanupEnabled,
+            byokConsentGranted: currentSettings.byokConsentGranted,
+            hasCloudKey: cloudKey != nil,
+            hasCloudBaseURL: cloudBaseURL != nil,
+            hasCloudModel: !cloudModel.isEmpty
+        )
+        let directives = currentSettings.dictationProfile.cleanupDirectives
+        var localSLM: (@Sendable (String) async throws -> String)?
+        if let endpoint = URL(string: "http://127.0.0.1:11434/v1") {
+            let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
+            localSLM = { raw in
+                try await OpenAICompatibleTranscriptCleaner(baseURL: endpoint, apiKey: "ollama", model: slmModelName)
+                    .clean(raw, language: language, lexiconDirectives: directives)
             }
-            return local
         }
-
-        guard currentSettings.cleanupMode == .cloudLLM || currentSettings.cloudCleanupEnabled,
-              currentSettings.byokConsentGranted else {
-            return local
+        var cloud: (@Sendable (String) async throws -> String)?
+        if let key = cloudKey, let baseURL = cloudBaseURL {
+            cloud = { raw in
+                try await OpenAICompatibleTranscriptCleaner(baseURL: baseURL, apiKey: key, model: cloudModel)
+                    .clean(raw, language: language, lexiconDirectives: directives)
+            }
         }
-        let cleanupProvider = CloudProviderCatalog.provider(for: currentSettings.selectedCloudCleanupProviderId) ?? CloudProviderCatalog.groq
-        guard let key = keyForProvider(cleanupProvider),
-              let baseURL = currentSettings.normalizedBYOKCleanupBaseURL ?? currentSettings.normalizedBYOKBaseURL,
-              !currentSettings.byokCleanupModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return local
-        }
-        do {
-            let directives = currentSettings.dictationProfile.cleanupDirectives
-            let cloud = try await OpenAICompatibleTranscriptCleaner(
-                baseURL: baseURL, apiKey: key, model: currentSettings.byokCleanupModel
-            ).clean(text, language: language, lexiconDirectives: directives)
-            var cleaned = TranscriptCleanup.smartFormat(
-                cloud,
-                capitalizesFirstLetter: true,
-                capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-                addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
-            )
-            cleaned = currentSettings.dictationProfile.postProcess(cleaned)
-            cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
-            cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
-            return corrections.apply(to: cleaned).transformedText
-        } catch {
-            transcriptProcessingNotice = "Cloud cleanup unavailable. Applied smart rules."
-            return local
-        }
+        let outcome = await CleanupPipeline.run(
+            text: text,
+            route: route,
+            rulesOutput: local,
+            finish: { [self] provided in
+                var cleaned = TranscriptCleanup.smartFormat(
+                    provided,
+                    capitalizesFirstLetter: true,
+                    capitalizesSentences: currentSettings.cleanupPreset != .minimal,
+                    addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
+                )
+                cleaned = currentSettings.dictationProfile.postProcess(cleaned)
+                cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
+                cleaned = LexiconCorrections.apply(cleaned, pronunciations: currentSettings.pronunciations)
+                return corrections.apply(to: cleaned).transformedText
+            },
+            localSLM: localSLM,
+            cloud: cloud
+        )
+        if let notice = outcome.notice { transcriptProcessingNotice = notice }
+        return outcome.text
     }
 
     private func setTranscriptCompletionNotice(_ completion: String) {
@@ -1308,7 +1330,7 @@ final class SaysoAppModel: ObservableObject {
 
     private func finish(_ transcript: Transcript, delivery pendingDelivery: PendingDictationDelivery) async {
         lastTranscript = transcript
-        let historyResult = await history.appendResult(transcript)
+        let historyResult = await appendToHistory(transcript)
         let finalText = transcript.displayText
         let output: TextOutput.DeliveryResult
         if let liveInsertion = pendingDelivery.liveInsertion {
@@ -2007,10 +2029,11 @@ final class SaysoAppModel: ObservableObject {
             startAutomation()
         } else {
             automation.stop()
-            pendingControlStep = nil
+            clearPendingControlStep()
             controlPreparationTask?.cancel()
             controlPreparationTask = nil
             controlPreparationID = nil
+            endControl(.cancelled, message: "Desktop control disabled.")
             if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
         }
         save()
@@ -2068,34 +2091,170 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func speak(_ text: String, language: DictationLanguage? = nil) {
-        let resolvedLanguage = language ?? settings.speechLanguage
-        speech.speak(
-            text,
-            language: resolvedLanguage,
-            voiceIdentifier: selectedVoice(for: resolvedLanguage),
-            rate: settings.speechRate
-        )
+        speak(plan: speechPlan(text, language: language))
     }
 
     func speakLatest() {
         guard let transcript = lastTranscript else { return }
         let transcriptLanguage = transcript.spokenLanguage(outputLanguage: settings.outputLanguage)
-        let language = transcriptLanguage == .automatic ? settings.speechLanguage : transcriptLanguage
-        speech.speak(transcript.displayText, language: language, voiceIdentifier: selectedVoice(for: language), rate: settings.speechRate)
+        speak(plan: speechPlan(transcript.displayText, language: transcriptLanguage))
     }
 
-    private func selectedVoice(for language: DictationLanguage) -> String? {
-        guard language != .automatic else { return nil }
-        return settings.speechVoiceIdentifier.flatMap { selected in
-            SpeechOutput.availableVoices(for: language).contains(where: { $0.id == selected }) ? selected : nil
+    private func speechPlan(_ text: String, language: DictationLanguage?) -> SpeechPlan? {
+        SpeechPlan.resolve(
+            text: text,
+            language: language,
+            settingsLanguage: settings.speechLanguage,
+            selectedVoiceID: settings.speechVoiceIdentifier,
+            rate: settings.speechRate,
+            installedVoiceIDs: { Set(SpeechOutput.availableVoices(for: $0).map(\.id)) }
+        )
+    }
+
+    /// Every transcript save goes through the history module; the caller still owns the result and its notices.
+    private func appendToHistory(_ transcript: Transcript) async -> HistoryAppendResult {
+        modules.enable("history")
+        // A disabled or quarantined module must never lose a transcript: fall back to the store directly.
+        if let result = await historyModule.append(transcript) { return result }
+        return await history.appendResult(transcript)
+    }
+
+    /// One-line status for the primary module activity (download progress, history failure, suggestions).
+    var moduleActivityStatus: String? {
+        guard let primary = modules.engine.primary else { return nil }
+        let presentation = SaysoActivityPresentation(primary)
+        return [presentation.title, presentation.subtitle].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The shown module activity, if any.
+    var primaryModuleActivity: SaysoActivity? { modules.engine.primary }
+
+    /// Studio tabs by module id; modules without a tab open the first tab.
+    private static let studioTabs = [
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "shortcut-intents": 8, "tts": 9,
+    ]
+
+    /// Selects the Studio tab for a module through the shared router; permission problems open Settings.
+    func openStudio(forModule moduleID: String) {
+        let granted = Set(PermissionKind.allCases.filter { permissions.states[$0] == .granted })
+        let route = SaysoStudioRouter.route(
+            moduleID: moduleID,
+            descriptors: modules.descriptors,
+            health: { [modules] in modules.health(of: $0) },
+            isGranted: { SaysoStudioNavigation.isGranted($0, grantedPermissions: granted) }
+        )
+        selectedTab = SaysoStudioNavigation.tab(for: route, moduleTabs: Self.studioTabs, settingsTab: 10, defaultTab: 0)
+    }
+
+    /// Runs one named action of the shown module activity (used for explicit Approve/Deny buttons).
+    func performModuleAction(_ actionID: String) {
+        guard let primary = modules.engine.primary else { return }
+        modules.perform(actionID: actionID, stackID: primary.stackID, moduleID: primary.moduleID)
+    }
+
+    /// Runs the action a tap was bound to, only if that exact activity is still shown (never a replacement).
+    func performModuleAction(_ tap: NotchTapAction) {
+        guard let primary = modules.engine.primary,
+              primary.moduleID == tap.moduleID, primary.stackID == tap.stackID,
+              primary.actions.contains(where: { $0.id == tap.actionID }) else { return }
+        modules.perform(actionID: tap.actionID, stackID: tap.stackID, moduleID: tap.moduleID)
+    }
+
+    /// Dismisses the shown module activity: its own dismiss action if it has one, otherwise just clears it.
+    func dismissPrimaryModuleActivity() {
+        guard let primary = modules.engine.primary else { return }
+        if primary.actions.contains(where: { $0.id == "dismiss" }) {
+            modules.perform(actionID: "dismiss", stackID: primary.stackID, moduleID: primary.moduleID)
+        } else {
+            modules.dismiss(moduleID: primary.moduleID, stackID: primary.stackID)
         }
+    }
+
+    private func phase(_ state: FluidAudioLocalModelState) -> ModelInstallReporter.Phase {
+        switch state {
+        case .notInstalled: .idle
+        case .installing: .installing
+        case .installed: .installed
+        case .failed: .failed
+        }
+    }
+
+    /// Local scripts can show activities through an owner-only socket, but only when the user opts in:
+    /// `defaults write <bundle id> sayso.externalAPI.enabled -bool true`.
+    private func startExternalAPIIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: "sayso.externalAPI.enabled") else { return }
+        modules.enable("external")
+        let api = SaysoExternalAPI(host: modules, external: externalActivities)
+        let directory = (SaysoAutomationEndpoint.socketPath as NSString).deletingLastPathComponent
+        let server = SaysoModuleSocketServer(path: directory + "/modules.sock") { api.handle($0) }
+        do {
+            try server.start()
+            moduleSocket = server
+        } catch {
+            modules.disable("external")
+        }
+    }
+
+    /// Feeds model manager state into install events and runs retries requested from the activity.
+    private func observeModelInstalls() {
+        let reporter = modelInstallReporter
+        modelInstallObservers = [
+            localEnglishModel.$state.combineLatest(localEnglishModel.$downloadProgress)
+                .sink { [weak self] state, fraction in
+                    guard let self else { return }
+                    reporter.observe(
+                        modelID: FluidAudioLocalModelManager.modelID, displayName: FluidAudioLocalModelManager.displayName,
+                        phase: self.phase(state), fraction: fraction
+                    )
+                },
+            localEnglishModel.$multilingualState.combineLatest(localEnglishModel.$multilingualDownloadProgress)
+                .sink { [weak self] state, fraction in
+                    guard let self else { return }
+                    reporter.observe(
+                        modelID: FluidAudioLocalModelManager.multilingualModelID,
+                        displayName: FluidAudioLocalModelManager.multilingualDisplayName,
+                        phase: self.phase(state), fraction: fraction
+                    )
+                },
+            localPunjabiModel.$state.sink { state in
+                let phase: ModelInstallReporter.Phase = switch state {
+                case .notInstalled: .idle
+                case .installing: .installing
+                case .installed: .installed
+                case .failed: .failed
+                }
+                reporter.observe(
+                    modelID: SherpaPunjabiModelManager.modelID, displayName: SherpaPunjabiModelManager.displayName,
+                    phase: phase, fraction: nil
+                )
+            },
+        ]
+        modelRetrySubscription = moduleEvents.subscribe(ModelInstallRetryRequested.self) { [weak self] request in
+            Task { @MainActor in
+                guard let self else { return }
+                switch request.modelID {
+                case FluidAudioLocalModelManager.modelID: await self.localEnglishModel.install()
+                case FluidAudioLocalModelManager.multilingualModelID:
+                    await self.localEnglishModel.install(language: self.settings.language)
+                case SherpaPunjabiModelManager.modelID: await self.localPunjabiModel.install()
+                default: break
+                }
+            }
+        }
+    }
+
+    private func speak(plan: SpeechPlan?) {
+        guard let plan else { return }
+        modules.enable("tts")
+        tts.speak(plan)
     }
 
     func reprocessHistory(_ entry: Transcript) async {
-        guard reprocessingHistoryID == nil, !isImportingHistoryAudio, !isClearingHistory else {
+        guard historyGate.begin(.reprocess(entry.id)) else {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
+        defer { historyGate.end(.reprocess(entry.id)) }
         guard !isStartingDictation, transcriber.phase == .idle else {
             notice = "Stop dictation before reprocessing saved audio."
             return
@@ -2105,8 +2264,6 @@ final class SaysoAppModel: ObservableObject {
             notice = "This history item has no saved audio to reprocess."
             return
         }
-        reprocessingHistoryID = entry.id
-        defer { reprocessingHistoryID = nil }
         let settingsSnapshot = settings
         showPersistentNotice("Reprocessing saved audio.")
         do {
@@ -2124,7 +2281,7 @@ final class SaysoAppModel: ObservableObject {
             guard FileManager.default.fileExists(atPath: audioFileURL.path) else {
                 throw SaysoError.unavailable("Saved audio was removed during reprocessing")
             }
-            guard await history.append(completed) else {
+            guard await appendToHistory(completed).didSave else {
                 notice = "Reprocessed transcript could not save to history."
                 transcriptProcessingNotice = nil
                 return
@@ -2142,31 +2299,29 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startReprocessingHistory(_ entry: Transcript) {
-        guard !isHistoryAudioTaskRunning else {
+        guard historyGate.beginAudioTask() else {
             notice = "Finish the current history audio task before reprocessing."
             return
         }
-        isHistoryAudioTaskRunning = true
         historyAudioTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isHistoryAudioTaskRunning = false }
+            defer { self.historyGate.endAudioTask() }
             await self.reprocessHistory(entry)
             self.historyAudioTask = nil
         }
     }
 
     func importHistoryAudio(_ sourceURLs: [URL]) async {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isClearingHistory else {
+        guard historyGate.begin(.importAudio) else {
             notice = "Finish the current history audio task before importing."
             return
         }
+        defer { historyGate.end(.importAudio) }
         guard !isStartingDictation, transcriber.phase == .idle else {
             notice = "Stop dictation before importing audio."
             return
         }
         let settingsSnapshot = settings
-        isImportingHistoryAudio = true
-        defer { isImportingHistoryAudio = false }
         var importedCount = 0
         var failedCount = 0
         var lastFailure: String?
@@ -2202,7 +2357,7 @@ final class SaysoAppModel: ObservableObject {
                 guard FileManager.default.fileExists(atPath: importedURL.path) else {
                     throw SaysoError.unavailable("Imported audio was removed before it could be saved")
                 }
-                guard await history.append(completed) else {
+                guard await appendToHistory(completed).didSave else {
                     throw SaysoError.unavailable("History storage")
                 }
                 lastTranscript = completed
@@ -2242,14 +2397,13 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func startImportHistoryAudio(_ sourceURLs: [URL]) {
-        guard !isHistoryAudioTaskRunning else {
+        guard historyGate.beginAudioTask() else {
             notice = "Finish the current history audio task before importing."
             return
         }
-        isHistoryAudioTaskRunning = true
         historyAudioTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isHistoryAudioTaskRunning = false }
+            defer { self.historyGate.endAudioTask() }
             await self.importHistoryAudio(sourceURLs)
             self.historyAudioTask = nil
         }
@@ -2262,12 +2416,11 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func clearHistory() async -> Bool {
-        guard !isImportingHistoryAudio, reprocessingHistoryID == nil, !isHistoryAudioTaskRunning, !isClearingHistory else {
+        guard historyGate.begin(.clear) else {
             notice = "Finish the current history audio task before clearing history."
             return false
         }
-        isClearingHistory = true
-        defer { isClearingHistory = false }
+        defer { historyGate.end(.clear) }
         return await history.clear()
     }
 
@@ -2354,6 +2507,7 @@ final class SaysoAppModel: ObservableObject {
                 return
             }
             // A late or unrelated reply is a new command. beginCommand() resets the session budget.
+            endControl(.cancelled, message: controlStatus)
             controlRun = nil
         }
         guard controlRun == nil, controlPreparationTask == nil else {
@@ -2371,6 +2525,8 @@ final class SaysoAppModel: ObservableObject {
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
+            controlRunAnnounced = false
+            moduleEvents.publish(ControlRunStarted(goal: command))
             controlPreparationTask = Task { [weak self] in
                 let availableApplications = await Task.detached(priority: .utility) {
                     InstalledDesktopApplication.available()
@@ -2401,19 +2557,19 @@ final class SaysoAppModel: ObservableObject {
 
     func approvePendingControl() {
         guard desktopControlEnabled() else {
-            pendingControlStep = nil
+            clearPendingControlStep()
             if let run = controlRun { requestControlCancellation(run, status: "Desktop control disabled.") }
             return
         }
         guard let step = pendingControlStep, let run = controlRun else { return }
-        pendingControlStep = nil
+        clearPendingControlStep()
         let finishes = pendingControlFinishes
         pendingControlFinishes = false
         executeControlRun(run, approvedStep: step, approvedFinishes: finishes)
     }
 
     func discardPendingControl() {
-        pendingControlStep = nil
+        clearPendingControlStep()
         pendingControlFinishes = false
         guard let run = controlRun else {
             controlStatus = "Action discarded"
@@ -2422,14 +2578,47 @@ final class SaysoAppModel: ObservableObject {
         requestControlCancellation(run, status: "Action discarded")
     }
 
+    /// Mirrors transcriber phases as dictation activities; the Stop action reuses the existing stop path.
+    private func startDictationModule() {
+        modules.enable("dictation")
+        dictationPhaseBridge = DictationPhaseBridge(phases: transcriber.$phase.eraseToAnyPublisher(), bus: moduleEvents)
+        dictationStopSubscription = moduleEvents.subscribe(DictationStopRequested.self) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.transcriber.canStop || self.isStartingDictation else { return }
+                self.startOrStopDictation()
+            }
+        }
+    }
+
+    /// Turns the control module's answers back into the existing guarded control paths.
+    private func startControlModule() {
+        modules.enable("control")
+        controlAnswerSubscriptions = [
+            moduleEvents.subscribe(ControlCancelRequested.self) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cancelControl() }
+            },
+            moduleEvents.subscribe(ControlConfirmationAnswered.self) { [weak self] answer in
+                MainActor.assumeIsolated {
+                    // An answer for any step other than the one now pending is stale and must not run it.
+                    guard answer.stepID == self?.pendingControlStepID else { return }
+                    if answer.approved { self?.approvePendingControl() } else { self?.discardPendingControl() }
+                }
+            },
+            moduleEvents.subscribe(ControlClarificationChosen.self) { [weak self] chosen in
+                MainActor.assumeIsolated { self?.runControl(chosen.choice) }
+            },
+        ]
+    }
+
     func cancelControl() {
-        pendingControlStep = nil
+        clearPendingControlStep()
         pendingControlFinishes = false
         if controlPreparationTask != nil {
             controlPreparationTask?.cancel()
             controlPreparationTask = nil
             controlPreparationID = nil
             controlStatus = "Control command cancelled."
+            endControl(.cancelled, message: controlStatus)
             return
         }
         guard let run = controlRun else {
@@ -2538,6 +2727,7 @@ final class SaysoAppModel: ObservableObject {
                             finishes = false
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
+                            moduleEvents.publish(ControlStepPlanned(reason: "verified Calculator step"))
                         } else {
                             // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
                             if run.apiKey == nil { run.apiKey = await typeSafeKey() }
@@ -2567,6 +2757,7 @@ final class SaysoAppModel: ObservableObject {
                                 finishes = completesGoal && run.calculatorTask == nil
                             }
                             controlStatus = "Planned: \(step.reason)"
+                            moduleEvents.publish(ControlStepPlanned(reason: step.reason))
                             if step.confidence < ControlPolicy.minimumConfidence {
                                 let choices = planned.alternatives
                                 guard !choices.isEmpty else {
@@ -2576,6 +2767,7 @@ final class SaysoAppModel: ObservableObject {
                                 run.previous = question
                                 run.clarification = (choices, Date())
                                 controlStatus = question
+                                moduleEvents.publish(ControlClarificationAsked(question: question, choices: choices, askedAt: Date()))
                                 controlExecutionTask = nil
                                 return
                             }
@@ -2587,8 +2779,11 @@ final class SaysoAppModel: ObservableObject {
                                     isApprovedStep = true
                                 } else {
                                     pendingControlStep = step
+                                    let stepID = UUID()
+                                    pendingControlStepID = stepID
                                     pendingControlFinishes = finishes
                                     controlStatus = "Review required: \(step.reason)"
+                                    moduleEvents.publish(ControlConfirmationRequired(reason: step.reason, stepID: stepID))
                                     controlExecutionTask = nil
                                     return
                                 }
@@ -2639,11 +2834,31 @@ final class SaysoAppModel: ObservableObject {
     private func completeControlRun(_ status: String) async {
         let completed = await desktopControlSession.complete()
         controlStatus = completed.result == .completed ? status : "Control stopped"
+        controlOutcome = completed.result == .completed ? .completed : .failed
         finishControlRun()
     }
 
-    private func finishControlRun() {
+    /// Tells the control module the pending review no longer applies, whichever path resolved it.
+    private func clearPendingControlStep() {
         pendingControlStep = nil
+        guard let stepID = pendingControlStepID else { return }
+        pendingControlStepID = nil
+        moduleEvents.publish(ControlConfirmationResolved(stepID: stepID))
+    }
+
+    /// The only place a Control run is announced as finished; later calls for the same run are ignored,
+    /// so a cancel followed by a late completion cannot show "completed" after the user cancelled.
+    private func endControl(_ outcome: ControlRunFinished.Outcome, message: String) {
+        clearPendingControlStep()
+        guard !controlRunAnnounced else { return }
+        controlRunAnnounced = true
+        moduleEvents.publish(ControlRunFinished(outcome: outcome, message: message))
+    }
+
+    private func finishControlRun() {
+        endControl(controlOutcome, message: controlStatus)
+        controlOutcome = .failed
+        clearPendingControlStep()
         pendingControlFinishes = false
         controlRun = nil
         controlExecutionTask = nil
@@ -2664,6 +2879,7 @@ final class SaysoAppModel: ObservableObject {
     private func requestControlCancellation(_ run: ControlCommandRun, status: String) {
         controlExecutionTask?.cancel()
         controlStatus = status
+        endControl(.cancelled, message: status)
         Task { [weak self] in
             guard let self else { return }
             _ = await desktopControlSession.cancel()
@@ -8258,7 +8474,7 @@ extension SaysoAppModel {
                 }
                 let final = await translated(transcript, settings: settings)
                 lastTranscript = final
-                await history.append(final)
+                _ = await appendToHistory(final)
                 return .success(
                     id: request.id, command: request.command,
                     result: .init(text: final.displayText, model: final.route.displayName)
@@ -9585,4 +9801,26 @@ enum SaysoPalette {
             endPoint: .bottom
         )
     }
+}
+
+
+/// Hops shortcut intents onto the main actor and calls the original handlers; nothing else decides what a shortcut does.
+private final class AppShortcutIntents: ShortcutIntentHandling, @unchecked Sendable {
+    enum Intent { case dictation, controlDown, controlUp, toggleNotch }
+    private weak var model: SaysoAppModel?
+
+    init(model: SaysoAppModel) { self.model = model }
+
+    private func run(_ intent: Intent) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { model?.performShortcutIntent(intent) }
+        } else {
+            Task { @MainActor [weak model] in model?.performShortcutIntent(intent) }
+        }
+    }
+
+    func dictationShortcutPressed() { run(.dictation) }
+    func controlShortcutPressed() { run(.controlDown) }
+    func controlShortcutReleased() { run(.controlUp) }
+    func toggleNotchShortcutPressed() { run(.toggleNotch) }
 }

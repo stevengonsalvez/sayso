@@ -400,7 +400,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         speechLanguage = decoded(DictationLanguage.self, .speechLanguage, fallback: legacySpeechLanguage)
         if speechLanguage == .automatic { speechLanguage = .english }
         speechVoiceIdentifier = (try? values.decodeIfPresent(String.self, forKey: .speechVoiceIdentifier)) ?? speechVoiceIdentifier
-        speechRate = min(max(decoded(Double.self, .speechRate, fallback: speechRate), 0.2), 0.6)
+        speechRate = min(max(decoded(Double.self, .speechRate, fallback: speechRate), SpeechPlan.rateRange.lowerBound), SpeechPlan.rateRange.upperBound)
         autoInsert = decoded(Bool.self, .autoInsert, fallback: autoInsert)
         livePartialInsertion = decoded(Bool.self, .livePartialInsertion, fallback: livePartialInsertion)
         restoreClipboardAfterPaste = decoded(Bool.self, .restoreClipboardAfterPaste, fallback: restoreClipboardAfterPaste)
