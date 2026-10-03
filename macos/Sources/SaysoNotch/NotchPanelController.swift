@@ -343,7 +343,8 @@ private struct VoiceWorkspaceContent: View {
     private var status: String {
         // Once a Control utterance ends, its stale transcript must not hide planning, questions, or results.
         let isControl = model.settings.mode == .control
-        if !model.transcriber.partialText.isEmpty, isLive || !isControl { return model.transcriber.partialText }
+        let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+        if !activeText.isEmpty, isLive || !isControl { return activeText }
         if let notice = model.notice { return notice }
         if isControl { return model.controlStatus }
         if model.transcriber.phase == .listening { return "Listening for dictation" }
