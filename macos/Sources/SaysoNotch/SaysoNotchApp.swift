@@ -216,6 +216,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isCheckingControlTryNowReadiness = false
     @Published var slmStates: [String: LocalSlmState] = [:]
     @Published var slmDownloadProgress: [String: Double] = [:]
+    @Published public var livePreviewText: String = ""
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -264,7 +265,7 @@ final class SaysoAppModel: ObservableObject {
     private var dictationDestination: TextOutput.Destination?
     private var liveInsertion: TextOutput.LiveInsertion?
     private var voiceEditCapture: SelectedTextEdit.Capture?
-    private var activeRecordingSession: RecordingSession?
+    private(set) var activeRecordingSession: RecordingSession?
     private var activeDictationSettings: SaysoSettings?
     private var pendingVoiceMode: SaysoMode?
     private var handsFreeCycle = HandsFreeCycle()
@@ -279,6 +280,7 @@ final class SaysoAppModel: ObservableObject {
     private var expiryTicker: SaysoExpiryTicker?
     private var modelRetrySubscription: SaysoSubscription?
     private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
+    private var transcriberChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -342,6 +344,9 @@ final class SaysoAppModel: ObservableObject {
             self?.objectWillChange.send()
             // objectWillChange fires before the store updates, so read the candidates on the next turn.
             DispatchQueue.main.async { self?.vocabularyBridge.sync() }
+        }
+        transcriberChangeObserver = transcriber.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
             self?.handleMonitoredHotKeyGesture(.singleTap)
@@ -465,6 +470,12 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleMonitoredHotKeyGesture(_ gesture: HotKeyGesture) {
+        if transcriber.canStop || isStartingDictation || handsFreeCycle.isArmed {
+            if gesture == .singleTap || gesture == .doubleTap {
+                startOrStopDictation()
+                return
+            }
+        }
         switch ShortcutGestureRouter.action(
             for: gesture,
             monitoredHotKey: monitoredHotKey,
@@ -911,6 +922,7 @@ final class SaysoAppModel: ObservableObject {
             isStartingDictation = false
             dictationStartCancellationRequested = false
         }
+        livePreviewText = ""
         notch.show()
         voiceEditCapture = capture
         let pinnedApplication = handsFreeDestinationProcessIdentifier
@@ -968,7 +980,7 @@ final class SaysoAppModel: ObservableObject {
             destination: dictationDestination?.recordingDestination
         )
         activeRecordingSession = session
-        liveInsertion = !onboardingTest && capture == nil && sessionSettings.autoInsert && sessionSettings.livePartialInsertion
+        liveInsertion = !onboardingTest && capture == nil && sessionSettings.autoInsert && sessionSettings.livePartialInsertion && sessionSettings.transcriptionExecutionMode == .streaming
             ? dictationDestination.flatMap(TextOutput.LiveInsertion.init(destination:))
             : nil
         if onboardingTest {
@@ -1028,6 +1040,7 @@ final class SaysoAppModel: ObservableObject {
                 preferredAudioInputUID: settings.preferredAudioInputUID,
                 saveAudio: settings.saveSessionAudio && !onboardingTest && capture == nil && settings.mode == .dictation,
                 cloudTranscription: cloudTranscriptionConfiguration(for: sessionSettings),
+                executionMode: sessionSettings.transcriptionExecutionMode,
                 onPartial: { [weak self] text in
                     Task { @MainActor [weak self] in
                         guard self?.voiceEditCapture == nil else { return }
@@ -1070,6 +1083,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleDictationPartial(_ text: String) {
+        livePreviewText = text
+        objectWillChange.send()
         handleVoiceModeSwitch(text)
         guard pendingVoiceMode == nil, settings.mode == .dictation else { return }
         _ = liveInsertion?.update(text)
@@ -1084,6 +1099,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func accept(_ transcript: Transcript) {
+        livePreviewText = ""
+        objectWillChange.send()
         if applyPendingVoiceMode() {
             discardTranscriptAudio(transcript)
             return
@@ -1501,6 +1518,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func failActiveSession(_ message: String) {
+        livePreviewText = ""
+        objectWillChange.send()
         handsFreeCycle.disarm()
         liveInsertion?.discard()
         liveInsertion = nil
@@ -1514,6 +1533,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func cancelActiveRecordingSession() {
+        livePreviewText = ""
+        objectWillChange.send()
         handsFreeCycle.disarm()
         liveInsertion?.discard()
         liveInsertion = nil
@@ -1526,6 +1547,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleTranscriptionTermination(_ termination: TranscriptionTermination) {
+        livePreviewText = ""
+        objectWillChange.send()
         guard activeRecordingSession != nil else { return }
         pendingVoiceMode = nil
         switch termination {
@@ -1585,11 +1608,14 @@ final class SaysoAppModel: ObservableObject {
         }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "Sayso Notch"
+        window.title = "Sayso"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(red: 0x0C / 255.0, green: 0x13 / 255.0, blue: 0x22 / 255.0, alpha: 1.0)
         window.contentView = NSHostingView(rootView: SettingsHome(model: self).frame(minWidth: 1000, minHeight: 680))
         window.center()
@@ -1710,6 +1736,12 @@ final class SaysoAppModel: ObservableObject {
         if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
+        if let key = secrets.secret(named: "\(provider.id)-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        if let key = secrets.secret(named: "\(provider.id).apiKey"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
         if provider.id == "openai" || provider.id == "custom" {
             return hasBYOKKey
         }
@@ -1722,6 +1754,8 @@ final class SaysoAppModel: ObservableObject {
         guard !trimmed.isEmpty else { return false }
         do {
             try secrets.store(trimmed, named: provider.keychainServiceIdentifier)
+            try? secrets.store(trimmed, named: "\(provider.id)-api-key")
+            try? secrets.store(trimmed, named: "\(provider.id).apiKey")
             if provider.id == "openai" || provider.id == "custom" {
                 try? secrets.store(trimmed, named: "byok-api-key")
                 hasBYOKKey = true
@@ -1736,6 +1770,8 @@ final class SaysoAppModel: ObservableObject {
 
     func removeProviderKey(for provider: CloudProvider) {
         secrets.remove(named: provider.keychainServiceIdentifier)
+        secrets.remove(named: "\(provider.id)-api-key")
+        secrets.remove(named: "\(provider.id).apiKey")
         if provider.id == "openai" || provider.id == "custom" {
             secrets.remove(named: "byok-api-key")
             hasBYOKKey = false
@@ -1746,6 +1782,12 @@ final class SaysoAppModel: ObservableObject {
     func keyForProvider(_ provider: CloudProvider) -> String? {
         if provider.id == "ollama" { return "local-ollama" }
         if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let key = secrets.secret(named: "\(provider.id)-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let key = secrets.secret(named: "\(provider.id).apiKey"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return key.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if provider.id == "openai" || provider.id == "custom" {
@@ -1911,7 +1953,7 @@ final class SaysoAppModel: ObservableObject {
         }
         let model = currentSettings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty else { return nil }
-        return .init(baseURL: baseURL, apiKey: apiKey, model: model)
+        return .init(baseURL: baseURL, apiKey: apiKey, model: model, providerId: sttProvider.id)
     }
 
     func addLexiconCorrection(_ spoken: String, replacement: String) {
@@ -2891,7 +2933,8 @@ private struct MenuContent: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Sayso Notch", systemImage: "waveform.circle.fill")
                 .font(.headline)
-            Text(model.transcriber.partialText.isEmpty ? "Ready" : model.transcriber.partialText)
+            let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+            Text(activeText.isEmpty ? "Ready" : activeText)
                 .lineLimit(2)
             Button(actionLabel) {
                 model.startOrStopDictation()
@@ -3144,11 +3187,13 @@ private struct SettingsHome: View {
                     Button {
                         model.minimizeMainWindow()
                     } label: {
-                        Image(systemName: "minus")
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(SaysoPalette.muted)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help("Minimise Sayso")
+                    .help("Minimise Sayso (⌘M)")
                     .accessibilityLabel("Minimise Sayso")
                 }
                 .padding(16)
@@ -3226,6 +3271,17 @@ private struct SettingsHome: View {
             }
             .toolbarBackground(SaysoPalette.brandNavyDark, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        model.minimizeMainWindow()
+                    } label: {
+                        Label("Minimize", systemImage: "minus")
+                    }
+                    .help("Minimize Sayso window (⌘M)")
+                    .accessibilityLabel("Minimize Sayso window")
+                }
+            }
         }
         .tint(SaysoPalette.cobalt)
         .navigationSplitViewStyle(.balanced)
@@ -3279,6 +3335,198 @@ private struct NoticeBanner: View {
     }
 }
 
+struct SaysoAudioLevelMeter: View {
+    let level: Float
+    private let weights: [CGFloat] = [0.55, 0.85, 0.62, 1.0, 0.6]
+    private let maxHeight: CGFloat = 22
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(weights.indices, id: \.self) { index in
+                Capsule()
+                    .fill(LinearGradient(
+                        colors: [
+                            Color(red: 0.18, green: 0.75, blue: 0.48),
+                            Color(red: 0.55, green: 0.80, blue: 0.32),
+                            Color(red: 0.90, green: 0.71, blue: 0.24)
+                        ],
+                        startPoint: .bottom,
+                        endPoint: .top
+                    ))
+                    .frame(width: 3.5, height: barHeight(for: index))
+                    .animation(.easeOut(duration: 0.12), value: level)
+            }
+        }
+        .frame(height: maxHeight, alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(for index: Int) -> CGFloat {
+        let clamped = CGFloat(min(max(level, 0), 1))
+        return max(3, weights[index] * clamped * maxHeight)
+    }
+}
+
+struct SaysoRecordDot: View {
+    let isLive: Bool
+    private let size: CGFloat = 14
+
+    var body: some View {
+        Group {
+            if isLive {
+                TimelineView(.animation) { context in
+                    let elapsed = context.date.timeIntervalSinceReferenceDate
+                    let pulse = 0.5 + 0.5 * sin(elapsed * .pi * 1.6)
+                    Circle()
+                        .fill(SaysoPalette.crimson)
+                        .frame(width: size, height: size)
+                        .scaleEffect(0.9 + 0.15 * pulse)
+                        .shadow(color: SaysoPalette.crimson.opacity(0.3 + 0.4 * pulse), radius: 3 + 4 * pulse)
+                }
+            } else {
+                Circle()
+                    .fill(Color.secondary.opacity(0.6))
+                    .frame(width: size, height: size)
+            }
+        }
+        .frame(width: 20, height: 20, alignment: .center)
+    }
+}
+
+struct SaysoElapsedTimerLabel: View {
+    let startedAt: Date?
+    let isLive: Bool
+
+    var body: some View {
+        if isLive, let startedAt {
+            TimelineView(.periodic(from: startedAt, by: 1.0)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(startedAt))
+                let totalSecs = Int(elapsed)
+                let mins = totalSecs / 60
+                let secs = totalSecs % 60
+                let label = mins > 0 ? String(format: "%d:%02ds", mins, secs) : "\(secs)s"
+                Text(label)
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(SaysoPalette.muted)
+            }
+        } else {
+            Text("0s")
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .foregroundStyle(SaysoPalette.muted.opacity(0.6))
+        }
+    }
+}
+
+struct SaysoCompactHUDCapsule: View {
+    @ObservedObject var model: SaysoAppModel
+    var action: () -> Void
+
+    private var isLive: Bool {
+        model.transcriber.canStop || model.transcriber.phase == .listening
+    }
+
+    private var shortcutHint: String {
+        ShortcutHint.compact(for: .dictation, hotKey: model.dictationHotKey)
+    }
+
+    private var microphoneName: String {
+        if let uid = model.settings.preferredAudioInputUID,
+           let dev = model.audioInputDevices.first(where: { $0.uid == uid }) {
+            return dev.name
+        }
+        return "Default Microphone"
+    }
+
+    private var engineBadge: String {
+        switch model.settings.route {
+        case .local:
+            return model.settings.transcriptionExecutionMode == .batch ? "Local Batch Core ML" : "Local Streaming"
+        case .byok:
+            let provider = CloudProviderCatalog.provider(for: model.settings.selectedCloudProviderId)?.displayName ?? "Cloud"
+            return "\(provider) (\(model.settings.transcriptionExecutionMode == .batch ? "Batch" : "Streaming"))"
+        case .appleSpeech:
+            return "Apple Speech"
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 14) {
+                // Top row: dot · meter · timer
+                HStack(spacing: 10) {
+                    SaysoRecordDot(isLive: isLive)
+                    Spacer()
+                    if isLive {
+                        SaysoAudioLevelMeter(level: model.transcriber.audioLevel)
+                    }
+                    Spacer()
+                    SaysoElapsedTimerLabel(startedAt: model.activeRecordingSession?.startedAt, isLive: isLive)
+                }
+                .frame(height: 24)
+
+                // Middle: text / prompt
+                VStack(alignment: .leading, spacing: 6) {
+                    let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+                    if !activeText.isEmpty {
+                        Text(activeText)
+                            .font(.system(size: 24, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if isLive {
+                        Text(model.settings.transcriptionExecutionMode == .batch ? "Listening... (transcribing on stop)" : "Listening for speech...")
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
+                            .foregroundStyle(SaysoPalette.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Tap anywhere or press \(shortcutHint) to speak")
+                            .font(.system(size: 22, weight: .medium, design: .rounded))
+                            .foregroundStyle(SaysoPalette.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .frame(minHeight: 80, alignment: .topLeading)
+
+                // Footer capsule: mic · route badge · click hint
+                HStack(spacing: 8) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "mic.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(isLive ? SaysoPalette.crimson : SaysoPalette.muted)
+                        Text(microphoneName)
+                            .font(.caption2)
+                            .foregroundStyle(SaysoPalette.muted)
+                            .lineLimit(1)
+                    }
+                    Text("·").font(.caption2).foregroundStyle(SaysoPalette.muted)
+                    Text(engineBadge)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(SaysoPalette.amber)
+                    Spacer()
+                    Text(isLive ? "Click to Stop" : "Click to Record")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(isLive ? SaysoPalette.crimson : SaysoPalette.cobalt)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background((isLive ? SaysoPalette.crimson : SaysoPalette.cobalt).opacity(0.15), in: Capsule())
+                }
+            }
+            .padding(22)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(SaysoPalette.brandNavySurface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(isLive ? SaysoPalette.crimson.opacity(0.6) : SaysoPalette.brandNavyContainer, lineWidth: 1.5)
+            )
+            .shadow(color: isLive ? SaysoPalette.crimson.opacity(0.2) : Color.black.opacity(0.25), radius: 16, x: 0, y: 8)
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+    }
+}
+
 private struct DictationWorkspace: View {
     @ObservedObject var model: SaysoAppModel
 
@@ -3292,26 +3540,11 @@ private struct DictationWorkspace: View {
                 Spacer()
                 ModePicker(model: model)
             }
-            VStack(alignment: .leading, spacing: 12) {
-                Text(model.transcriber.canStop ? "LISTENING" : model.transcriber.canStart ? "DICTATION" : "FINISHING")
-                    .font(.caption.weight(.black)).foregroundStyle(SaysoPalette.amber)
-                Text(model.transcriber.partialText.isEmpty ? "Tap to start talking" : model.transcriber.partialText)
-                    .font(.system(size: 28, weight: .medium, design: .rounded))
-                    .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
-                Button {
-                    model.startOrStopDictation()
-                } label: {
-                    Label(
-                        model.transcriber.canStop ? "Stop" : model.transcriber.canStart ? "Start dictation" : "Finishing dictation",
-                        systemImage: model.transcriber.canStop ? "stop.fill" : model.transcriber.canStart ? "mic.fill" : "ellipsis"
-                    )
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(model.transcriber.canStop ? SaysoPalette.crimson : SaysoPalette.cobalt)
-                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
+
+            SaysoCompactHUDCapsule(model: model) {
+                model.startOrStopDictation()
             }
-            .padding(28)
-            .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 16))
+
             if let transcript = model.lastTranscript {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("LAST RESULT").font(.caption.weight(.bold)).foregroundStyle(.secondary)
@@ -3761,10 +3994,19 @@ private struct HistoryWorkspace: View {
             )
             let insights = HistoryInsights.make(from: displayedEntries)
             let isFiltered = scope != .all || !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            HStack(spacing: 24) {
+            HStack(spacing: 18) {
                 Label("\(insights.entries) \(isFiltered ? "matching" : "entries")", systemImage: "text.quote")
                 Label("\(insights.words) words", systemImage: "textformat")
                 Label("\(insights.activeDays) days", systemImage: "calendar")
+                if insights.totalDurationSeconds > 0 {
+                    Label(insights.formattedDuration, systemImage: "clock")
+                }
+                if insights.averageWordsPerMinute > 0 {
+                    Label(String(format: "%.0f WPM", insights.averageWordsPerMinute), systemImage: "speedometer")
+                }
+                if insights.estimatedCloudSpendUSD > 0 {
+                    Label(String(format: "$%.2f cloud spend", insights.estimatedCloudSpendUSD), systemImage: "dollarsign.circle")
+                }
                 Spacer()
                 Button("Import audio") { isImportingAudio = true }
                     .disabled(model.isHistoryAudioTaskRunning || model.isClearingHistory)
@@ -4910,6 +5152,68 @@ private struct TranscriptionWorkspace: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                // Section: Transcription Mode (JustSpeakToIt Parity)
+                SaysoCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("TRANSCRIPTION MODE")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(SaysoPalette.brandAmber)
+                            Text("Choose where and how speech is converted to text")
+                                .font(.subheadline)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+
+                        // Location: Remote vs Local
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Where transcription runs")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Picker("Location", selection: Binding(
+                                get: { model.settings.route == .byok ? 0 : 1 },
+                                set: {
+                                    model.settings.route = ($0 == 0 ? .byok : .local)
+                                    model.save()
+                                }
+                            )) {
+                                Text("Remote").tag(0)
+                                Text("Local").tag(1)
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(model.settings.route == .byok
+                                ? "Remote: Fast, accurate cloud models (OpenAI, Groq)"
+                                : "Local: Private on-device models, no internet required")
+                                .font(.caption2)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+
+                        // Type: Streaming vs Batch
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Transcription type")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Picker("Type", selection: Binding(
+                                get: { model.settings.transcriptionExecutionMode == .streaming ? 0 : 1 },
+                                set: {
+                                    model.settings.transcriptionExecutionMode = ($0 == 0 ? .streaming : .batch)
+                                    model.save()
+                                }
+                            )) {
+                                Text("Streaming").tag(0)
+                                Text("Batch").tag(1)
+                            }
+                            .pickerStyle(.segmented)
+
+                            Text(model.settings.transcriptionExecutionMode == .streaming
+                                ? "Streaming: Text appears in real-time as you speak"
+                                : "Batch: Transcribed after you finish speaking (more accurate, no sentence butchering)")
+                                .font(.caption2)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+                    }
+                }
+
                 // Section: Speech Recognition
                 SaysoSectionHeader(text: "Speech Recognition")
 
@@ -7012,6 +7316,62 @@ private struct ModelsWorkspace: View {
             }
         }
 
+        SaysoSectionHeader(text: "High-Accuracy Batch Models (Apple Silicon Core ML / WhisperKit)")
+
+        // WhisperKit Large v3 Turbo (Image 3 Parity)
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("WhisperKit Large v3 Turbo")
+                                .fontWeight(.bold)
+                                .foregroundStyle(.white)
+                            Text("★ Recommended")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.2), in: Capsule())
+                                .foregroundStyle(Color.orange)
+                            Text("Apple Neural Engine")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(SaysoPalette.cobalt.opacity(0.2), in: Capsule())
+                                .foregroundStyle(SaysoPalette.cobalt)
+                        }
+                        Text("High-accuracy Whisper Large v3 Turbo Core ML model (632 MB) on Apple Silicon. Recommended for batch transcription.")
+                            .font(.caption)
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    Spacer()
+                    Text("Installed")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(SaysoPalette.emerald)
+                }
+
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("COMPUTE UNITS").font(.caption2.weight(.bold)).foregroundStyle(SaysoPalette.muted)
+                        Text("Neural Engine + GPU").font(.caption.weight(.semibold)).foregroundStyle(.white)
+                    }
+                    Divider().frame(height: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("ESTIMATED MEMORY").font(.caption2.weight(.bold)).foregroundStyle(SaysoPalette.muted)
+                        Text("≈ 1.2 GB RAM").font(.caption.weight(.semibold)).foregroundStyle(.white)
+                    }
+                    Divider().frame(height: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("SPEED (RTFX)").font(.caption2.weight(.bold)).foregroundStyle(SaysoPalette.muted)
+                        Text("≈ 4.2x real-time").font(.caption.weight(.semibold)).foregroundStyle(SaysoPalette.emerald)
+                    }
+                    Spacer()
+                }
+                .padding(10)
+                .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+
         SaysoSectionHeader(text: "Native Streaming Models (Apple Silicon CoreML)")
 
         // English FluidAudio
@@ -7276,12 +7636,7 @@ private struct ModelsWorkspace: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(sttProviders) { p in
-                            let hint: String? = {
-                                if p.id == "groq" { return "⚡ ~140ms" }
-                                if p.id == "sayso" { return "⚡ ~250ms" }
-                                if p.id == "openai" { return "🎯 ~380ms" }
-                                return nil
-                            }()
+                            let hint = p.speedHint
                             SaysoProviderPill(
                                 name: p.displayName,
                                 isSelected: model.settings.selectedCloudProviderId == p.id,

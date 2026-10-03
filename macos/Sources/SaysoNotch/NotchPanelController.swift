@@ -279,7 +279,17 @@ private struct FloatingHUD: View {
                         .font(.caption2.monospaced())
                         .foregroundStyle(SaysoPalette.muted)
                     if model.transcriber.phase == .listening {
-                        Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7)
+                        HStack(spacing: 4) {
+                            Circle().fill(SaysoPalette.crimson).frame(width: 6, height: 6)
+                            HStack(alignment: .bottom, spacing: 2) {
+                                ForEach([0.55, 0.85, 0.62, 1.0, 0.6].indices, id: \.self) { idx in
+                                    Capsule()
+                                        .fill(SaysoPalette.crimson)
+                                        .frame(width: 2.5, height: max(2.5, CGFloat(min(max(model.transcriber.audioLevel, 0), 1)) * [0.55, 0.85, 0.62, 1.0, 0.6][idx] * 12))
+                                }
+                            }
+                            .frame(height: 12, alignment: .bottom)
+                        }
                     }
                 }
                 .foregroundStyle(.white)
@@ -338,8 +348,10 @@ private struct VoiceWorkspaceContent: View {
 
     private var statusModel: NotchStatus {
         // Once a Control utterance ends, its stale transcript must not hide planning, questions, or results.
-        NotchStatusPolicy.resolve(
-            partialText: model.transcriber.partialText,
+        // Main's live preview wins over the raw partial, as before the module status policy.
+        let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+        return NotchStatusPolicy.resolve(
+            partialText: activeText,
             isLive: isLive,
             isControl: model.settings.mode == .control,
             notice: model.notice,
@@ -365,6 +377,16 @@ private struct VoiceWorkspaceContent: View {
             HStack(spacing: 8) {
                 ModePicker(model: model)
                 Spacer(minLength: 4)
+                Button(action: collapse) {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(SaysoPalette.muted)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Minimize / Collapse workspace (Esc)")
+                .accessibilityLabel("Minimize Sayso workspace")
+
                 Menu {
                     Button("Open Sayso", action: openApp)
                     Button("Onboarding Tour", action: openOnboarding)
@@ -436,23 +458,55 @@ private struct VoiceWorkspaceContent: View {
                     .multilineTextAlignment(.center)
             }
 
-            Button {
-                if model.settings.mode == .dictation {
-                    model.startOrStopDictation()
-                } else {
-                    model.startOrStopControl()
+            if isLive {
+                Button {
+                    if model.settings.mode == .dictation {
+                        model.startOrStopDictation()
+                    } else {
+                        model.startOrStopControl()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle().fill(SaysoPalette.crimson).frame(width: 8, height: 8)
+                        Text(actionTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        HStack(alignment: .bottom, spacing: 2.5) {
+                            ForEach([0.55, 0.85, 0.62, 1.0, 0.6].indices, id: \.self) { idx in
+                                Capsule()
+                                    .fill(SaysoPalette.crimson)
+                                    .frame(width: 3, height: max(3, CGFloat(min(max(model.transcriber.audioLevel, 0), 1)) * [0.55, 0.85, 0.62, 1.0, 0.6][idx] * 18))
+                                    .animation(.easeOut(duration: 0.1), value: model.transcriber.audioLevel)
+                            }
+                        }
+                        .frame(height: 18, alignment: .bottom)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+                    .background(SaysoPalette.crimson.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(SaysoPalette.crimson.opacity(0.5), lineWidth: 1))
                 }
-            } label: {
-                Label(
-                    actionTitle,
-                    systemImage: isLive ? "stop.fill" : model.settings.mode == .dictation ? "mic.fill" : "cursorarrow.rays"
-                )
-                .font(.callout.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 32)
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    if model.settings.mode == .dictation {
+                        model.startOrStopDictation()
+                    } else {
+                        model.startOrStopControl()
+                    }
+                } label: {
+                    Label(
+                        actionTitle,
+                        systemImage: model.settings.mode == .dictation ? "mic.fill" : "cursorarrow.rays"
+                    )
+                    .font(.callout.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amberDark)
+                .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(isLive ? SaysoPalette.crimson : model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amberDark)
-            .disabled(!model.transcriber.canStop && !model.transcriber.canStart)
 
             Button(action: collapse) {
                 Text("\(model.activeShortcutHint) · \(model.settings.mode == .dictation ? "Dictation" : "Control")")
@@ -487,8 +541,19 @@ private struct DockedNotchHUD: View {
                     Spacer(minLength: 4)
                     Text(model.activeShortcutHint)
                         .font(.caption2.monospaced())
-                        .foregroundStyle(SaysoPalette.muted)
-                    if model.transcriber.phase == .listening { Circle().fill(SaysoPalette.crimson).frame(width: 7, height: 7) }
+                    if model.transcriber.phase == .listening {
+                        HStack(spacing: 4) {
+                            Circle().fill(SaysoPalette.crimson).frame(width: 6, height: 6)
+                            HStack(alignment: .bottom, spacing: 2) {
+                                ForEach([0.55, 0.85, 0.62, 1.0, 0.6].indices, id: \.self) { idx in
+                                    Capsule()
+                                        .fill(SaysoPalette.crimson)
+                                        .frame(width: 2.5, height: max(2.5, CGFloat(min(max(model.transcriber.audioLevel, 0), 1)) * [0.55, 0.85, 0.62, 1.0, 0.6][idx] * 12))
+                                }
+                            }
+                            .frame(height: 12, alignment: .bottom)
+                        }
+                    }
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)

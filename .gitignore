@@ -13,6 +13,7 @@ app/libs/
 macos/.build/
 macos/.artifacts/
 macos/.tmux-dev-session.json
+.tmux-dev-session.json
 macos/dev-server-*.log
 macos/dev-sayso-app.log
 *.log

@@ -225,6 +225,27 @@ public enum TextOutput {
         }
     }
 
+    public enum StreamingInsertionAllowlist {
+        public static let bundleIdentifiers: Set<String> = [
+            "com.apple.TextEdit",
+            "com.apple.Notes"
+        ]
+
+        public static func allows(bundleIdentifier: String?) -> Bool {
+            guard let bundleIdentifier else { return false }
+            return bundleIdentifiers.contains(bundleIdentifier)
+        }
+
+        public static func allows(processIdentifier: pid_t) -> Bool {
+            let bundleID = NSRunningApplication(processIdentifier: processIdentifier)?.bundleIdentifier
+            return allows(bundleIdentifier: bundleID)
+        }
+
+        public static func allows(destination: TextOutput.Destination) -> Bool {
+            allows(processIdentifier: destination.recordingDestination.processIdentifier)
+        }
+    }
+
     @MainActor
     public final class LiveInsertion {
         public enum FinalizationResult: Equatable { case applied, deferred, failed }
@@ -233,14 +254,13 @@ public enum TextOutput {
         private var region: LiveTextRegion
         private var expectedSelection: TextUTF16Range
         private var isUsable = true
-        // ponytail: Same-field user edits cannot be verified until Electron exposes reliable AX text markers.
-        private var usesKeyboardStreaming = false
         public private(set) var hasWritten = false
         public private(set) var deliveryMethod: TextDeliveryMethod = .directInsertion
 
         public init?(destination: Destination) {
             guard destination.field != nil,
                   TextOutput.isFocused(destination),
+                  StreamingInsertionAllowlist.allows(destination: destination),
                   let value = TextOutput.value(in: destination),
                   let selection = TextOutput.selectedRange(in: destination),
                   let region = LiveTextRegion(baseline: value, selection: selection) else { return nil }
@@ -264,9 +284,6 @@ public enum TextOutput {
 
         @discardableResult
         private func replace(with text: String) -> Bool {
-            if usesKeyboardStreaming {
-                return replaceKeyboardStream(with: text)
-            }
             guard isUsable,
                   let field = destination.field,
                   TextOutput.isFocused(destination),
@@ -292,23 +309,10 @@ public enum TextOutput {
             if setSucceeded { Thread.sleep(forTimeInterval: 0.05) }
             let valueAfterDirectWrite = TextOutput.value(in: destination)
             if valueAfterDirectWrite != expected {
-                guard TextInsertionVerification.shouldPasteAfterDirectWrite(
-                    setSucceeded: setSucceeded,
-                    verified: false,
-                    previous: current,
-                    current: valueAfterDirectWrite
-                ),
-                region.selection.length == 0,
-                TextOutput.isFocused(destination),
-                TextOutput.applyKeyboardStreamingEdit(
-                    KeyboardStreamingEdit.between(current: region.insertedText, target: text),
-                    to: destination
-                ) else {
-                    isUsable = false
-                    return false
-                }
-                usesKeyboardStreaming = true
-                deliveryMethod = .pidPaste
+                // If direct accessibility write fails to verify, disable live streaming insertion.
+                // Do not fallback to synthetic keyboard backspaces, which mangle sentences.
+                isUsable = false
+                return false
             }
             hasWritten = true
             guard let observedSelection = TextOutput.selectedRange(in: destination) else {
@@ -317,21 +321,6 @@ public enum TextOutput {
             }
             region.replace(with: text)
             expectedSelection = observedSelection
-            return true
-        }
-
-        private func replaceKeyboardStream(with text: String) -> Bool {
-            guard isUsable,
-                  TextOutput.isFocused(destination),
-                  TextOutput.applyKeyboardStreamingEdit(
-                      KeyboardStreamingEdit.between(current: region.insertedText, target: text),
-                      to: destination
-                  ) else {
-                isUsable = false
-                return false
-            }
-            region.replace(with: text)
-            hasWritten = true
             return true
         }
     }

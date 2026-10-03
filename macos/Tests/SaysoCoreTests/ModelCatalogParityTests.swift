@@ -9,7 +9,7 @@ struct ModelCatalogParityTests {
     func cloudProviderCatalogValidation() {
         let providers = CloudProviderCatalog.all
         #expect(!providers.isEmpty)
-        #expect(providers.count >= 7)
+        #expect(providers.count >= 20)
 
         let providerIds = providers.map(\.id)
         #expect(providerIds.contains("sayso"))
@@ -19,6 +19,16 @@ struct ModelCatalogParityTests {
         #expect(providerIds.contains("deepseek"))
         #expect(providerIds.contains("ollama"))
         #expect(providerIds.contains("custom"))
+        #expect(providerIds.contains("deepgram"))
+        #expect(providerIds.contains("assemblyai"))
+        #expect(providerIds.contains("elevenlabs"))
+        #expect(providerIds.contains("cartesia"))
+        #expect(providerIds.contains("gladia"))
+        #expect(providerIds.contains("speechmatics"))
+        #expect(providerIds.contains("xai"))
+        #expect(providerIds.contains("azure"))
+        #expect(providerIds.contains("mistral"))
+        #expect(providerIds.contains("google"))
 
         #expect(CloudProviderCatalog.defaultProvider.id == "sayso")
 
