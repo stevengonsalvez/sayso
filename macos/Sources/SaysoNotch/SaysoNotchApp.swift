@@ -1689,6 +1689,12 @@ final class SaysoAppModel: ObservableObject {
         if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
+        if let key = secrets.secret(named: "\(provider.id)-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        if let key = secrets.secret(named: "\(provider.id).apiKey"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
         if provider.id == "openai" || provider.id == "custom" {
             return hasBYOKKey
         }
@@ -1701,6 +1707,8 @@ final class SaysoAppModel: ObservableObject {
         guard !trimmed.isEmpty else { return false }
         do {
             try secrets.store(trimmed, named: provider.keychainServiceIdentifier)
+            try? secrets.store(trimmed, named: "\(provider.id)-api-key")
+            try? secrets.store(trimmed, named: "\(provider.id).apiKey")
             if provider.id == "openai" || provider.id == "custom" {
                 try? secrets.store(trimmed, named: "byok-api-key")
                 hasBYOKKey = true
@@ -1715,6 +1723,8 @@ final class SaysoAppModel: ObservableObject {
 
     func removeProviderKey(for provider: CloudProvider) {
         secrets.remove(named: provider.keychainServiceIdentifier)
+        secrets.remove(named: "\(provider.id)-api-key")
+        secrets.remove(named: "\(provider.id).apiKey")
         if provider.id == "openai" || provider.id == "custom" {
             secrets.remove(named: "byok-api-key")
             hasBYOKKey = false
@@ -1725,6 +1735,12 @@ final class SaysoAppModel: ObservableObject {
     func keyForProvider(_ provider: CloudProvider) -> String? {
         if provider.id == "ollama" { return "local-ollama" }
         if let key = secrets.secret(named: provider.keychainServiceIdentifier), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let key = secrets.secret(named: "\(provider.id)-api-key"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let key = secrets.secret(named: "\(provider.id).apiKey"), !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return key.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if provider.id == "openai" || provider.id == "custom" {
@@ -1890,7 +1906,7 @@ final class SaysoAppModel: ObservableObject {
         }
         let model = currentSettings.byokTranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !model.isEmpty else { return nil }
-        return .init(baseURL: baseURL, apiKey: apiKey, model: model)
+        return .init(baseURL: baseURL, apiKey: apiKey, model: model, providerId: sttProvider.id)
     }
 
     func addLexiconCorrection(_ spoken: String, replacement: String) {
@@ -7364,12 +7380,7 @@ private struct ModelsWorkspace: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(sttProviders) { p in
-                            let hint: String? = {
-                                if p.id == "groq" { return "⚡ ~140ms" }
-                                if p.id == "sayso" { return "⚡ ~250ms" }
-                                if p.id == "openai" { return "🎯 ~380ms" }
-                                return nil
-                            }()
+                            let hint = p.speedHint
                             SaysoProviderPill(
                                 name: p.displayName,
                                 isSelected: model.settings.selectedCloudProviderId == p.id,
