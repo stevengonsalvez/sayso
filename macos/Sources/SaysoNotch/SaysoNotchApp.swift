@@ -215,6 +215,7 @@ final class SaysoAppModel: ObservableObject {
     @Published private(set) var isCheckingControlTryNowReadiness = false
     @Published var slmStates: [String: LocalSlmState] = [:]
     @Published var slmDownloadProgress: [String: Double] = [:]
+    @Published public var livePreviewText: String = ""
 
     let permissions = PermissionCenter()
     let transcriber: LiveTranscriber
@@ -253,6 +254,7 @@ final class SaysoAppModel: ObservableObject {
     private var workspaceObserver: NSObjectProtocol?
     private var permissionsChangeObserver: AnyCancellable?
     private var correctionChanges: AnyCancellable?
+    private var transcriberChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
     private var controlPreparationTask: Task<Void, Never>?
@@ -303,6 +305,9 @@ final class SaysoAppModel: ObservableObject {
             self?.objectWillChange.send()
         }
         correctionChanges = corrections.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        transcriberChangeObserver = transcriber.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         hotKeyEngine.register(gesture: .singleTap) { [weak self] in
@@ -426,6 +431,12 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleMonitoredHotKeyGesture(_ gesture: HotKeyGesture) {
+        if transcriber.canStop || isStartingDictation || handsFreeCycle.isArmed {
+            if gesture == .singleTap || gesture == .doubleTap {
+                startOrStopDictation()
+                return
+            }
+        }
         switch ShortcutGestureRouter.action(
             for: gesture,
             monitoredHotKey: monitoredHotKey,
@@ -882,6 +893,7 @@ final class SaysoAppModel: ObservableObject {
             isStartingDictation = false
             dictationStartCancellationRequested = false
         }
+        livePreviewText = ""
         notch.show()
         voiceEditCapture = capture
         let pinnedApplication = handsFreeDestinationProcessIdentifier
@@ -1042,6 +1054,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleDictationPartial(_ text: String) {
+        livePreviewText = text
+        objectWillChange.send()
         handleVoiceModeSwitch(text)
         guard pendingVoiceMode == nil, settings.mode == .dictation else { return }
         _ = liveInsertion?.update(text)
@@ -1056,6 +1070,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func accept(_ transcript: Transcript) {
+        livePreviewText = ""
+        objectWillChange.send()
         if applyPendingVoiceMode() {
             discardTranscriptAudio(transcript)
             return
@@ -1480,6 +1496,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func failActiveSession(_ message: String) {
+        livePreviewText = ""
+        objectWillChange.send()
         handsFreeCycle.disarm()
         liveInsertion?.discard()
         liveInsertion = nil
@@ -1493,6 +1511,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func cancelActiveRecordingSession() {
+        livePreviewText = ""
+        objectWillChange.send()
         handsFreeCycle.disarm()
         liveInsertion?.discard()
         liveInsertion = nil
@@ -1505,6 +1525,8 @@ final class SaysoAppModel: ObservableObject {
     }
 
     private func handleTranscriptionTermination(_ termination: TranscriptionTermination) {
+        livePreviewText = ""
+        objectWillChange.send()
         guard activeRecordingSession != nil else { return }
         pendingVoiceMode = nil
         switch termination {
@@ -2695,7 +2717,8 @@ private struct MenuContent: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Sayso Notch", systemImage: "waveform.circle.fill")
                 .font(.headline)
-            Text(model.transcriber.partialText.isEmpty ? "Ready" : model.transcriber.partialText)
+            let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+            Text(activeText.isEmpty ? "Ready" : activeText)
                 .lineLimit(2)
             Button(actionLabel) {
                 model.startOrStopDictation()
@@ -3227,8 +3250,9 @@ struct SaysoCompactHUDCapsule: View {
 
                 // Middle: text / prompt
                 VStack(alignment: .leading, spacing: 6) {
-                    if !model.transcriber.partialText.isEmpty {
-                        Text(model.transcriber.partialText)
+                    let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+                    if !activeText.isEmpty {
+                        Text(activeText)
                             .font(.system(size: 24, weight: .medium, design: .rounded))
                             .foregroundStyle(.white)
                             .lineLimit(4)
