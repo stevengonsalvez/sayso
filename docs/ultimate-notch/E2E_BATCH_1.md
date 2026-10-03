@@ -1,6 +1,6 @@
 # Installed-app E2E batch 1 runbook
 
-Status: written, NOT run. No result below is real until the results table at the end is filled in by someone who ran it.
+Status: partially run on 2026-10-04 (see the results table). Only rows marked PASS or PARTIAL were observed; everything marked NOT OBSERVED is still unproven.
 
 Scope: the modules that are wired into `SaysoAppModel` at origin head: TTS, History, Models install progress, Vocabulary suggestions, Shortcut intents, Control run/review, Dictation session activity, status line and Studio menu. Clipboard, File shelf, External API (opt-in) are built but not wired and are out of scope except where stated.
 
@@ -115,24 +115,24 @@ Clipboard history, File shelf, External API socket (needs `defaults write ai.say
 
 ## 8. Results table (fill in; leave blank if not run)
 
-Run date: ____  Head: ____  CI for head: ____  Runner: ____  Packaged app path: ____  Signing identity: ____
+Run date: 2026-10-04 (early)  Head: `f73a87c`  CI for head: not checked  Runner: session -6b (Claude) with Stevie authorising a quit of the competing pid  Packaged app path: `notch-clipboard-6b/macos/.artifacts/Sayso Notch.app` (single process pid 65945, quit by exact pid afterwards)  Signing identity: ad hoc / local default (not recorded; `spctl` rejects, not notarized)
 
 | # | Step | Result (pass/fail/blocked) | Evidence (file, screenshot, JSON) | Notes / failure becomes test |
 |---|---|---|---|---|
-| 3.1 | | | | |
-| 3.2 | | | | |
-| 3.3 | | | | |
-| 3.4 | | | | |
-| 4 TextEdit | | | | |
-| 4 Orca | | | | |
-| 4 Arc | | | | |
-| 4 WhatsApp (not sent) | | | | |
-| 4 Finder | | | | |
-| 5 TTS | | | | |
-| 5 History | | | | |
-| 5 Models | | | | |
-| 5 Vocabulary | | | | |
-| 5 Status line | | | | |
-| 6.1 to 6.7 | | | | |
+| 3.1 | not run | NOT OBSERVED | none | needs a person pressing the hotkey |
+| 3.2 | not run | NOT OBSERVED | none | same |
+| 3.3 | not run | NOT OBSERVED | none | same |
+| 3.4 | not run | NOT OBSERVED | none | same |
+| 4 TextEdit | `sayso acceptance --target com.apple.TextEdit "one two three four five six"` into a new empty document | PASS | CLI JSON: `delivery=directInsertion`, `ok=true`, 2 partials applied (`one two`, `one two three four`), `liveInsertionWrote=true`; document text read back exactly `one two three four five six` via AppleScript | Injected-text acceptance only: NOT real Apple Speech. Clipboard-untouched not checked. CLI was the debug build from the merged tree. Document closed unsaved afterwards |
+| 4 Orca | not run | NOT OBSERVED | none | app not found by Spotlight on this machine |
+| 4 Arc | not run | NOT OBSERVED | none | app not found by Spotlight on this machine |
+| 4 WhatsApp (not sent) | not run | NOT OBSERVED | none | app not found by Spotlight on this machine; nothing was sent |
+| 4 Finder | not run | NOT OBSERVED | none | no editable scratch field prepared |
+| 5 TTS | not run | NOT OBSERVED | none | needs clicking Speak and listening |
+| 5 History | `sayso history` against the running packaged app | PARTIAL | `ok=true`, existing entries returned (data intact, latest text `Listening for speed`) | no new transcript saved in this run, so the save path, busy-flag notices and main's streaming plus instant-stop path are NOT observed |
+| 5 Models | not run | NOT OBSERVED | none | no install started |
+| 5 Vocabulary | not run | NOT OBSERVED | none | |
+| 5 Status line | not run | NOT OBSERVED | none | the notch was not looked at |
+| 6.1 to 6.7 | not run | NOT OBSERVED | none | needs Desktop Control enabled, a Jev key and a spoken or typed command; Approve/Deny and the stale-approve case are unobserved |
 
 Proof boundaries to state in the report: injected-text acceptance versus real Apple Speech; installed app versus `.artifacts` build; exact head; CI status of that head; anything blocked and why.
