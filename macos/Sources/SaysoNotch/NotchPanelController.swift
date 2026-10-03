@@ -269,9 +269,18 @@ private struct FloatingHUD: View {
                     Text(model.settings.mode == .dictation ? "Dictation" : "Control")
                         .font(.caption.weight(.semibold))
                     Spacer(minLength: 4)
-                    Text(model.activeShortcutHint)
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(SaysoPalette.muted)
+                    let activePreview = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+                    if !activePreview.isEmpty {
+                        Text(activePreview)
+                            .font(.caption2.italic())
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                            .foregroundStyle(.white)
+                    } else {
+                        Text(model.activeShortcutHint)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
                     if model.transcriber.phase == .listening {
                         HStack(spacing: 4) {
                             Circle().fill(SaysoPalette.crimson).frame(width: 6, height: 6)
@@ -340,15 +349,12 @@ private struct VoiceWorkspaceContent: View {
         model.transcriber.canStop || model.transcriber.phase == .listening
     }
 
-    private var status: String {
-        // Once a Control utterance ends, its stale transcript must not hide planning, questions, or results.
-        let isControl = model.settings.mode == .control
-        let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
-        if !activeText.isEmpty, isLive || !isControl { return activeText }
-        if let notice = model.notice { return notice }
-        if isControl { return model.controlStatus }
-        if model.transcriber.phase == .listening { return "Listening for dictation" }
-        return "Ready to dictate into the focused app"
+    private var isProcessing: Bool {
+        model.transcriber.phase == .processing
+    }
+
+    private var activeText: String {
+        !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
     }
 
     private var actionTitle: String {
@@ -361,7 +367,7 @@ private struct VoiceWorkspaceContent: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
                 ModePicker(model: model)
                 Spacer(minLength: 4)
@@ -395,18 +401,78 @@ private struct VoiceWorkspaceContent: View {
                 .help("More Sayso controls")
             }
 
-            Button(action: collapse) {
-                Text(status)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 40, maxHeight: 44)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if isLive {
+                        Circle()
+                            .fill(SaysoPalette.crimson)
+                            .frame(width: 7, height: 7)
+                        Text(model.settings.mode == .dictation ? "Listening..." : "Listening for command...")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(SaysoPalette.crimson)
+                    } else if isProcessing {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("Finishing...")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(SaysoPalette.amber)
+                    } else if let notice = model.notice {
+                        Image(systemName: "info.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(SaysoPalette.amber)
+                        Text(notice)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(SaysoPalette.amber)
+                            .lineLimit(1)
+                    } else {
+                        Image(systemName: model.settings.mode == .dictation ? "waveform" : "cursorarrow.click")
+                            .font(.system(size: 11))
+                            .foregroundStyle(SaysoPalette.muted)
+                        Text(model.settings.mode == .control ? model.controlStatus : "Ready to dictate")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(SaysoPalette.muted)
+                    }
+                    Spacer()
+                }
+
+                Button(action: collapse) {
+                    ZStack(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+
+                        if !activeText.isEmpty {
+                            Text(activeText)
+                                .font(.system(size: 13, weight: isLive ? .regular : .medium))
+                                .italic(isLive)
+                                .foregroundStyle(isLive ? .white : Color(white: 0.95))
+                                .lineLimit(2)
+                                .truncationMode(.head)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                        } else if isLive {
+                            Text("Speak now...")
+                                .font(.system(size: 13).italic())
+                                .foregroundStyle(SaysoPalette.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                        } else {
+                            Text("Ready to dictate into the focused app")
+                                .font(.system(size: 13))
+                                .foregroundStyle(SaysoPalette.muted.opacity(0.8))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.settings.mode == .dictation ? "Dictation transcript, collapse workspace" : "Control transcript, collapse workspace")
+                .accessibilityValue(activeText.isEmpty ? "Ready to dictate" : activeText)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(model.settings.mode == .dictation ? "Dictation status, collapse workspace" : "Control status, collapse workspace")
-            .accessibilityValue(status)
-            .help("\(status). Click to collapse.")
 
             if model.settings.mode == .control, !isLive, model.transcriber.canStart {
                 Button(model.isCheckingControlTryNowReadiness ? "Checking readiness..." : "Try now: Open Calculator") {
@@ -504,8 +570,18 @@ private struct DockedNotchHUD: View {
                         .foregroundStyle(model.settings.mode == .dictation ? SaysoPalette.cobalt : SaysoPalette.amber)
                     Text(model.settings.mode == .dictation ? "Dictation" : "Control")
                     Spacer(minLength: 4)
-                    Text(model.activeShortcutHint)
-                        .font(.caption2.monospaced())
+                    let activePreview = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
+                    if !activePreview.isEmpty {
+                        Text(activePreview)
+                            .font(.caption2.italic())
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: 140)
+                    } else {
+                        Text(model.activeShortcutHint)
+                            .font(.caption2.monospaced())
+                    }
                     if model.transcriber.phase == .listening {
                         HStack(spacing: 4) {
                             Circle().fill(SaysoPalette.crimson).frame(width: 6, height: 6)

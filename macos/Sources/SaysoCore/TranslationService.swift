@@ -57,8 +57,17 @@ public struct OpenAICompatibleRewriter: Sendable {
 public struct OpenAICompatibleTranscriptCleaner: Sendable {
     private let client: OpenAICompatibleChatClient
 
-    public init(baseURL: URL, apiKey: String, model: String, session: URLSession = .shared) {
-        client = .init(baseURL: baseURL, apiKey: apiKey, model: model, session: session)
+    public init(baseURL: URL, apiKey: String, model: String, session: URLSession? = nil) {
+        let activeSession: URLSession
+        if let session {
+            activeSession = session
+        } else {
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 2.0
+            config.timeoutIntervalForResource = 3.0
+            activeSession = URLSession(configuration: config)
+        }
+        client = .init(baseURL: baseURL, apiKey: apiKey, model: model, session: activeSession)
     }
 
     public func clean(
@@ -73,7 +82,7 @@ public struct OpenAICompatibleTranscriptCleaner: Sendable {
             lexiconDirectives: lexiconDirectives,
             lexiconContextTags: lexiconContextTags
         )
-        // ponytail: 5s cap keeps final delivery responsive, make configurable only with measured need.
+        // 2s cap keeps final delivery responsive.
         let cleaned = try await withThrowingTaskGroup(of: String.self, returning: String.self) { group in
             group.addTask {
                 try await client.complete(
@@ -83,7 +92,7 @@ public struct OpenAICompatibleTranscriptCleaner: Sendable {
                 )
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try await Task.sleep(nanoseconds: 2_000_000_000)
                 try Task.checkCancellation()
                 throw SaysoError.unavailable("Transcript cleanup timed out")
             }

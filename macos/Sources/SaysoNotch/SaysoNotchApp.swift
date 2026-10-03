@@ -297,8 +297,8 @@ final class SaysoAppModel: ObservableObject {
         dictationHotKey = shortcutBindings.dictation
         controlHotKey = shortcutBindings.control
         toggleNotchHotKey = shortcutBindings.toggleNotch
-        hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
-        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds))
+        hotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
+        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: saved.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         notch = NotchPanelController()
         isNotchOverlayVisible = notch.isVisible
         permissionsChangeObserver = permissions.objectWillChange.sink { [weak self] _ in
@@ -371,8 +371,8 @@ final class SaysoAppModel: ObservableObject {
         if !settings.byokConsentGranted { settings.cloudCleanupEnabled = false }
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
-        hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
-        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds))
+        hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
+        controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         settingsStore.save(settings)
     }
 
@@ -1070,9 +1070,10 @@ final class SaysoAppModel: ObservableObject {
     }
 
     func accept(_ transcript: Transcript) {
-        livePreviewText = ""
+        livePreviewText = transcript.text
         objectWillChange.send()
         if applyPendingVoiceMode() {
+            livePreviewText = ""
             discardTranscriptAudio(transcript)
             return
         }
@@ -1192,6 +1193,8 @@ final class SaysoAppModel: ObservableObject {
         corrected.text = LexiconCorrections.apply(corrected.text, pronunciations: currentSettings.pronunciations)
         corrected.text = corrections.apply(to: corrected.text).transformedText
         corrected.text = await cleaned(corrected.text, language: corrected.language, settings: currentSettings)
+        livePreviewText = corrected.displayText
+        objectWillChange.send()
         guard currentSettings.translationEnabled else { return corrected }
         guard currentSettings.byokConsentGranted else {
             transcriptProcessingNotice = "Translation needs cloud consent and a selected provider."
@@ -1237,6 +1240,10 @@ final class SaysoAppModel: ObservableObject {
         let local = corrections.apply(to: base).transformedText
 
         if currentSettings.cleanupMode == .localSLM {
+            guard LocalPortProbe.isLocalPortOpen(port: 11434, timeoutMs: 50) else {
+                // Ollama offline: immediately proceed with rules format in 0ms
+                return local
+            }
             if let localEndpoint = URL(string: "http://127.0.0.1:11434/v1") {
                 let slmModelName = currentSettings.selectedLocalSlmModelId.contains("qwen") ? "qwen2.5:0.5b" : "smollm2:360m"
                 do {
