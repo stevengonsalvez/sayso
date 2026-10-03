@@ -364,6 +364,16 @@ private struct VoiceWorkspaceContent: View {
             HStack(spacing: 8) {
                 ModePicker(model: model)
                 Spacer(minLength: 4)
+                Button(action: collapse) {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(SaysoPalette.muted)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .help("Minimize / Collapse workspace (Esc)")
+                .accessibilityLabel("Minimize Sayso workspace")
+
                 Menu {
                     Button("Open Sayso", action: openApp)
                     Button("Onboarding Tour", action: openOnboarding)
