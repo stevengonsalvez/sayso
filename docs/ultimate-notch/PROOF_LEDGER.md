@@ -100,3 +100,7 @@ Fixed with tests first (523 pass): full-pasteboard capture and verbatim restore 
 Not fixed on purpose: `resolve` before `acquire` for bookmark-resolved URLs (no bookmark or persistent shelf flow exists yet; revisit when persistence is built); app-level source detection is still the frontmost app, not the true copier (NSPasteboard does not expose it); restoring other apps' promised/lazy data is best-effort (only data present at capture time is kept).
 
 Still unwired and unrun: the `perform` verification contract is documented, not enforced by types, and the real Accessibility readback is not written.
+
+## Installed-app E2E batch 1, run 2 (2026-10-04, head `f73a87c`)
+
+Packaged the merged head (main merged into the notch branch) to `macos/.artifacts` and ran it as the only Sayso process after Stevie authorised quitting a competing pid (the `parity-justspeaktoit` instance, restarted repeatedly). OBSERVED: `sayso status` ok (microphone granted, local models installed, dictation idle); `sayso history` returns existing entries; `sayso acceptance` into a fresh TextEdit document passed with direct insertion, two applied partials and the exact final text read back. NOT OBSERVED: hotkeys, real Apple Speech, TTS audio, any history save, main's streaming and instant-stop path, status-line text, Models progress, Vocabulary, Control review Approve/Deny, Orca, Arc, WhatsApp (apps not found), Finder. The clipboard was not checked before and after. The runbook table has the per-row result. Everything else in this ledger remains synthetic proof.
