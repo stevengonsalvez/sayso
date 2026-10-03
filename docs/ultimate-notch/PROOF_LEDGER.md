@@ -85,6 +85,10 @@ Stevie's installed app was not running, so a copy packaged to `macos/.artifacts`
 
 NOT OBSERVED: the status-line text of the published activity (the screenshot showed a collapsed Dictation pill and a partly hidden window, nothing conclusive), TTS audio, hotkeys, dictation into TextEdit/Arc/WhatsApp/Finder, Control approve/deny, model download progress. The batch-1 runbook is still unrun.
 
+## Main merged in (2026-10-03)
+
+`origin/main` (4d962cf: cloud STT providers, streaming transcripts with instant hotkey stop, minimize button) was merged by a peer on a side branch and fast-forwarded here as `ceedbf9`. Two trivial conflicts (property block, notch status model: main's `livePreviewText` is fed into `NotchStatusPolicy` so critical reviews and tap rules still apply). Verified by me: app builds, 538 tests pass in 3 suites. All eight history save sites still go through `appendToHistory`. NOT verified: that main's streaming and instant-stop paths behave with the module wiring at runtime.
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
