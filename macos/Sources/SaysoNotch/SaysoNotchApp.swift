@@ -1564,11 +1564,14 @@ final class SaysoAppModel: ObservableObject {
         }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
-        window.title = "Sayso Notch"
+        window.title = "Sayso"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(red: 0x0C / 255.0, green: 0x13 / 255.0, blue: 0x22 / 255.0, alpha: 1.0)
         window.contentView = NSHostingView(rootView: SettingsHome(model: self).frame(minWidth: 1000, minHeight: 680))
         window.center()
@@ -2945,11 +2948,13 @@ private struct SettingsHome: View {
                     Button {
                         model.minimizeMainWindow()
                     } label: {
-                        Image(systemName: "minus")
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(SaysoPalette.muted)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help("Minimise Sayso")
+                    .help("Minimise Sayso (⌘M)")
                     .accessibilityLabel("Minimise Sayso")
                 }
                 .padding(16)
@@ -3027,6 +3032,17 @@ private struct SettingsHome: View {
             }
             .toolbarBackground(SaysoPalette.brandNavyDark, for: .windowToolbar)
             .toolbarBackground(.visible, for: .windowToolbar)
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        model.minimizeMainWindow()
+                    } label: {
+                        Label("Minimize", systemImage: "minus")
+                    }
+                    .help("Minimize Sayso window (⌘M)")
+                    .accessibilityLabel("Minimize Sayso window")
+                }
+            }
         }
         .tint(SaysoPalette.cobalt)
         .navigationSplitViewStyle(.balanced)
