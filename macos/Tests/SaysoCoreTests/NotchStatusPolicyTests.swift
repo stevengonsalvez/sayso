@@ -78,3 +78,15 @@ private func status(
     #expect(status(primary: run).tapAction == nil)
     #expect(status(primary: suggestion).tapAction == nil)
 }
+
+@Test func aControlReviewWithStepBoundActionIdsStillOffersDenyAsTheMenuDismiss() {
+    let step = UUID()
+    let review = SaysoActivity(
+        moduleID: "control", stackID: "confirmation", kind: .confirmation, title: "Review required: Delete file",
+        actions: [SaysoAction(id: "approve-\(step)", title: "Approve"), SaysoAction(id: "deny-\(step)", title: "Deny")],
+        interruption: .critical
+    )
+    let result = status(primary: review)
+    #expect(result.dismissActionID == "deny-\(step)")
+    #expect(result.tapAction == nil)
+}
