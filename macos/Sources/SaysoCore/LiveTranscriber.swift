@@ -1555,10 +1555,10 @@ public enum FileTranscriber {
                 }
             }
             let text = try await session.finish()
-            await session.cleanup()
+            await session.reset()
             return Transcript(text: text, language: language, route: route, isFinal: true)
         } catch {
-            await session.cleanup()
+            await session.reset()
             throw error
         }
     }

@@ -209,6 +209,7 @@ public final class FluidAudioLocalModelManager: ObservableObject {
 
     public func delete() {
         guard state != .installing else { return }
+        cachedEnglishManager = nil
         do {
             if fileManager.fileExists(atPath: modelDirectory.path) {
                 try fileManager.removeItem(at: modelDirectory)
@@ -222,6 +223,7 @@ public final class FluidAudioLocalModelManager: ObservableObject {
 
     public func deleteMultilingual() {
         guard multilingualState != .installing else { return }
+        cachedMultilingualManager = nil
         do {
             if fileManager.fileExists(atPath: multilingualModelDirectory.path) {
                 try fileManager.removeItem(at: multilingualModelDirectory)
@@ -240,13 +242,22 @@ public final class FluidAudioLocalModelManager: ObservableObject {
         }
     }
 
+    private var cachedEnglishManager: StreamingEouAsrManager?
+    private var cachedMultilingualManager: (manager: StreamingNemotronMultilingualAsrManager, lang: String)?
+
     public func makeReadyManager() async throws -> StreamingEouAsrManager {
         guard Self.supportsCurrentHardware else { throw FluidAudioLocalModelError.unsupportedHardware }
         refresh()
         guard state.isInstalled else { throw FluidAudioLocalModelError.notInstalled }
 
+        if let cached = cachedEnglishManager {
+            await cached.reset()
+            return cached
+        }
+
         let manager = StreamingEouAsrManager(configuration: Self.configuration, chunkSize: .ms160)
         try await manager.loadModels(to: modelsDirectory, configuration: Self.configuration)
+        cachedEnglishManager = manager
         return manager
     }
 
@@ -261,10 +272,16 @@ public final class FluidAudioLocalModelManager: ObservableObject {
         }
         guard multilingualState.isInstalled else { throw FluidAudioLocalModelError.notInstalled }
 
+        if let cached = cachedMultilingualManager, cached.lang == languageCode {
+            await cached.manager.reset()
+            return .multilingual(cached.manager)
+        }
+
         let manager = StreamingNemotronMultilingualAsrManager(configuration: Self.configuration)
         try await manager.loadModels(from: multilingualModelDirectory)
         await manager.setLanguage(languageCode)
         await manager.setForcedPrefix(true)
+        cachedMultilingualManager = (manager, languageCode)
         return .multilingual(manager)
     }
 
