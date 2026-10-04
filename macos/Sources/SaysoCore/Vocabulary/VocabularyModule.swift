@@ -54,8 +54,10 @@ public final class VocabularyModule: SaysoModule, @unchecked Sendable {
         }
 
         func handle(stackID: String, actionID: String) {
-            guard stackID.hasPrefix("candidate-"),
-                  let id = UUID(uuidString: String(stackID.dropFirst("candidate-".count))) else { return }
+            // Retry is offered on the "save-failed-<id>" stack, so both stacks route to the same candidate.
+            let prefix = stackID.hasPrefix("candidate-") ? "candidate-" : "save-failed-"
+            guard stackID.hasPrefix(prefix),
+                  let id = UUID(uuidString: String(stackID.dropFirst(prefix.count))) else { return }
             switch actionID {
             case "accept": run(id) { try await $0.port.promote(candidateID: id) } onSuccess: { $0.announceChange(id) }
             case "dismiss": run(id) { try await $0.port.dismiss(candidateID: id) } onSuccess: { $0.clear(id) }
