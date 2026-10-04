@@ -56,6 +56,7 @@ let package = Package(
         .executableTarget(name: "SaysoMCP", dependencies: ["SaysoCore", "SpeakUpstreamBridge"], path: "Sources/sayso-mcp"),
         .target(name: "SaysoGalleryUI", dependencies: ["SaysoCore"]),
         .executableTarget(name: "SaysoGallery", dependencies: ["SaysoCore", "SaysoGalleryUI"]),
+        .testTarget(name: "SaysoNotchTests", dependencies: ["SaysoNotch", "SaysoCore"]),
         .testTarget(name: "SaysoGalleryUITests", dependencies: ["SaysoCore", "SaysoGalleryUI"]),
         .testTarget(name: "SaysoCoreTests", dependencies: ["SaysoCore", .product(name: "SpeakHotKeys", package: "justspeaktoit")]),
     ]
