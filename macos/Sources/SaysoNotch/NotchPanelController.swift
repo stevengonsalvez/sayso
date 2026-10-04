@@ -529,7 +529,7 @@ private struct VoiceWorkspaceContent: View {
                     ForEach(statusModel.criticalActions, id: \.id) { action in
                         Button(action.title) { model.performModuleAction(action.id) }
                             .buttonStyle(.borderedProminent)
-                            .tint(action.id == "approve" ? SaysoPalette.cobalt : SaysoPalette.crimson)
+                            .tint(action.id == "approve" || action.id.hasPrefix("approve-") ? SaysoPalette.cobalt : SaysoPalette.crimson)
                             .accessibilityLabel("\(action.title): \(status)")
                     }
                 }
