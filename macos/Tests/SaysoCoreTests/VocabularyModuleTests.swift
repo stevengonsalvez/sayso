@@ -111,3 +111,19 @@ private func candidate(_ id: UUID = UUID()) -> CorrectionCandidateReady {
     bus.publish(CorrectionCandidateResolved(candidateID: id))
     #expect(host.engine.stack.isEmpty)
 }
+
+@Test func retryOnTheFailedSaveCardPromotesTheCandidateAgain() async {
+    let (host, module, bus, port, _) = setup()
+    let id = UUID()
+    port.failNext = true
+    bus.publish(candidate(id))
+    _ = host.perform(actionID: "accept", stackID: "candidate-\(id)", moduleID: "vocabulary")
+    await module.waitUntilIdle()
+    #expect(host.engine.stack.contains { $0.stackID == "save-failed-\(id)" })
+
+    #expect(host.perform(actionID: "accept", stackID: "save-failed-\(id)", moduleID: "vocabulary"))
+    await module.waitUntilIdle()
+
+    #expect(port.promoted == [id])
+    #expect(!host.engine.stack.contains { $0.stackID == "save-failed-\(id)" })
+}
