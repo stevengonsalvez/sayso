@@ -92,3 +92,17 @@ private func call(_ api: SaysoExternalAPI, _ json: String) throws -> [String: An
     _ = try call(api, #"{"v":1,"op":"clear","stackID":"s1"}"#)
     #expect(try call(api, #"{"v":1,"op":"publish","stackID":"overflow","kind":"ambient","title":"x"}"#)["ok"] as? Bool == true)
 }
+
+@Test func expiredScriptStacksFreeTheirSlotsForNewOnes() throws {
+    let external = ExternalActivitiesModule()
+    let host = SaysoModuleHost(modules: [external])
+    host.enable("external")
+
+    for n in 0..<3 {
+        #expect(external.publish(stackID: "s\(n)", kind: .ambient, title: "t", expiresAfter: 0.05, maxStacks: 3) == .published)
+    }
+    #expect(external.publish(stackID: "extra", kind: .ambient, title: "t", expiresAfter: 0.05, maxStacks: 3) == .limitReached)
+
+    Thread.sleep(forTimeInterval: 0.2)
+    #expect(external.publish(stackID: "extra", kind: .ambient, title: "t", expiresAfter: 0.05, maxStacks: 3) == .published)
+}
