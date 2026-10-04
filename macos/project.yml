@@ -1,0 +1,12 @@
+name: SaysoUITests
+options:
+  bundleIdPrefix: ai.sayso
+targets:
+  SaysoUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources: [UITests]
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: ai.sayso.notch.uitests
