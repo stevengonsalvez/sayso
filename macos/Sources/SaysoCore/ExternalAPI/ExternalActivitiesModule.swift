@@ -24,7 +24,7 @@ public final class ExternalActivitiesModule: SaysoModule, @unchecked Sendable {
         stackID: String, kind: SaysoActivityKind, title: String, expiresAfter: TimeInterval?, maxStacks: Int = .max
     ) -> PublishResult {
         guard let runtime = lock.withLock({ runtime }), runtime.isActive else { return .unavailable }
-        guard runtime.reserve(stackID, limit: maxStacks) else { return .limitReached }
+        guard runtime.reserve(stackID, expiresAfter: expiresAfter, limit: maxStacks) else { return .limitReached }
         runtime.context.publish(stackID: stackID, kind: kind, title: title, expiresAfter: expiresAfter)
         return .published
     }
@@ -41,22 +41,24 @@ public final class ExternalActivitiesModule: SaysoModule, @unchecked Sendable {
         let context: SaysoModuleContext
         private let lock = NSLock()
         private var active = false
-        private var stacks: Set<String> = []
+        /// Stack id to the moment its activity expires (`.distantFuture` when persistent), so expired stacks free their slot.
+        private var stacks: [String: Date] = [:]
         init(context: SaysoModuleContext) { self.context = context }
         var isActive: Bool { lock.withLock { active } }
         var retainedResources: Int { 0 }
         func start() { lock.withLock { active = true } }
-        func stop() { lock.withLock { active = false; stacks = [] } }
+        func stop() { lock.withLock { active = false; stacks = [:] } }
 
-        func reserve(_ stackID: String, limit: Int) -> Bool {
+        func reserve(_ stackID: String, expiresAfter: TimeInterval?, limit: Int) -> Bool {
             lock.withLock {
-                if stacks.contains(stackID) { return true }
-                guard stacks.count < limit else { return false }
-                stacks.insert(stackID)
+                let now = Date()
+                stacks = stacks.filter { $0.value > now }
+                if stacks[stackID] == nil, stacks.count >= limit { return false }
+                stacks[stackID] = expiresAfter.map { now.addingTimeInterval($0) } ?? .distantFuture
                 return true
             }
         }
 
-        func release(_ stackID: String) { lock.withLock { _ = stacks.remove(stackID) } }
+        func release(_ stackID: String) { lock.withLock { stacks[stackID] = nil } }
     }
 }
