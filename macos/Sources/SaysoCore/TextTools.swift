@@ -88,6 +88,10 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
     }
 
     @Published public private(set) var isSpeaking = false
+    /// Fired on the main actor when an utterance finishes or is cancelled.
+    public var onFinish: (@Sendable (Int) -> Void)?
+    private var utteranceIDs: [ObjectIdentifier: Int] = [:]
+    private var lastUtteranceID = 0
     private let synthesizer = AVSpeechSynthesizer()
 
     public override init() {
@@ -104,13 +108,14 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
         return voices.filter { Locale(identifier: $0.language).language.languageCode?.identifier == languageCode }
     }
 
+    @discardableResult
     public func speak(
         _ text: String,
         language: DictationLanguage = .english,
         voiceIdentifier: String? = nil,
         rate: Double = Double(AVSpeechUtteranceDefaultSpeechRate)
-    ) {
-        guard !text.isEmpty else { return }
+    ) -> Int {
+        guard !text.isEmpty else { return 0 }
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
@@ -119,20 +124,32 @@ public final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate, Observab
             max(Float(rate), AVSpeechUtteranceMinimumSpeechRate),
             AVSpeechUtteranceMaximumSpeechRate
         )
+        lastUtteranceID += 1
+        utteranceIDs[ObjectIdentifier(utterance)] = lastUtteranceID
         synthesizer.speak(utterance)
+        return lastUtteranceID
     }
 
     public func stop() { synthesizer.stopSpeaking(at: .immediate) }
+    private func finished(_ key: ObjectIdentifier) {
+        guard let id = utteranceIDs.removeValue(forKey: key) else { return }
+        // A replaced utterance cancels after the new one started; only the last one ends speaking.
+        if utteranceIDs.isEmpty { isSpeaking = false }
+        onFinish?(id)
+    }
+
     nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didStart _: AVSpeechUtterance) {
         Task { @MainActor in self.isSpeaking = true }
     }
 
-    nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didFinish _: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+    nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        let key = ObjectIdentifier(utterance)
+        Task { @MainActor in self.finished(key) }
     }
 
-    nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didCancel _: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+    nonisolated public func speechSynthesizer(_: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        let key = ObjectIdentifier(utterance)
+        Task { @MainActor in self.finished(key) }
     }
 }
 

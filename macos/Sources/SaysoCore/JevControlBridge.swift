@@ -216,8 +216,7 @@ public enum JevControlBridge {
             guard tokens.indices.contains(first), tokens.indices.contains(last), first <= last else {
                 throw JevDecisionError.invalidResponse
             }
-            let text = tokens[first ... last].joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            let text = unwrappingQuotes(tokens[first ... last].joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines))
             guard !text.isEmpty else { throw JevDecisionError.invalidResponse }
             let targetID = String(target.id.dropFirst("focus:".count))
             return .execute(.init(
@@ -253,6 +252,23 @@ public enum JevControlBridge {
             if parts[0] == "url" { return URL(string: parts[1])?.host.map { "\(index + 1): \($0)" } }
             return offer.snapshot.elements.first { $0.id == parts[1] }.map { "\(index + 1): \($0.title)" }
         }
+    }
+
+    /// Drops one pair of quotes only when it wraps the whole selection; all other punctuation is requested text.
+    private static func unwrappingQuotes(_ text: String) -> String {
+        let pairs: [(Character, Character)] = [("\"", "\""), ("“", "”"), ("'", "'"), ("‘", "’")]
+        guard text.count >= 2, let first = text.first, let last = text.last,
+              pairs.contains(where: { $0.0 == first && $0.1 == last }) else { return text }
+        let inner = String(text.dropFirst().dropLast())
+        let quoteMarks = Set(pairs.flatMap { [$0.0, $0.1] })
+        let chars = Array(inner)
+        let hasInnerQuote = chars.indices.contains { index in
+            guard quoteMarks.contains(chars[index]) else { return false }
+            // An apostrophe between two letters (don't, don’t) is part of a word, not a quote.
+            let isApostrophe = index > 0 && index < chars.count - 1 && chars[index - 1].isLetter && chars[index + 1].isLetter
+            return !isApostrophe
+        }
+        return hasInnerQuote ? text : inner
     }
 
     private static func wordIndex(_ identifier: String?) -> Int? {
