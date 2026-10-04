@@ -119,8 +119,8 @@ Run date: 2026-10-04 (early)  Head: `f73a87c`  CI for head: not checked  Runner:
 
 | # | Step | Result (pass/fail/blocked) | Evidence (file, screenshot, JSON) | Notes / failure becomes test |
 |---|---|---|---|---|
-| 3.1 | not run | NOT OBSERVED | none | needs a person pressing the hotkey |
-| 3.2 | not run | NOT OBSERVED | none | same |
+| 3.1 | not run as a separate step | NOT OBSERVED | none | a dictation session did run (see 5 History) but which trigger started it was not recorded |
+| 3.2 | stop during the run-3 dictation | PASS as reported by Stevie | Stevie reported instant stop (main's instant-stop path) | self-reported, not logged |
 | 3.3 | not run | NOT OBSERVED | none | same |
 | 3.4 | not run | NOT OBSERVED | none | same |
 | 4 TextEdit | `sayso acceptance --target com.apple.TextEdit "one two three four five six"` into a new empty document | PASS | CLI JSON: `delivery=directInsertion`, `ok=true`, 2 partials applied (`one two`, `one two three four`), `liveInsertionWrote=true`; document text read back exactly `one two three four five six` via AppleScript | Injected-text acceptance only: NOT real Apple Speech. Clipboard-untouched not checked. CLI was the debug build from the merged tree. Document closed unsaved afterwards |
@@ -129,10 +129,13 @@ Run date: 2026-10-04 (early)  Head: `f73a87c`  CI for head: not checked  Runner:
 | 4 WhatsApp (not sent) | not run | NOT OBSERVED | none | app not found by Spotlight on this machine; nothing was sent |
 | 4 Finder | not run | NOT OBSERVED | none | no editable scratch field prepared |
 | 5 TTS | not run | NOT OBSERVED | none | needs clicking Speak and listening |
-| 5 History | `sayso history` against the running packaged app | PARTIAL | `ok=true`, existing entries returned (data intact, latest text `Listening for speed`) | no new transcript saved in this run, so the save path, busy-flag notices and main's streaming plus instant-stop path are NOT observed |
+| 5 History | spoken dictation by Stevie on the merged packaged build (run 3, head `f73a87c`), then `sayso history` and a poll for new entries | PASS (history save) | history went from 10 entries (newest 2026-10-03T19:16:15Z) to a new entry at 2026-10-04T00:29:34Z, `model=On-device`, 8 words, text `And models and downloads the transcription is new`; `sayso status` back to `dictation=idle` afterwards | save path observed. Transcript text is mostly mis-heard speech, which is a recognition quality note, not a pipeline failure. History busy-flag notices (reprocess/import/clear) NOT observed |
 | 5 Models | not run | NOT OBSERVED | none | no install started |
 | 5 Vocabulary | not run | NOT OBSERVED | none | |
-| 5 Status line | not run | NOT OBSERVED | none | the notch was not looked at |
+| 5 Status line / Dictation activity | Stevie watched the notch during the spoken dictation (run 3) | PASS as reported by Stevie, not independently captured | Stevie reported: text appeared live while speaking, stop was immediate, notch showed Listening then Transcribing | self-reported; no screenshot or log captured. Module activities other than dictation (models, vocabulary, history failure) NOT observed |
 | 6.1 to 6.7 | not run | NOT OBSERVED | none | needs Desktop Control enabled, a Jev key and a spoken or typed command; Approve/Deny and the stale-approve case are unobserved |
 
 Proof boundaries to state in the report: injected-text acceptance versus real Apple Speech; installed app versus `.artifacts` build; exact head; CI status of that head; anything blocked and why.
+
+
+Run 3 (2026-10-04, head `f73a87c`, merged packaged build pid 68555, quit by exact pid afterwards): Stevie did one spoken dictation. Observed in logs: new history entry as above. Reported by Stevie only: live text while speaking, instant stop, notch Listening then Transcribing. Not done: Control Approve/Deny (Stevie did not run step 3), TTS, hotkey variants, other targets.
