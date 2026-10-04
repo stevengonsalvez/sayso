@@ -30,7 +30,7 @@ public enum NotchStatusPolicy {
         isListening: Bool? = nil
     ) -> NotchStatus {
         if let primary, primary.interruption == .critical {
-            let denial = primary.actions.first { $0.id == "deny" || $0.id == "dismiss" }
+            let denial = primary.actions.first { $0.id == "dismiss" || $0.id == "deny" || $0.id.hasPrefix("deny-") }
             return NotchStatus(
                 text: SaysoActivityPresentation(primary).title,
                 criticalActions: primary.actions,
