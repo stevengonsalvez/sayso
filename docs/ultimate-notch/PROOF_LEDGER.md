@@ -89,6 +89,10 @@ NOT OBSERVED: the status-line text of the published activity (the screenshot sho
 
 `origin/main` (4d962cf: cloud STT providers, streaming transcripts with instant hotkey stop, minimize button) was merged by a peer on a side branch and fast-forwarded here as `ceedbf9`. Two trivial conflicts (property block, notch status model: main's `livePreviewText` is fed into `NotchStatusPolicy` so critical reviews and tap rules still apply). Verified by me: app builds, 538 tests pass in 3 suites. All eight history save sites still go through `appendToHistory`. NOT verified: that main's streaming and instant-stop paths behave with the module wiring at runtime.
 
+## Main merged again (2026-10-04, `e7cd1db`)
+
+Two conflicts resolved by me: (1) cleanup: main added a 50 ms `LocalPortProbe` before calling Ollama; I put it inside the `localSLM` closure so the pipeline's local-rules fallback still applies when the port is closed (throws, pipeline falls back). (2) `NotchPanelController`: main replaced the status area with a richer live view (Listening/Finishing/notice, live preview text); I kept main's view and added a separate module-activity line plus the critical Approve/Deny buttons and tap policy under it, shown only when not live and a module activity exists. Build and full suite pass (539 tests in 4 suites). NOT verified: how the combined notch looks or behaves (layout never seen), and main's streaming/instant-stop with module wiring.
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.
