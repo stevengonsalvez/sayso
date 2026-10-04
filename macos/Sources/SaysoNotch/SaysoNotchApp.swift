@@ -231,8 +231,7 @@ final class SaysoAppModel: ObservableObject {
     private var dictationPhaseBridge: DictationPhaseBridge?
     private var dictationStopSubscription: SaysoSubscription?
     private var controlOutcome: ControlRunFinished.Outcome = .failed
-    private var pendingControlStepID: UUID?
-    private var controlRunAnnounced = true
+    private lazy var controlCoordinator = ControlRunCoordinator(bus: moduleEvents)
     private lazy var vocabularyBridge = VocabularyBridge(learning: corrections, bus: moduleEvents)
     private lazy var vocabularyModule = VocabularyModule(port: vocabularyBridge)
     private let externalActivities = ExternalActivitiesModule()
@@ -2530,8 +2529,9 @@ final class SaysoAppModel: ObservableObject {
             let preparationID = UUID()
             controlPreparationID = preparationID
             controlStatus = "Preparing control command"
-            controlRunAnnounced = false
-            moduleEvents.publish(ControlRunStarted(goal: command))
+            // A previous run that never announced its end is closed first, so no card is left behind.
+            controlCoordinator.end(.cancelled, message: "Replaced by a new command")
+            controlCoordinator.begin(goal: command)
             controlPreparationTask = Task { [weak self] in
                 let availableApplications = await Task.detached(priority: .utility) {
                     InstalledDesktopApplication.available()
@@ -2598,16 +2598,15 @@ final class SaysoAppModel: ObservableObject {
     /// Turns the control module's answers back into the existing guarded control paths.
     private func startControlModule() {
         modules.enable("control")
+        // Answers are checked against the exact reviewed step inside the coordinator before they reach here.
+        controlCoordinator.onDecision = { [weak self] decision, _ in
+            MainActor.assumeIsolated {
+                if decision == .approved { self?.approvePendingControl() } else { self?.discardPendingControl() }
+            }
+        }
         controlAnswerSubscriptions = [
             moduleEvents.subscribe(ControlCancelRequested.self) { [weak self] _ in
                 MainActor.assumeIsolated { self?.cancelControl() }
-            },
-            moduleEvents.subscribe(ControlConfirmationAnswered.self) { [weak self] answer in
-                MainActor.assumeIsolated {
-                    // An answer for any step other than the one now pending is stale and must not run it.
-                    guard answer.stepID == self?.pendingControlStepID else { return }
-                    if answer.approved { self?.approvePendingControl() } else { self?.discardPendingControl() }
-                }
             },
             moduleEvents.subscribe(ControlClarificationChosen.self) { [weak self] chosen in
                 MainActor.assumeIsolated { self?.runControl(chosen.choice) }
@@ -2784,11 +2783,9 @@ final class SaysoAppModel: ObservableObject {
                                     isApprovedStep = true
                                 } else {
                                     pendingControlStep = step
-                                    let stepID = UUID()
-                                    pendingControlStepID = stepID
                                     pendingControlFinishes = finishes
                                     controlStatus = "Review required: \(step.reason)"
-                                    moduleEvents.publish(ControlConfirmationRequired(reason: step.reason, stepID: stepID))
+                                    controlCoordinator.requestReview(reason: step.reason)
                                     controlExecutionTask = nil
                                     return
                                 }
@@ -2846,18 +2843,14 @@ final class SaysoAppModel: ObservableObject {
     /// Tells the control module the pending review no longer applies, whichever path resolved it.
     private func clearPendingControlStep() {
         pendingControlStep = nil
-        guard let stepID = pendingControlStepID else { return }
-        pendingControlStepID = nil
-        moduleEvents.publish(ControlConfirmationResolved(stepID: stepID))
+        controlCoordinator.resolveElsewhere()
     }
 
-    /// The only place a Control run is announced as finished; later calls for the same run are ignored,
+    /// The only place a Control run is announced as finished; the coordinator ignores later calls for the same run,
     /// so a cancel followed by a late completion cannot show "completed" after the user cancelled.
     private func endControl(_ outcome: ControlRunFinished.Outcome, message: String) {
-        clearPendingControlStep()
-        guard !controlRunAnnounced else { return }
-        controlRunAnnounced = true
-        moduleEvents.publish(ControlRunFinished(outcome: outcome, message: message))
+        pendingControlStep = nil
+        controlCoordinator.end(outcome, message: message)
     }
 
     private func finishControlRun() {
