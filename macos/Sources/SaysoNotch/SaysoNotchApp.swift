@@ -248,6 +248,7 @@ final class SaysoAppModel: ObservableObject {
         scheduler: SaysoDispatchScheduler(),
         hourCycle: WorldClockHourCycle(locale: .autoupdatingCurrent)
     )
+    private var worldClockObservers: [NSObjectProtocol] = []
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
@@ -362,6 +363,18 @@ final class SaysoAppModel: ObservableObject {
         }
         // World clocks only read the clock and need no permission; with an empty list they arm nothing.
         modules.enable(worldClocks.descriptor.id)
+        // The scheduler counts uptime, which stops in sleep and ignores clock changes, so re-read the time then.
+        worldClockObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+            NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+        ]
         applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
@@ -519,8 +532,7 @@ final class SaysoAppModel: ObservableObject {
         WorldClockZone(identifier: "Asia/Kolkata", city: "Kolkata"),
     ]
 
-    /// Read at render time; the pane redraws when the minute changes because the module republishes its
-    /// notch line then, so nothing here ticks every second.
+    /// Read at render time; the pane redraws itself once a minute, so nothing here ticks every second.
     var worldClockReadings: [WorldClockReading] { worldClocks.readings }
 
     func addWorldClock(_ zone: WorldClockZone) {
@@ -3262,15 +3274,20 @@ private struct NotchWorkspace: View {
         .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    /// Studio picks the places; the first one also shows in the open notch through the module's ambient line.
-    @ViewBuilder
+    /// Studio picks the places; the first one also shows in the open notch through the module's background line.
+    /// The minute timeline redraws the rows on its own, so a line dismissed from the notch does not freeze them.
     private var worldClocksSection: some View {
+        TimelineView(.everyMinute) { _ in worldClocksContent }
+    }
+
+    @ViewBuilder
+    private var worldClocksContent: some View {
         let readings = model.worldClockReadings
         let listed = Set(readings.map(\.zone.identifier))
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("World clocks").font(.headline)
-                Text("Shows the time in up to \(WorldClocksModule.maxZones) places, with +1d or -1d when the date differs from yours. The first place also shows in the open notch when nothing more important is there. The list is saved on this Mac.")
+                Text("Shows the time in each city you add, with +1d or -1d when the date there differs from yours. The first city also shows in the open notch when nothing else is there; Dismiss notification in the notch menu hides it until you change the list. The list is saved on this Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
