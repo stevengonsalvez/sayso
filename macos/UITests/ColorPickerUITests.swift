@@ -39,10 +39,12 @@ final class ColorPickerUITests: XCTestCase {
         XCTAssertTrue(line.waitForExistence(timeout: 5), "the pick line in the notch")
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: line)
         waitForExpectations(timeout: 15)
+        XCTAssertTrue(minimizeButton.exists, "the notch is still open, so the line went away on its own")
     }
 
     /// The pane's off notice and empty rows come from the module's state, not the setting, so this fails if the
-    /// setting stops reaching the module.
+    /// setting stops reaching the module. The pane cannot see whether the stopped module emptied its memory (a new
+    /// session starts empty either way); that purge is proven by `ColorPickerModuleTests` (`retainedResources == 0`).
     func testTheToggleIsOnByDefaultAndTurningItOffClearsThePicks() {
         openNotchPane()
         pick()
@@ -55,13 +57,14 @@ final class ColorPickerUITests: XCTestCase {
 
         openNotchPane()
         XCTAssertTrue(element("color-picker-off").waitForExistence(timeout: 5), "the pane says the picker is off")
-        XCTAssertFalse(element("color-picker-hex").exists, "turning it off cleared the pick")
+        XCTAssertFalse(element("color-picker-hex").exists, "the pane shows no pick while off")
         XCTAssertFalse(element("color-picker-pick").isEnabled, "nothing to pick with while off")
 
         let again = openSettingsToggle()
         again.click()
         XCTAssertEqual(isOn(again), true, "the click turned the throwaway setting back on (value: \(String(describing: again.value)))")
         openNotchPane()
+        XCTAssertTrue(element("color-picker-empty").waitForExistence(timeout: 5), "on again with no pick yet")
         XCTAssertFalse(element("color-picker-off").exists, "the off notice is gone")
         XCTAssertFalse(element("color-picker-hex").exists, "nothing comes back after turning it on again")
         pick()
@@ -96,8 +99,11 @@ final class ColorPickerUITests: XCTestCase {
     private func openNotch() {
         let pill = app.buttons["Open Sayso Dictation workspace"].firstMatch
         if pill.waitForExistence(timeout: 3) { pill.click() }
-        let minimize = app.buttons.matching(NSPredicate(format: "label == %@", "Minimize Sayso workspace")).firstMatch
-        XCTAssertTrue(minimize.waitForExistence(timeout: 10), "expanded notch")
+        XCTAssertTrue(minimizeButton.waitForExistence(timeout: 10), "expanded notch")
+    }
+
+    private var minimizeButton: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", "Minimize Sayso workspace")).firstMatch
     }
 
     private func openSettingsToggle() -> XCUIElement {
