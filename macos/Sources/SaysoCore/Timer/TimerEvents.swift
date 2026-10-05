@@ -5,6 +5,7 @@ import Foundation
 public struct TimerPing: SaysoEvent, Equatable {
     public enum Reason: Equatable, Sendable {
         case finished
+        case phaseStarted(TimerPhase)
     }
 
     public let timerID: TimerID
