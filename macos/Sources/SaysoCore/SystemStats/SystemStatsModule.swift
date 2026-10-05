@@ -16,6 +16,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
     public static let observedIntervalSeconds: TimeInterval = 5
     /// Between samples while nobody looks.
     public static let idleIntervalSeconds: TimeInterval = 60
+    /// Between disk readings, whoever looks: the query is slow and free space moves slowly.
+    public static let diskIntervalSeconds: TimeInterval = 60
     /// After a failed read the machine is left alone this long, observed or not.
     public static let failureBackoffSeconds: TimeInterval = 60
     /// At most one failure is reported in this window, the host's quarantine window, so reads that fail now and
@@ -92,6 +94,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         private var latest: SystemStatsSnapshot?
         private var lastTicks: SystemCPUTicks?
         private var lastSampleAt: Date?
+        private var lastDisk: Int64?
+        private var lastDiskAt: Date?
         /// Conditions entered and not yet cleared; kept across a failed read, which cannot say they cleared.
         private var active: Set<SystemStatsAlert> = []
         /// Dismissed from the notch; each stays hidden until its condition clears.
@@ -132,6 +136,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 latest = nil
                 lastTicks = nil
                 lastSampleAt = nil
+                lastDisk = nil
+                lastDiskAt = nil
                 active = []
                 hidden = []
                 shown = [:]
@@ -161,6 +167,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 guard running else { return }
                 let now = module.now()
                 lastSampleAt = lastSampleAt.map { min($0, now) }
+                lastDiskAt = lastDiskAt.map { min($0, now) }
                 lastReport = lastReport.map { min($0, now) }
                 sampleNow = true
                 rearm(at: now)
@@ -179,18 +186,27 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         /// the host calls into this runtime while holding that lock. A job that only repaints (after a dismiss) does
         /// not read, so the CPU load is never taken over a few milliseconds.
         private func run() {
-            guard let due = lock.withLock({ () -> Bool? in
+            guard let (due, diskDue) = lock.withLock({ () -> (Bool, Bool)? in
                 guard running else { return nil }
                 defer { (sampleNow, repaintNow) = (false, false) }
-                return sampleNow || lastSampleAt.map { module.now() >= $0.addingTimeInterval(interval) } ?? true
+                let now = module.now()
+                let due = sampleNow || lastSampleAt.map { now >= $0.addingTimeInterval(interval) } ?? true
+                return (due, lastDiskAt.map { now >= $0.addingTimeInterval(SystemStatsModule.diskIntervalSeconds) } ?? true)
             }) else { return }
             let reading = due ? Result { () throws(SystemStatsPortError) in try module.port.read() } : nil
+            // Outer nil: not asked this time. Inner nil: asked, and the file system would not say.
+            var disk: Int64?? = nil
+            if case .success? = reading, diskDue { disk = .some(module.port.diskFreeBytes()) }
             let (effects, report) = lock.withLock { () -> ([Effect], Bool) in
                 guard running else { return ([], false) }
                 let now = module.now()
                 guard let reading else {
                     rearm(at: now)
                     return (lineChanges(), false)
+                }
+                if let disk {
+                    lastDisk = disk
+                    lastDiskAt = now
                 }
                 let wasFailing = failing
                 switch reading {
@@ -201,7 +217,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                         memoryPressure: reading.memoryPressure,
                         batteryFraction: reading.batteryFraction,
                         isPluggedIn: reading.isPluggedIn,
-                        diskFreeBytes: reading.diskFreeBytes,
+                        diskFreeBytes: lastDisk,
                         sampledAt: now
                     )
                     latest = stats
