@@ -33,14 +33,16 @@ enum SystemStatsAlert: String, CaseIterable, Sendable {
             if percent <= Self.batteryLowPercent { return true }
             return percent >= Self.batteryRecoveredPercent ? false : nil
         case .memory:
+            // An unknown level cannot vouch for a critical line.
             switch stats.memoryPressure {
-            case .critical: return true
-            case .normal: return false
-            case .warning: return nil
+            case .critical?: return true
+            case .warning?: return nil
+            case .normal?, nil: return false
             }
         case .disk:
-            if stats.diskFreeBytes < Self.diskLowBytes { return true }
-            return stats.diskFreeBytes >= Self.diskRecoveredBytes ? false : nil
+            guard let free = stats.diskFreeBytes else { return false }
+            if free < Self.diskLowBytes { return true }
+            return free >= Self.diskRecoveredBytes ? false : nil
         }
     }
 
@@ -50,10 +52,10 @@ enum SystemStatsAlert: String, CaseIterable, Sendable {
             return "Battery \(stats.batteryPercent ?? 0)%, not plugged in"
         // No figure that moves on every sample: each new title repaints the notch.
         case .memory:
-            return "Memory pressure \(stats.memoryPressure.rawValue)"
+            return "Memory pressure \(stats.memoryPressure?.rawValue ?? "unknown")"
         case .disk:
             // Rounded down, so a line that appears below 5 GB never reads "5.0 GB free".
-            let tenths = (Double(stats.diskFreeBytes) / 100_000_000).rounded(.down) / 10
+            let tenths = (Double(stats.diskFreeBytes ?? 0) / 100_000_000).rounded(.down) / 10
             return "Disk almost full, \(String(format: "%.1f", tenths)) GB free"
         }
     }
