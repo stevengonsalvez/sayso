@@ -450,22 +450,22 @@ final class SaysoAppModel: ObservableObject {
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
 
     func addToFileShelf(_ urls: [URL]) {
+        objectWillChange.send()
         let added = fileShelf.add(urls)
         if added < urls.count {
             notice = "Added \(added) of \(urls.count) to the file shelf. The rest were missing or could not be read."
         }
-        objectWillChange.send()
     }
 
     func revealOnFileShelf(_ id: FileShelfItem.ID) {
-        // The shelf prunes an item whose file has gone, so a failed reveal also updates the list.
-        if !fileShelf.reveal(id: id) { notice = "That file is no longer where it was, so it was removed from the shelf." }
+        // The shelf prunes an item whose file has gone, so a failed reveal also changes the list.
         objectWillChange.send()
+        if !fileShelf.reveal(id: id) { notice = "That file is no longer where it was, so it was removed from the shelf." }
     }
 
     func removeFromFileShelf(_ id: FileShelfItem.ID) {
-        fileShelf.remove(id: id)
         objectWillChange.send()
+        fileShelf.remove(id: id)
     }
 
     func refreshAudioInputDevices() {
@@ -8497,9 +8497,11 @@ private struct SaysoSettingsView: View {
                         Button("Reveal") { model.revealOnFileShelf(item.id) }
                             .buttonStyle(.bordered)
                             .font(.caption)
+                            .accessibilityLabel("Reveal \(item.name) in Finder")
                         Button("Remove") { model.removeFromFileShelf(item.id) }
                             .buttonStyle(.bordered)
                             .font(.caption)
+                            .accessibilityLabel("Remove \(item.name) from the shelf")
                     }
                 }
             }
