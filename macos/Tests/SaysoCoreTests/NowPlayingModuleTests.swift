@@ -293,7 +293,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         rig.player.load("Second", artist: "Other", duration: 180)
         rig.advance(NowPlayingModule.activePollSeconds)
         #expect(rig.lines.map(\.title) == ["Second · Other · Spotify"])
-        #expect(close(rig.line?.progress, 0))
+        #expect(close(rig.line?.progress, NowPlayingModule.activePollSeconds / 180), "the new track's own position")
     }
 
     @Test func aPlayerThatQuitsClearsTheLine() {
