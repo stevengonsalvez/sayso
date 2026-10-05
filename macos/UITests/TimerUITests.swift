@@ -22,10 +22,12 @@ final class TimerUITests: XCTestCase {
     }
 
     /// Opens the notch if it is collapsed, and proves it is open so an absent line is not a closed notch.
+    /// Matched by label: SwiftUI gives the minimize button its symbol name as identifier.
     private func openNotch() {
         let pill = app.buttons["Open Sayso Dictation workspace"].firstMatch
         if pill.waitForExistence(timeout: 3) { pill.click() }
-        XCTAssertTrue(app.buttons["Minimize Sayso workspace"].firstMatch.waitForExistence(timeout: 10), "expanded notch")
+        let minimize = app.buttons.matching(NSPredicate(format: "label == %@", "Minimize Sayso workspace")).firstMatch
+        XCTAssertTrue(minimize.waitForExistence(timeout: 10), "expanded notch")
     }
 
     func testPomodoroStartsTicksInTheNotchAndCancelClearsIt() {
