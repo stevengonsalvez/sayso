@@ -254,6 +254,57 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(rig.sink.pings.isEmpty)
     }
 
+    @Test func aStopwatchCountsUpAndRecordsLapsOnlyWhileRunning() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startStopwatch())
+        #expect(rig.running.map(\.title) == ["Stopwatch 0:00"])
+        #expect(rig.running.first?.progress == nil, "a stopwatch has no end, so no progress")
+
+        rig.advance(12.5)
+        #expect(rig.running.map(\.title) == ["Stopwatch 0:12"])
+        #expect(rig.module.lap(id) == 12.5)
+        rig.advance(7.5)
+        #expect(rig.module.lap(id) == 7.5)
+        #expect(rig.running.map(\.title) == ["Stopwatch 0:20"])
+        let snapshot = try #require(rig.module.timers.first)
+        #expect(snapshot.kind == .stopwatch)
+        #expect(snapshot.laps == [12.5, 7.5])
+        #expect(snapshot.elapsed == 20)
+        #expect(snapshot.remaining == nil)
+
+        #expect(rig.module.pause(id))
+        #expect(rig.module.lap(id) == nil, "no lap while paused")
+        #expect(rig.scheduler.jobs.isEmpty)
+        rig.advance(3600)
+        #expect(rig.module.timers.first?.elapsed == 20)
+        #expect(rig.sink.pings.isEmpty, "a stopwatch never finishes on its own")
+    }
+
+    @Test func aStopwatchKeepsABoundedNumberOfLaps() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startStopwatch())
+        for _ in 0..<TimerModule.maxLaps {
+            rig.advance(1)
+            #expect(rig.module.lap(id) == 1)
+        }
+        rig.advance(1)
+        #expect(rig.module.lap(id) == nil)
+        #expect(rig.module.timers.first?.laps.count == TimerModule.maxLaps)
+    }
+
+    @Test func timersAndStopwatchesShareACapThatThePomodoroDoesNotCountAgainst() throws {
+        let rig = rig(maxTimers: 2)
+        let first = try #require(rig.module.startCountdown(60))
+        try #require(rig.module.startStopwatch() != nil)
+
+        #expect(rig.module.startCountdown(60) == nil)
+        #expect(rig.module.startStopwatch() == nil)
+        #expect(rig.module.startPomodoro() != nil)
+
+        #expect(rig.module.cancel(first))
+        #expect(rig.module.startCountdown(60) != nil, "cancelling frees a slot")
+    }
+
     @Test func timeLabelsUseMinutesAndSecondsAndAddHoursOnlyWhenNeeded() {
         #expect(TimerModule.clockLabel(0) == "0:00")
         #expect(TimerModule.clockLabel(59.2) == "0:59")
