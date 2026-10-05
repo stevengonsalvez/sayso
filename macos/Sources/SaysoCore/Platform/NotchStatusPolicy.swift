@@ -16,6 +16,9 @@ public struct NotchStatus: Equatable, Sendable {
     public let tapAction: NotchTapAction?
     /// Action the "Dismiss" menu item should run; a critical review dismisses as Deny, never as a silent clear.
     public let dismissActionID: String?
+    /// The activity the text paints; nil when dictation, a notice or Control status shows instead, so controls
+    /// that belong to an activity are never drawn beside unrelated text.
+    public let activity: SaysoActivity?
 }
 
 /// One owner for what the notch status line says and which actions it may expose.
@@ -35,11 +38,12 @@ public enum NotchStatusPolicy {
                 text: SaysoActivityPresentation(primary).title,
                 criticalActions: primary.actions,
                 tapAction: nil,
-                dismissActionID: denial?.id
+                dismissActionID: denial?.id,
+                activity: primary
             )
         }
-        func plain(_ text: String, tap: NotchTapAction? = nil) -> NotchStatus {
-            NotchStatus(text: text, criticalActions: [], tapAction: tap, dismissActionID: nil)
+        func plain(_ text: String, tap: NotchTapAction? = nil, activity: SaysoActivity? = nil) -> NotchStatus {
+            NotchStatus(text: text, criticalActions: [], tapAction: tap, dismissActionID: nil, activity: activity)
         }
         if !partialText.isEmpty, isLive || !isControl { return plain(partialText) }
         if let notice { return plain(notice) }
@@ -49,7 +53,7 @@ public enum NotchStatusPolicy {
             let retry = primary.kind == .failure ? primary.actions.first { $0.id == "retry" } : nil
             return plain(text, tap: retry.map {
                 NotchTapAction(moduleID: primary.moduleID, stackID: primary.stackID, actionID: $0.id, title: $0.title)
-            })
+            }, activity: primary)
         }
         if isControl { return plain(controlStatus) }
         if isListening ?? isLive { return plain("Listening for dictation") }

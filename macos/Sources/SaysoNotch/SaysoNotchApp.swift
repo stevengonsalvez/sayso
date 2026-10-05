@@ -249,10 +249,16 @@ final class SaysoAppModel: ObservableObject {
         hourCycle: WorldClockHourCycle(locale: .autoupdatingCurrent)
     )
     private var worldClockObservers: [NSObjectProtocol] = []
+    /// Asks only an already running Music or Spotify, and only while the user has opted in. Its own serial queue
+    /// keeps AppleScript and the Automation prompt off the main thread.
+    private let nowPlaying = NowPlayingModule(
+        port: ScriptingNowPlayingPort(),
+        scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.now-playing", qos: .utility))
+    )
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks,
+            externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
         ],
         events: moduleEvents
     )
@@ -368,8 +374,9 @@ final class SaysoAppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
-            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks] _ in
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying] _ in
                 worldClocks.clockChanged()
+                nowPlaying.clockChanged()
             },
             NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
@@ -480,12 +487,14 @@ final class SaysoAppModel: ObservableObject {
         settingsStore.save(settings)
     }
 
-    /// Modules that read the pasteboard or hold file access run only while the user has opted in;
+    /// Modules that read the pasteboard, hold file access or talk to other apps run only while the user has opted in;
     /// turning one off stops it and purges what it held.
     private func applyOptInModuleSettings() {
         // Descriptor ids, not literals: the host ignores unknown ids, so a typo would silently skip the purge.
         modules.setEnabled(clipboardModule.descriptor.id, settings.clipboardModuleEnabled)
         modules.setEnabled(fileShelf.descriptor.id, settings.fileShelfEnabled)
+        // Off by default: the first check makes macOS ask for Automation permission, which must follow a user choice.
+        modules.setEnabled(nowPlaying.descriptor.id, settings.nowPlayingEnabled)
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -2301,7 +2310,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7,
-        "shortcut-intents": 8,
+        "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
 
@@ -8582,6 +8591,15 @@ private struct SaysoSettingsView: View {
                 }
                 if model.settings.fileShelfEnabled {
                     fileShelfCard
+                }
+                SaysoSettingItemCard(
+                    title: "Now Playing (off by default)",
+                    description: "When on, the open notch shows the track playing in Music or Spotify, with its progress and buttons for previous, play or pause, and next. Timers, alerts, clipboard offers and the file shelf take its place while they show, and a paused track disappears after a minute. Every few seconds Sayso asks Music or Spotify, only if it is already open, for the track name, artist, playing or paused, position and length; it never opens either app. The first time, macOS asks whether Sayso may control Music or Spotify; you can change that later in System Settings, Privacy & Security, Automation. Nothing is saved or sent anywhere, and turning this off stops the checks and clears the track.",
+                    example: "Play a song in Music and the notch shows its title, artist and progress."
+                ) {
+                    Toggle("Now Playing", isOn: $model.settings.nowPlayingEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-now-playing-toggle")
                 }
 
                 // Section 5: Reset & Maintenance

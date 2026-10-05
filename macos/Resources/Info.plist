@@ -21,7 +21,7 @@
     <key>LSMinimumSystemVersion</key>
     <string>14.2</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Sayso uses Automation only for desktop-control actions you request.</string>
+    <string>Sayso uses Automation for desktop-control actions you request and, only if you turn on Now Playing, to read the current track from Music or Spotify and to play, pause or skip it.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Sayso captures your voice for dictation.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
