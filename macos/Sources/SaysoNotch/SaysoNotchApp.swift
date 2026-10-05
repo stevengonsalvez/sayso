@@ -395,9 +395,7 @@ final class SaysoAppModel: ObservableObject {
                 worldClocks.clockChanged()
             },
         ]
-        // System stats only read counters; with nobody watching they sample once a minute.
-        modules.enable(systemStats.descriptor.id)
-        applyOptInModuleSettings()
+        applyModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
         startDictationModule()
@@ -500,18 +498,20 @@ final class SaysoAppModel: ObservableObject {
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
-        applyOptInModuleSettings()
+        applyModuleSettings()
         settingsStore.save(settings)
     }
 
     /// Modules that read the pasteboard, hold file access or talk to other apps run only while the user has opted in;
-    /// turning one off stops it and purges what it held.
-    private func applyOptInModuleSettings() {
+    /// system stats run unless the user turned them off. Turning one off stops it and purges what it held.
+    private func applyModuleSettings() {
         // Descriptor ids, not literals: the host ignores unknown ids, so a typo would silently skip the purge.
         modules.setEnabled(clipboardModule.descriptor.id, settings.clipboardModuleEnabled)
         modules.setEnabled(fileShelf.descriptor.id, settings.fileShelfEnabled)
         // Off by default: the first check makes macOS ask for Automation permission, which must follow a user choice.
         modules.setEnabled(nowPlaying.descriptor.id, settings.nowPlayingEnabled)
+        // On by default: only counters on this Mac are read; with nobody watching it samples once a minute.
+        modules.setEnabled(systemStats.descriptor.id, settings.systemStatsEnabled)
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -3385,19 +3385,29 @@ private extension NotchWorkspace {
 
     @ViewBuilder
     var systemStatsContent: some View {
-        let stats = model.systemStatsSnapshot
+        let enabled = model.settings.systemStatsEnabled
+        // While off, rows read Off rather than a stale or missing figure.
+        let stats = enabled ? model.systemStatsSnapshot : nil
+        let off = enabled ? nil : "Off"
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("System").font(.headline)
-                Text("CPU, memory and battery on this Mac are read every 5 seconds while this pane is open or the notch is expanded, and once a minute otherwise; free disk space, which includes space macOS can purge, once a minute. CPU is the share of time busy since the previous reading. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free; Dismiss notification in the notch menu hides it until that clears. Nothing is saved or sent.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if enabled {
+                    Text("CPU, memory and battery on this Mac are read every 5 seconds while this pane is open or the notch is expanded, and once a minute otherwise; free disk space, which includes space macOS can purge, once a minute. CPU is the share of time busy since the previous reading. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free; Dismiss notification in the notch menu hides it until that clears. Nothing is saved or sent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("System stats are off. Nothing on this Mac is read and the notch shows no system line. Turn them on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("system-stats-off")
+                }
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                systemStatsRow("CPU", stats?.cpuText, id: "system-stats-cpu")
-                systemStatsRow("Memory", stats?.memoryText, id: "system-stats-memory")
-                systemStatsRow("Battery", stats?.batteryText, id: "system-stats-battery")
-                systemStatsRow("Disk", stats?.diskText, id: "system-stats-disk")
+                systemStatsRow("CPU", off ?? stats?.cpuText, id: "system-stats-cpu")
+                systemStatsRow("Memory", off ?? stats?.memoryText, id: "system-stats-memory")
+                systemStatsRow("Battery", off ?? stats?.batteryText, id: "system-stats-battery")
+                systemStatsRow("Disk", off ?? stats?.diskText, id: "system-stats-disk")
             }
         }
         .padding(20)
@@ -8679,6 +8689,15 @@ private struct SaysoSettingsView: View {
                     Toggle("Now Playing", isOn: $model.settings.nowPlayingEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-now-playing-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "System stats (on by default)",
+                    description: "When on, Sayso reads CPU load, memory use and pressure, battery level and whether the Mac is plugged in, and free disk space, every 5 seconds while the Notch & HUD pane is open or the notch is expanded and once a minute otherwise (free disk at most once a minute). The readings stay on this Mac: nothing is saved or sent anywhere. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free. Turning this off stops the readings and clears any system line.",
+                    example: "Unplug at 18% battery and the notch shows Battery 18%, not plugged in."
+                ) {
+                    Toggle("System stats", isOn: $model.settings.systemStatsEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-system-stats-toggle")
                 }
 
                 // Section 5: Reset & Maintenance
