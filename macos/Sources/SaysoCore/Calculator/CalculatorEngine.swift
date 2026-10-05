@@ -42,8 +42,12 @@ public struct CalculatorValue: Equatable, Sendable {
 ///     sum     := product (("+" | "-") product)*
 ///     product := unary (("*" | "×" | "x" | "/" | "÷") unary)*
 ///     unary   := ("-" | "+") unary | power
-///     power   := primary ("^" unary)?
-///     primary := number | "(" sum ")"
+///     power   := postfix ("^" unary)?
+///     postfix := primary ("%" ("of" unary)?)?
+///     primary := number | constant | function (("(" sum ")") | unary) | "(" sum ")"
+///
+/// A bare percent is a hundredth, except as the right side of + or -, where it is that share of the left side:
+/// "200 + 10%" is 220.
 public enum CalculatorEngine {
     /// Longer input is refused before tokenizing, so the cost of any input is bounded.
     public static let maxLength = 500
@@ -56,7 +60,7 @@ public enum CalculatorEngine {
         do {
             let tokens = try CalculatorTokenizer.tokens(of: input)
             guard !tokens.isEmpty else { return .failure(.empty) }
-            var parser = CalculatorParser(tokens: tokens)
+            var parser = CalculatorParser(tokens: tokens, angle: angle)
             let value = try parser.parseAll()
             return .success(CalculatorValue(number: value))
         } catch let error as CalculatorError {
@@ -82,7 +86,7 @@ enum CalculatorToken: Equatable {
 }
 
 enum CalculatorTokenizer {
-    static let symbols: Set<Character> = ["+", "-", "−", "*", "×", "·", "/", "÷", "^", "(", ")"]
+    static let symbols: Set<Character> = ["+", "-", "−", "*", "×", "·", "/", "÷", "^", "(", ")", "%"]
 
     static func tokens(of input: String) throws -> [CalculatorToken] {
         let characters = Array(input)
@@ -155,18 +159,31 @@ enum CalculatorTokenizer {
 }
 
 struct CalculatorParser {
+    /// A value whose trailing "%" is not applied yet, so + and - can read it as a share of their left side.
+    private struct Operand {
+        var value: Double
+        var percent = false
+
+        var resolved: Double { percent ? value / 100 : value }
+    }
+
+    static let constants: [String: Double] = ["pi": .pi, "π": .pi, "e": M_E]
+    static let functions: Set<String> = ["sqrt", "sin", "cos", "tan", "ln", "log", "abs", "round"]
+
     private let tokens: [CalculatorToken]
+    private let angle: CalculatorAngleUnit
     private var position = 0
     private var depth = 0
 
-    init(tokens: [CalculatorToken]) {
+    init(tokens: [CalculatorToken], angle: CalculatorAngleUnit) {
         self.tokens = tokens
+        self.angle = angle
     }
 
     mutating func parseAll() throws -> Double {
-        let value = try parseSum()
+        let value = try parseSum().resolved
         if let extra = peek { throw CalculatorError.unexpected(extra.text) }
-        return value
+        return try checked(value)
     }
 
     private var peek: CalculatorToken? { position < tokens.count ? tokens[position] : nil }
@@ -177,30 +194,32 @@ struct CalculatorParser {
         return symbol
     }
 
-    private mutating func takeTimesWord() -> Bool {
-        guard case let .word(word) = peek, word == "x" || word == "X" else { return false }
+    private mutating func takeWord(_ words: Set<String>) -> Bool {
+        guard case let .word(word) = peek, words.contains(word.lowercased()) else { return false }
         position += 1
         return true
     }
 
-    private mutating func parseSum() throws -> Double {
+    private mutating func parseSum() throws -> Operand {
         var value = try parseProduct()
         while let symbol = take(["+", "-", "−"]) {
             let right = try parseProduct()
-            value = try checked(symbol == "+" ? value + right : value - right)
+            let base = value.resolved
+            let amount = right.percent ? base * right.value / 100 : right.value
+            value = Operand(value: try checked(symbol == "+" ? base + amount : base - amount))
         }
         return value
     }
 
-    private mutating func parseProduct() throws -> Double {
+    private mutating func parseProduct() throws -> Operand {
         var value = try parseUnary()
         while true {
-            if take(["*", "×", "·"]) != nil || takeTimesWord() {
-                value = try checked(value * parseUnary())
+            if take(["*", "×", "·"]) != nil || takeWord(["x"]) {
+                value = Operand(value: try checked(value.resolved * parseUnary().resolved))
             } else if take(["/", "÷"]) != nil {
-                let divisor = try parseUnary()
+                let divisor = try parseUnary().resolved
                 guard divisor != 0 else { throw CalculatorError.divisionByZero }
-                value = try checked(value / divisor)
+                value = Operand(value: try checked(value.resolved / divisor))
             } else {
                 return value
             }
@@ -208,29 +227,41 @@ struct CalculatorParser {
     }
 
     /// Every recursive path passes through here, so this one counter bounds the recursion.
-    private mutating func parseUnary() throws -> Double {
+    private mutating func parseUnary() throws -> Operand {
         depth += 1
         defer { depth -= 1 }
         guard depth <= CalculatorEngine.maxDepth else { throw CalculatorError.tooDeep(limit: CalculatorEngine.maxDepth) }
-        if take(["-", "−"]) != nil { return -(try parseUnary()) }
+        if take(["-", "−"]) != nil {
+            var operand = try parseUnary()
+            operand.value = -operand.value
+            return operand
+        }
         if take(["+"]) != nil { return try parseUnary() }
         return try parsePower()
     }
 
-    private mutating func parsePower() throws -> Double {
-        let base = try parsePrimary()
+    private mutating func parsePower() throws -> Operand {
+        let base = try parsePostfix()
         guard take(["^"]) != nil else { return base }
-        let exponent = try parseUnary()
-        if base == 0, exponent < 0 { throw CalculatorError.divisionByZero }
-        return try checked(pow(base, exponent))
+        let (root, exponent) = (base.resolved, try parseUnary().resolved)
+        if root == 0, exponent < 0 { throw CalculatorError.divisionByZero }
+        return Operand(value: try checked(pow(root, exponent)))
     }
 
-    private mutating func parsePrimary() throws -> Double {
+    private mutating func parsePostfix() throws -> Operand {
+        let operand = try parsePrimary()
+        guard take(["%"]) != nil else { return operand }
+        let share = Operand(value: operand.resolved, percent: true)
+        guard takeWord(["of"]) else { return share }
+        return Operand(value: try checked(share.resolved * parseUnary().resolved))
+    }
+
+    private mutating func parsePrimary() throws -> Operand {
         guard let token = peek else { throw CalculatorError.incomplete }
         position += 1
         switch token {
         case let .number(value):
-            return try checked(value)
+            return Operand(value: try checked(value))
         case .symbol("("):
             let value = try parseSum()
             guard take([")"]) != nil else {
@@ -239,9 +270,55 @@ struct CalculatorParser {
             }
             return value
         case let .word(word):
-            throw CalculatorError.unknownWord(word)
+            let name = word.lowercased()
+            if let constant = Self.constants[name] { return Operand(value: constant) }
+            guard Self.functions.contains(name) else { throw CalculatorError.unknownWord(word) }
+            // "sin(30)^2" squares the sine: parentheses right after a function are its whole argument.
+            let argument = if case .symbol("(") = peek { try parsePrimary() } else { try parseUnary() }
+            return Operand(value: try apply(name, to: argument.resolved))
         case let .symbol(symbol):
             throw CalculatorError.unexpected(String(symbol))
+        }
+    }
+
+    private func apply(_ function: String, to x: Double) throws -> Double {
+        switch function {
+        case "sqrt":
+            guard x >= 0 else { throw CalculatorError.undefined }
+            return sqrt(x)
+        case "ln", "log":
+            guard x > 0 else { throw CalculatorError.undefined }
+            return function == "ln" ? log(x) : log10(x)
+        case "abs":
+            return abs(x)
+        case "round":
+            return x.rounded(.toNearestOrAwayFromZero)
+        default:
+            return try trigonometry(function, x)
+        }
+    }
+
+    /// Whole multiples of a right angle use exact values, so sin(180) is 0 and tan(90) is undefined rather than
+    /// 1.2e-16 and 1.6e16.
+    private func trigonometry(_ function: String, _ x: Double) throws -> Double {
+        let quarterTurns = angle == .degrees ? x / 90 : x / (Double.pi / 2)
+        let nearest = quarterTurns.rounded()
+        if abs(quarterTurns) < 1e15, abs(quarterTurns - nearest) <= 1e-12 * max(1, abs(quarterTurns)) {
+            let turn = (Int(nearest) % 4 + 4) % 4
+            let (sine, cosine) = ([0.0, 1, 0, -1][turn], [1.0, 0, -1, 0][turn])
+            switch function {
+            case "sin": return sine
+            case "cos": return cosine
+            default:
+                guard cosine != 0 else { throw CalculatorError.undefined }
+                return sine / cosine
+            }
+        }
+        let radians = angle == .degrees ? x * .pi / 180 : x
+        switch function {
+        case "sin": return try checked(sin(radians))
+        case "cos": return try checked(cos(radians))
+        default: return try checked(tan(radians))
         }
     }
 
