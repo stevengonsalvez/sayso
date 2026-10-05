@@ -1,6 +1,7 @@
 import AppKit
 
-/// NSPasteboard adapter. Not wired into the app yet; reads are cheap `changeCount` checks plus one snapshot per change.
+/// NSPasteboard adapter, used by the app only while the clipboard setting is on; reads are cheap `changeCount`
+/// checks plus one snapshot per change.
 public struct PasteboardClipboardPort: ClipboardPort, @unchecked Sendable {
     // ponytail: NSPasteboard is thread-safe for these calls; revisit if the module ever polls off the main queue.
     private let pasteboard: NSPasteboard
