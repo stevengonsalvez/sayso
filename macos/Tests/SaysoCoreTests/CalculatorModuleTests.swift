@@ -131,3 +131,59 @@ private struct SeededGenerator: RandomNumberGenerator {
         }
     }
 }
+
+private func close(_ a: Double, _ b: Double, within tolerance: Double = 1e-12) -> Bool { abs(a - b) <= tolerance }
+
+@Suite struct CalculatorEngineFunctionTests {
+    @Test func percentOfAndPercentAddedOrTakenOff() throws {
+        #expect(try number("15% of 80") == 12)
+        #expect(try number("15 % of 80") == 12)
+        #expect(try number("200 + 10%") == 220)
+        #expect(try number("200 - 10%") == 180)
+        #expect(try number("50 * 10%") == 5)
+        #expect(try number("10%") == 0.1)
+        #expect(try number("50% of 80 + 10%") == 44)
+        #expect(failure("10% of") == .incomplete)
+    }
+
+    @Test func piAndEAreConstants() throws {
+        #expect(try number("pi") == Double.pi)
+        #expect(try number("π") == Double.pi)
+        #expect(try number("2 * e") == 2 * M_E)
+        #expect(try number("PI") == Double.pi, "words are case insensitive")
+    }
+
+    @Test func rootsLogarithmsAbsoluteValueAndRounding() throws {
+        #expect(try number("sqrt(16)") == 4)
+        #expect(try number("sqrt 16") == 4)
+        #expect(try number("ln(e)") == 1)
+        #expect(try number("log(1000)") == 3)
+        #expect(try number("abs(-3)") == 3)
+        #expect(try number("round(2.5)") == 3)
+        #expect(try number("round(-2.5)") == -3)
+        #expect(try number("round(2.4)") == 2)
+        #expect(failure("sqrt(-1)") == .undefined)
+        #expect(failure("ln(0)") == .undefined)
+        #expect(failure("log(-1)") == .undefined)
+        #expect(failure("sqrt") == .incomplete)
+        #expect(failure("foo(2)") == .unknownWord("foo"))
+    }
+
+    @Test func trigonometryReadsDegreesOrRadiansAsSet() throws {
+        #expect(close(try number("sin(30)", angle: .degrees), 0.5))
+        #expect(try number("sin(90)", angle: .degrees) == 1)
+        #expect(try number("sin(180)", angle: .degrees) == 0, "exact at multiples of a right angle, no float noise")
+        #expect(try number("cos(90)", angle: .degrees) == 0)
+        #expect(close(try number("tan(45)", angle: .degrees), 1))
+        #expect(failure("tan(90)", angle: .degrees) == .undefined)
+        #expect(failure("tan(270)", angle: .degrees) == .undefined)
+
+        #expect(close(try number("sin(1)", angle: .radians), 0.8414709848078965))
+        #expect(try number("sin(pi)", angle: .radians) == 0)
+        #expect(try number("cos(pi / 2)", angle: .radians) == 0)
+        #expect(failure("tan(pi / 2)", angle: .radians) == .undefined)
+        #expect(close(try number("sin(90)", angle: .radians), 0.8939966636005579))
+        #expect(close(try number("sin(30)^2", angle: .degrees), 0.25), "a function applies to its parentheses before the exponent")
+        #expect(try number("cos 0") == 1)
+    }
+}
