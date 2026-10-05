@@ -1,7 +1,8 @@
 import XCTest
 
-/// Settings pane: the file shelf toggle exists and is off by default. Launches with a throwaway settings suite
-/// and never flips the toggle, so the user's real settings are neither read nor changed.
+/// Settings pane: the file shelf toggle exists and is off by default. `--ui-test-fresh-settings` gives the
+/// app a throwaway settings suite, so the default is checked and the user's settings are not read or written;
+/// other app state (history, shortcuts, keychain) is still the user's. The toggle is never flipped.
 final class FileShelfSettingUITests: XCTestCase {
     var app: XCUIApplication!
 
