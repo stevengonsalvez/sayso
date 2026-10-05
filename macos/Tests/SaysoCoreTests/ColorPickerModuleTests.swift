@@ -458,3 +458,56 @@ private struct ColorPickerRig {
         #expect(rig.sampler.requests == 2)
     }
 }
+
+/// The real adapter's colour conversion only. The system sampler itself waits for a human click, so no test ever
+/// calls `SystemColorSamplingPort.pick()`.
+@Suite struct SystemColorSamplingPortTests {
+    @Test func aSampledColourIsReadInSRGB() {
+        #expect(SystemColorSamplingPort.color(from: NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1)) == color(51, 102, 153))
+        let extended = NSColor(colorSpace: .extendedSRGB, components: [1.2, -0.1, 0.5, 1], count: 4)
+        #expect(SystemColorSamplingPort.color(from: extended) == color(255, 0, 128))
+    }
+
+    @Test func aWideGamutColourIsConvertedToSRGBAndClamped() {
+        let p3Red = NSColor(displayP3Red: 1, green: 0, blue: 0, alpha: 1)
+        #expect(SystemColorSamplingPort.color(from: p3Red) == color(255, 0, 0), "P3 red lies outside sRGB")
+        let p3Mid = NSColor(displayP3Red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+        #expect(SystemColorSamplingPort.color(from: p3Mid) == color(128, 128, 128), "a neutral grey is the same in both")
+    }
+
+    @Test func aColourWithNoSRGBFormIsNoPick() {
+        let pattern = NSColor(patternImage: NSImage(size: NSSize(width: 1, height: 1)))
+        #expect(SystemColorSamplingPort.color(from: pattern) == nil)
+    }
+}
+
+/// `--ui-test-color` swaps in a fake sampler only for a UI test launch, never for a real one.
+@Suite struct ColorPickerUITestHookTests {
+    @Test func theFakeSamplerIsUsedOnlyTogetherWithFreshSettings() async throws {
+        #expect(ColorPickerUITestHook.sampler(arguments: ["SaysoNotch"]) == nil)
+        #expect(
+            ColorPickerUITestHook.sampler(arguments: ["SaysoNotch", "--ui-test-color", "336699"]) == nil,
+            "without fresh settings the real sampler is used"
+        )
+        let fake = try #require(
+            ColorPickerUITestHook.sampler(arguments: ["SaysoNotch", "--ui-test-fresh-settings", "--ui-test-color", "336699"])
+        )
+        #expect(await fake.pick() == color(0x33, 0x66, 0x99))
+        #expect(await fake.pick() == color(0x33, 0x66, 0x99), "every pick returns the same colour")
+        let hashed = try #require(
+            ColorPickerUITestHook.sampler(arguments: ["--ui-test-color", "#abc", "--ui-test-fresh-settings"])
+        )
+        #expect(await hashed.pick() == color(0xAA, 0xBB, 0xCC))
+    }
+
+    @Test func anUnreadableTestColourCancelsAndNeverFallsBackToTheRealSampler() async throws {
+        for arguments in [
+            ["--ui-test-fresh-settings", "--ui-test-color", "zzz"],
+            ["--ui-test-fresh-settings", "--ui-test-color"],
+            ["--ui-test-fresh-settings", "--ui-test-color", "--ui-test-review"],
+        ] {
+            let fake = try #require(ColorPickerUITestHook.sampler(arguments: arguments), "\(arguments)")
+            #expect(await fake.pick() == nil, "\(arguments)")
+        }
+    }
+}
