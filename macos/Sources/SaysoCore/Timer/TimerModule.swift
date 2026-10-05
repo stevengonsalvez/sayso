@@ -249,38 +249,39 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             } ?? false
         }
 
-        /// Settles whatever reached its deadline by `now`, however late the tick fired, and refreshes the rest.
+        /// Refreshes every running label; `update` has already settled anything whose deadline passed.
         private func tick() {
             _ = update { entries, now in
-                var effects: [Effect] = []
-                entries = entries.compactMap { entry in
-                    guard entry.runningSince != nil else { return entry }
-                    guard entry.hasEnded(at: now) else {
-                        effects.append(show(entry, at: now))
-                        return entry
-                    }
-                    switch entry.kind {
-                    case .countdown(let duration):
-                        effects += [
-                            .dismiss(stackID: entry.id.stackID),
-                            .publish(
-                                stackID: entry.noticeStackID, kind: .completion,
-                                title: "Timer done · \(TimerModule.clockLabel(duration))",
-                                expiresAfter: TimerModule.completionNoticeSeconds
-                            ),
-                            .ping(TimerPing(timerID: entry.id, reason: .finished)),
-                        ]
-                        return nil
-                    case .pomodoro:
-                        let (next, transition) = advance(entry, to: now)
-                        effects += [show(next, at: now)] + transition
-                        return next
-                    case .stopwatch:
-                        return entry
-                    }
-                }
-                return ((), effects)
+                ((), entries.filter { $0.runningSince != nil }.map { show($0, at: now) })
             }
+        }
+
+        /// Finishes countdowns and advances a Pomodoro whose deadline passed by `now`, however late this runs.
+        private func settle(_ entries: inout [Entry], at now: Date) -> [Effect] {
+            var effects: [Effect] = []
+            entries = entries.compactMap { entry in
+                guard entry.runningSince != nil, entry.hasEnded(at: now) else { return entry }
+                switch entry.kind {
+                case .countdown(let duration):
+                    effects += [
+                        .dismiss(stackID: entry.id.stackID),
+                        .publish(
+                            stackID: entry.noticeStackID, kind: .completion,
+                            title: "Timer done · \(TimerModule.clockLabel(duration))",
+                            expiresAfter: TimerModule.completionNoticeSeconds
+                        ),
+                        .ping(TimerPing(timerID: entry.id, reason: .finished)),
+                    ]
+                    return nil
+                case .pomodoro:
+                    let (next, transition) = advance(entry, to: now)
+                    effects += [show(next, at: now)] + transition
+                    return next
+                case .stopwatch:
+                    return entry
+                }
+            }
+            return effects
         }
 
         /// Moves a Pomodoro through every phase that ended by `now`. Each phase starts at the instant the
@@ -308,18 +309,19 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             ])
         }
 
-        /// Changes state under the lock and re-arms the single tick, then publishes outside it:
-        /// publishing takes the host lock, and the host calls into this runtime while holding that lock.
+        /// Settles overdue timers, applies `change` and re-arms the single tick under the lock, then publishes
+        /// outside it: publishing takes the host lock, and the host calls into this runtime while holding that lock.
+        /// Settling first means no action ever sees, freezes or re-arms past a deadline it missed.
         private func update<T>(_ change: (inout [Entry], Date) -> (T, [Effect])?) -> T? {
-            let outcome = lock.withLock { () -> (T, [Effect])? in
-                guard running else { return nil }
+            let (result, effects) = lock.withLock { () -> (T?, [Effect]) in
+                guard running else { return (nil, []) }
                 let now = module.now()
-                guard let outcome = change(&entries, now) else { return nil }
+                let settled = settle(&entries, at: now)
+                let outcome = change(&entries, now)
                 rearm(at: now)
-                return outcome
+                return (outcome?.0, settled + (outcome?.1 ?? []))
             }
-            guard let outcome else { return nil }
-            for effect in outcome.1 {
+            for effect in effects {
                 switch effect {
                 case let .publish(stackID, kind, title, expiresAfter, actions, progress):
                     context.publish(
@@ -332,7 +334,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                     context.emit(ping)
                 }
             }
-            return outcome.0
+            return result
         }
 
         /// One job for the whole module, due when the soonest visible label changes; none while nothing runs.
