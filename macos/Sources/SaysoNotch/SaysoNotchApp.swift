@@ -243,10 +243,16 @@ final class SaysoAppModel: ObservableObject {
     private var timerPingSubscription: SaysoSubscription?
     private let caffeineModule = CaffeineModule(port: IOPMAssertionPort(), scheduler: SaysoDispatchScheduler())
     private var terminateObserver: NSObjectProtocol?
+    private let worldClocks = WorldClocksModule(
+        store: UserDefaultsWorldClocksStore(defaults: SaysoAppModel.settingsDefaults),
+        scheduler: SaysoDispatchScheduler(),
+        hourCycle: WorldClockHourCycle(locale: .autoupdatingCurrent)
+    )
+    private var worldClockObservers: [NSObjectProtocol] = []
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule,
+            externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks,
         ],
         events: moduleEvents
     )
@@ -355,6 +361,20 @@ final class SaysoAppModel: ObservableObject {
             // The system also drops the assertion when the process exits; this releases it on a clean quit first.
             MainActor.assumeIsolated { self?.stopCaffeineForQuit() }
         }
+        // World clocks only read the clock and need no permission; with an empty list they arm nothing.
+        modules.enable(worldClocks.descriptor.id)
+        // The scheduler counts uptime, which stops in sleep and ignores clock changes, so re-read the time then.
+        worldClockObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+            NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
+                worldClocks.clockChanged()
+            },
+        ]
         applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
@@ -435,15 +455,19 @@ final class SaysoAppModel: ObservableObject {
 
     private static let usesFreshSettings = CommandLine.arguments.contains("--ui-test-fresh-settings")
 
-    /// UI test hook: settings live in a throwaway suite wiped at every launch, so UI tests see the defaults
-    /// and never read or write the user's real settings.
-    private static func makeSettingsStore() -> UserDefaultsSettingsStore {
-        guard usesFreshSettings else { return UserDefaultsSettingsStore() }
+    /// UI test hook: settings and the world clocks list live in a throwaway suite wiped once at launch, so UI tests
+    /// see the defaults and never read or write the user's real settings.
+    private static let settingsDefaults: UserDefaults = {
+        guard usesFreshSettings else { return .standard }
         let suite = "ai.sayso.notch.ui-test-settings"
         // Falling back to the standard defaults here would write test state into the user's real settings.
         guard let defaults = UserDefaults(suiteName: suite) else { fatalError("UI test settings suite unavailable") }
         defaults.removePersistentDomain(forName: suite)
-        return UserDefaultsSettingsStore(defaults: defaults)
+        return defaults
+    }()
+
+    private static func makeSettingsStore() -> UserDefaultsSettingsStore {
+        UserDefaultsSettingsStore(defaults: settingsDefaults)
     }
 
     func save() {
@@ -499,6 +523,41 @@ final class SaysoAppModel: ObservableObject {
 
     private func stopCaffeineForQuit() {
         modules.disable(caffeineModule.descriptor.id)
+    }
+
+    static let worldClockQuickAdds = [
+        WorldClockZone(identifier: "Europe/London", city: "London"),
+        WorldClockZone(identifier: "America/New_York", city: "New York"),
+        WorldClockZone(identifier: "Asia/Tokyo", city: "Tokyo"),
+        WorldClockZone(identifier: "Asia/Kolkata", city: "Kolkata"),
+    ]
+
+    /// Read at render time; the pane redraws itself once a minute, so nothing here ticks every second.
+    var worldClockReadings: [WorldClockReading] { worldClocks.readings }
+
+    func addWorldClock(_ zone: WorldClockZone) {
+        objectWillChange.send()
+        do {
+            try worldClocks.add(zone.identifier, city: zone.city)
+        } catch {
+            notice = switch error {
+            case .full: "World clocks hold up to \(WorldClocksModule.maxZones) places. Remove one to add another."
+            case .duplicate: "\(zone.city) is already in your world clocks."
+            case .unknownZone: "\(zone.city) has no time zone this Mac recognises."
+            case .disabled: "World clocks are off. Quit and reopen Sayso to turn them back on."
+            }
+        }
+    }
+
+    func removeWorldClock(_ identifier: String) {
+        objectWillChange.send()
+        worldClocks.remove(identifier)
+    }
+
+    func moveWorldClockUp(_ identifier: String) {
+        guard let index = worldClocks.zones.firstIndex(where: { $0.identifier == identifier }), index > 0 else { return }
+        objectWillChange.send()
+        worldClocks.move(identifier, to: index - 1)
     }
 
     func addToFileShelf(_ urls: [URL]) {
@@ -2241,7 +2300,8 @@ final class SaysoAppModel: ObservableObject {
 
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
-        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "shortcut-intents": 8,
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7,
+        "shortcut-intents": 8,
         "tts": 9,
     ]
 
@@ -3082,6 +3142,8 @@ private struct NotchWorkspace: View {
 
                 caffeineSection
 
+                worldClocksSection
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3207,6 +3269,57 @@ private struct NotchWorkspace: View {
                         .accessibilityIdentifier("caffeine-stop")
                 }
             }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Studio picks the places; the first one also shows in the open notch through the module's background line.
+    /// The minute timeline redraws the rows on its own, so a line dismissed from the notch does not freeze them.
+    private var worldClocksSection: some View {
+        TimelineView(.everyMinute) { _ in worldClocksContent }
+    }
+
+    @ViewBuilder
+    private var worldClocksContent: some View {
+        let readings = model.worldClockReadings
+        let listed = Set(readings.map(\.zone.identifier))
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("World clocks").font(.headline)
+                Text("Shows the time in each city you add, with +1d or -1d when the date there differs from yours. The first city also shows in the open notch when nothing else is there; Dismiss notification in the notch menu hides it until you change the list. The list is saved on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                ForEach(SaysoAppModel.worldClockQuickAdds, id: \.identifier) { zone in
+                    Button("Add \(zone.city)") { model.addWorldClock(zone) }
+                        .disabled(listed.contains(zone.identifier) || readings.count >= WorldClocksModule.maxZones)
+                        .accessibilityIdentifier("world-clocks-add-\(zone.identifier)")
+                }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                if readings.isEmpty {
+                    Text("No clocks yet.").font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(Array(readings.enumerated()), id: \.element.zone.identifier) { index, reading in
+                    let identifier = reading.zone.identifier
+                    HStack(spacing: 12) {
+                        Text(reading.title)
+                            .font(.body.monospacedDigit())
+                            .accessibilityIdentifier("world-clocks-row-\(identifier)")
+                        Spacer()
+                        Button("Move up") { model.moveWorldClockUp(identifier) }
+                            .disabled(index == 0)
+                            .accessibilityIdentifier("world-clocks-move-up-\(identifier)")
+                        Button("Remove") { model.removeWorldClock(identifier) }
+                            .accessibilityLabel("Remove \(reading.zone.city)")
+                            .accessibilityIdentifier("world-clocks-remove-\(identifier)")
+                    }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("world-clocks-list")
         }
         .padding(20)
         .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))

@@ -14,7 +14,9 @@ private func activity(
     #expect(SaysoActivityPresentation(activity(.completion)).tone == .success)
     #expect(SaysoActivityPresentation(activity(.activeTask)).tone == .active)
     #expect(SaysoActivityPresentation(activity(.ambient)).tone == .quiet)
-    #expect(Set(SaysoActivityKind.allCases.map { SaysoActivityPresentation(activity($0)).symbolName }).count == 5)
+    #expect(SaysoActivityPresentation(activity(.background)).tone == .quiet)
+    let symbols = Set(SaysoActivityKind.allCases.map { SaysoActivityPresentation(activity($0)).symbolName })
+    #expect(symbols.count == SaysoActivityKind.allCases.count, "every kind has its own symbol")
 }
 
 @Test func progressShowsAsAWholePercentSubtitleAndAccessibilityValue() {
