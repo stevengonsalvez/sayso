@@ -210,6 +210,66 @@ private func rig(
         #expect(rig.ids == ["Asia/Tokyo"])
     }
 
+    // MARK: Formatted time
+
+    @Test func eachZoneShowsItsTimeAndItsDayRelativeToTheLocalZone() throws {
+        // 2026-01-15 00:00 UTC is 16:00 on the 14th in Los Angeles.
+        let rig = rig(at: "2026-01-15T00:00:00Z", local: "America/Los_Angeles")
+        for identifier in ["America/Los_Angeles", "Asia/Tokyo", "Europe/London"] { try rig.module.add(identifier) }
+
+        #expect(rig.module.readings.map(\.title) == ["Los Angeles 16:00", "Tokyo 09:00 +1d", "London 00:00 +1d"])
+        #expect(rig.module.readings.map(\.time) == ["16:00", "09:00", "00:00"])
+        #expect(rig.module.readings.map(\.dayOffset) == [0, 1, 1])
+        #expect(rig.module.readings.map(\.zone) == rig.module.zones)
+    }
+
+    @Test func aZoneStillOnTheLocalYesterdayShowsMinusOneDay() throws {
+        let rig = rig(at: "2026-01-15T00:00:00Z", local: "Asia/Tokyo")
+        try rig.module.add("America/New_York")
+
+        #expect(rig.module.readings.map(\.title) == ["New York 19:00 -1d"])
+    }
+
+    @Test func theDayOffsetFollowsTheInjectedLocalZone() throws {
+        let rig = rig(at: "2026-01-15T00:00:00Z", local: "UTC")
+        try rig.module.add("Asia/Tokyo")
+        #expect(rig.module.readings.first?.title == "Tokyo 09:00")
+
+        rig.clock.local = TimeZone(identifier: "America/Los_Angeles")!
+        #expect(rig.module.readings.first?.title == "Tokyo 09:00 +1d")
+    }
+
+    @Test func twelveHourClocksShowAMAndPM() throws {
+        let rig = rig(at: "2026-01-15T00:00:00Z", local: "America/Los_Angeles", hourCycle: .twelve)
+        for identifier in ["America/Los_Angeles", "Asia/Tokyo", "Europe/London", "Asia/Kolkata"] { try rig.module.add(identifier) }
+
+        #expect(rig.module.readings.map(\.title) == [
+            "Los Angeles 4:00 PM", "Tokyo 9:00 AM +1d", "London 12:00 AM +1d", "Kolkata 5:30 AM +1d",
+        ])
+        // Noon in London is 04:00 the same day in Los Angeles.
+        rig.clock.now = instant("2026-01-15T12:00:00Z")
+        #expect(rig.module.readings[2].title == "London 12:00 PM")
+    }
+
+    @Test func halfHourAndThreeQuarterHourOffsetsShowTheirOwnMinutes() throws {
+        let rig = rig(at: "2026-01-15T00:00:00Z", local: "UTC")
+        try rig.module.add("Asia/Kolkata")
+        try rig.module.add("Asia/Kathmandu")
+        #expect(rig.module.readings.map(\.title) == ["Kolkata 05:30", "Kathmandu 05:45"])
+
+        rig.clock.now = instant("2026-01-14T18:29:00Z")
+        #expect(rig.module.readings.map(\.title) == ["Kolkata 23:59", "Kathmandu 00:14 +1d"])
+
+        rig.clock.now = instant("2026-01-14T18:30:00Z")
+        #expect(rig.module.readings.map(\.title) == ["Kolkata 00:00 +1d", "Kathmandu 00:15 +1d"])
+    }
+
+    @Test func theHourCycleFollowsTheLocale() {
+        #expect(WorldClockHourCycle(locale: Locale(identifier: "en_US")) == .twelve)
+        #expect(WorldClockHourCycle(locale: Locale(identifier: "en_GB")) == .twentyFour)
+        #expect(WorldClockHourCycle(locale: Locale(identifier: "ja_JP")) == .twentyFour)
+    }
+
     @Test func passesTheModuleAcceptanceContract() {
         let module = WorldClocksModule(
             store: FakeStore([zone("Asia/Tokyo", "Tokyo")]), scheduler: FakeScheduler(), resolveZone: resolve
