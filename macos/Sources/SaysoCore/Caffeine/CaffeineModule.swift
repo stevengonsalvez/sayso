@@ -22,7 +22,9 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
     public static let assertionName = "Sayso Caffeine"
     /// Longest timed session, one day; longer needs are what an indefinite session is for.
     public static let maxTimedSeconds: TimeInterval = 24 * 3600
+    public static let completionNoticeSeconds: TimeInterval = 10
     static let stackID = "caffeine"
+    static let noticeStackID = "caffeine-done"
 
     public let descriptor = SaysoModuleDescriptor(
         id: "caffeine", title: "Caffeine", surfaces: [.compact, .peek, .expanded, .settings]
@@ -85,6 +87,8 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
         private enum Effect {
             case show(title: String)
             case dismiss
+            case ended
+            case clearEnded
         }
 
         unowned let module: CaffeineModule
@@ -128,12 +132,12 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
                 // Release first so two assertions are never held, even for a moment.
                 release()
                 guard let assertion = module.port.createAssertion(named: CaffeineModule.assertionName) else {
-                    return (false, [.dismiss])
+                    return (false, [.dismiss, .clearEnded])
                 }
                 let deadline: Date? = if case let .timed(seconds) = duration { now.addingTimeInterval(seconds) } else { nil }
                 let session = Held(assertion: assertion, deadline: deadline)
                 held = session
-                return (true, [.show(title: title(of: session, at: now))])
+                return (true, [.clearEnded, .show(title: title(of: session, at: now))])
             } ?? false
         }
 
@@ -150,15 +154,23 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
             _ = update { now in ((), held.map { [.show(title: title(of: $0, at: now))] } ?? []) }
         }
 
-        /// Applies `change` and re-arms the single tick under the lock, then publishes outside it: publishing
-        /// takes the host lock, and the host calls into this runtime while holding that lock.
+        /// Ends a timed session whose deadline passed by `now`, however late this runs. Call with the lock held.
+        private func settle(at now: Date) -> [Effect] {
+            guard let deadline = held?.deadline, now >= deadline else { return [] }
+            release()
+            return [.dismiss, .ended]
+        }
+
+        /// Settles a missed deadline, applies `change` and re-arms the single tick under the lock, then publishes
+        /// outside it: publishing takes the host lock, and the host calls into this runtime while holding that lock.
         private func update<T>(_ change: (Date) -> (T, [Effect])?) -> T? {
             let (result, effects) = lock.withLock { () -> (T?, [Effect]) in
                 guard running else { return (nil, []) }
                 let now = module.now()
+                let settled = settle(at: now)
                 let outcome = change(now)
                 rearm(at: now)
-                return (outcome?.0, outcome?.1 ?? [])
+                return (outcome?.0, settled + (outcome?.1 ?? []))
             }
             for effect in effects {
                 switch effect {
@@ -169,6 +181,13 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
                     )
                 case .dismiss:
                     context.dismiss(stackID: CaffeineModule.stackID)
+                case .ended:
+                    context.publish(
+                        stackID: CaffeineModule.noticeStackID, kind: .completion, title: "Caffeine off · Mac can sleep",
+                        expiresAfter: CaffeineModule.completionNoticeSeconds
+                    )
+                case .clearEnded:
+                    context.dismiss(stackID: CaffeineModule.noticeStackID)
                 }
             }
             return result
