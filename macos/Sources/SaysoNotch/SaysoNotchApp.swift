@@ -8823,7 +8823,7 @@ private struct SaysoSettingsView: View {
                 SaysoSettingItemCard(
                     title: "Calculator (on by default)",
                     description: "When on, the Notch & HUD pane has a calculator. Type arithmetic, percentages, sqrt, sin, cos and tan (in degrees), ln, log, abs or round, or convert length, weight, temperature, volume, speed or data size, and press Return. The result shows in the pane and for \(Int(CalculatorModule.resultNoticeSeconds)) seconds in the open notch. Only what you type is used: the clipboard is never read, Copy writes only the result, and nothing is sent anywhere. The last \(CalculatorModule.historyLimit) results are kept in memory only; turning this off clears them.",
-                    example: "Type 5 km in miles and press Return to see 3.106855961 mi."
+                    example: "Type 5 km in miles and press Return to see the distance in miles."
                 ) {
                     Toggle("Calculator", isOn: $model.settings.calculatorEnabled)
                         .labelsHidden()
