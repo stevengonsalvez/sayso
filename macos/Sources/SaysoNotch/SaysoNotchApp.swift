@@ -261,6 +261,10 @@ final class SaysoAppModel: ObservableObject {
         port: MachSystemStatsPort(),
         scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.system-stats", qos: .utility))
     )
+    /// Evaluates only what the user types; Copy writes the result and nothing ever reads the pasteboard.
+    private let calculator = CalculatorModule(pasteboard: PasteboardCalculatorPort(), scheduler: SaysoDispatchScheduler())
+    /// The pane's last evaluation; cleared when the calculator starts or stops so a stale result never shows.
+    @Published private(set) var calculatorOutcome: Result<CalculatorResult, CalculatorError>?
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
     private var systemStatsPaneShown = false
@@ -270,7 +274,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats,
+            systemStats, calculator,
         ],
         events: moduleEvents
     )
@@ -515,6 +519,13 @@ final class SaysoAppModel: ObservableObject {
         modules.setEnabled(systemStats.descriptor.id, settings.systemStatsEnabled)
         // Turning stats on publishes nothing, so nothing else would redraw the pane that reads this.
         if systemStatsRunning != statsWereRunning { objectWillChange.send() }
+        // On by default: it evaluates only what the user types; turning it off clears its results.
+        let calculatorWasRunning = calculatorRunning
+        modules.setEnabled(calculator.descriptor.id, settings.calculatorEnabled)
+        if calculatorRunning != calculatorWasRunning {
+            calculatorOutcome = nil
+            objectWillChange.send()
+        }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -552,6 +563,26 @@ final class SaysoAppModel: ObservableObject {
 
     private func stopCaffeineForQuit() {
         modules.disable(caffeineModule.descriptor.id)
+    }
+
+    /// From the module, not the setting, so the pane says off only once the calculator has really stopped.
+    var calculatorRunning: Bool {
+        switch modules.health(of: calculator.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    /// Newest first, at most `CalculatorModule.historyLimit`; empty while the calculator is off.
+    var calculatorHistory: [CalculatorResult] { calculator.history }
+
+    func evaluateCalculator(_ input: String) {
+        calculatorOutcome = calculator.evaluate(input)
+    }
+
+    func copyCalculatorResult(_ id: CalculatorResult.ID) {
+        objectWillChange.send()
+        if !calculator.copy(id) { notice = "Could not copy the result." }
     }
 
     static let worldClockQuickAdds = [
@@ -2359,6 +2390,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
+        "calculator": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3196,6 +3228,8 @@ private struct NotchWorkspace: View {
                     Text("Configure the Sayso dynamic notch and floating desktop overlay.").foregroundStyle(.secondary)
                 }
 
+                CalculatorSection(model: model)
+
                 timersSection
 
                 caffeineSection
@@ -3383,6 +3417,75 @@ private struct NotchWorkspace: View {
         }
         .padding(20)
         .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+/// Evaluates on Return, so history gets one entry per calculation rather than one per keystroke.
+private struct CalculatorSection: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var input = ""
+
+    var body: some View {
+        let running = model.calculatorRunning
+        let outcome = model.calculatorOutcome
+        let copyID: CalculatorResult.ID? = if case let .success(result) = outcome { result.id } else { nil }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Calculator").font(.headline)
+                if running {
+                    Text("Type a calculation or a conversion and press Return, for example 15% of 80, sqrt(2), 100 f in c or 5 km in miles. Angles are in degrees. The result shows here and for \(Int(CalculatorModule.resultNoticeSeconds)) seconds in the open notch. The last \(CalculatorModule.historyLimit) results stay in memory until Sayso quits or the calculator is turned off. Copy puts only the result on the clipboard; the clipboard is never read.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("The calculator is off: nothing is evaluated and no results are kept. Turn it on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("calculator-off")
+                }
+            }
+            TextField("12 × 3 or 5 km in miles", text: $input)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { model.evaluateCalculator(input) }
+                .accessibilityIdentifier("calculator-input")
+            HStack(spacing: 12) {
+                Text(resultText(outcome))
+                    .font(.title3.monospacedDigit())
+                    .accessibilityIdentifier("calculator-result")
+                Spacer()
+                Button("Copy") { if let copyID { model.copyCalculatorResult(copyID) } }
+                    .disabled(copyID == nil)
+                    .accessibilityIdentifier("calculator-copy")
+            }
+            // Everything kept except the result already in the label above.
+            let earlier = model.calculatorHistory.filter { $0.id != copyID }
+            if !earlier.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Recent results").font(.caption).foregroundStyle(.secondary)
+                    ForEach(earlier) { result in
+                        HStack(spacing: 12) {
+                            Text("\(result.expression) = \(result.text)")
+                                .font(.callout.monospacedDigit())
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button("Copy") { model.copyCalculatorResult(result.id) }
+                                .accessibilityLabel("Copy \(result.text)")
+                                .accessibilityIdentifier("calculator-history-copy-\(result.id)")
+                        }
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func resultText(_ outcome: Result<CalculatorResult, CalculatorError>?) -> String {
+        switch outcome {
+        case let .success(result): result.text
+        case let .failure(error): error.message
+        case nil: "No result yet"
+        }
     }
 }
 
@@ -8716,6 +8819,15 @@ private struct SaysoSettingsView: View {
                     Toggle("System stats", isOn: $model.settings.systemStatsEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-system-stats-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "Calculator (on by default)",
+                    description: "When on, the Notch & HUD pane has a calculator. Type arithmetic, percentages, sqrt, sin, cos and tan (in degrees), ln, log, abs or round, or convert length, weight, temperature, volume, speed or data size, and press Return. The result shows in the pane and for \(Int(CalculatorModule.resultNoticeSeconds)) seconds in the open notch. Only what you type is used: the clipboard is never read, Copy writes only the result, and nothing is sent anywhere. The last \(CalculatorModule.historyLimit) results are kept in memory only; turning this off clears them.",
+                    example: "Type 5 km in miles and press Return to see 3.106855961 mi."
+                ) {
+                    Toggle("Calculator", isOn: $model.settings.calculatorEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-calculator-toggle")
                 }
 
                 // Section 5: Reset & Maintenance
