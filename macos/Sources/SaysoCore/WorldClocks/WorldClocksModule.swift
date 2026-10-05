@@ -30,7 +30,7 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         hourCycle: WorldClockHourCycle = .twentyFour,
         now: @escaping @Sendable () -> Date = { Date() },
         localTimeZone: @escaping @Sendable () -> TimeZone = { .autoupdatingCurrent },
-        resolveZone: @escaping @Sendable (String) -> TimeZone? = { TimeZone(identifier: $0) }
+        resolveZone: @escaping @Sendable (String) -> TimeZone? = { WorldClocksModule.ianaZone($0) }
     ) {
         self.store = store
         self.scheduler = scheduler
@@ -38,6 +38,14 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         self.now = now
         self.localTimeZone = localTimeZone
         self.resolveZone = resolveZone
+    }
+
+    /// IANA region names such as "Asia/Tokyo" only. `TimeZone(identifier:)` alone also accepts "EST" and "GMT+5",
+    /// and the known identifier list alone misses valid names such as "Asia/Kolkata" on some macOS releases.
+    public static func ianaZone(_ identifier: String) -> TimeZone? {
+        guard let zone = TimeZone(identifier: identifier) else { return nil }
+        if TimeZone.knownTimeZoneIdentifiers.contains(identifier) { return zone }
+        return identifier.contains("/") && zone.identifier == identifier ? zone : nil
     }
 
     /// The chosen zones in display order; empty while the module is disabled.
