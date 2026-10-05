@@ -138,6 +138,49 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(rig.module.timers.isEmpty)
     }
 
+    @Test func finishingPublishesAnExpiringCompletionThatOutranksAmbientAndPingsOnce() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startCountdown(60))
+        rig.advance(30)
+        rig.advance(30)
+
+        #expect(rig.module.timers.isEmpty)
+        #expect(rig.running.isEmpty)
+        let done = try #require(rig.activities.first)
+        #expect(done.kind == .completion)
+        #expect(done.kind > .ambient)
+        #expect(done.title == "Timer done · 1:00")
+        #expect(done.expiresAfter == TimerModule.completionNoticeSeconds)
+        #expect(rig.sink.pings == [TimerPing(timerID: id, reason: .finished)])
+        #expect(rig.scheduler.jobs.isEmpty, "nothing left to tick")
+
+        rig.clock.now += TimerModule.completionNoticeSeconds
+        rig.host.tick()
+        #expect(rig.activities.isEmpty, "the completion notice expires")
+    }
+
+    @Test func aTickThatFiresLongAfterTheDeadlineFinishesTheTimerOnce() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startCountdown(60))
+
+        rig.advance(500)
+
+        #expect(rig.module.timers.isEmpty)
+        #expect(rig.sink.pings == [TimerPing(timerID: id, reason: .finished)])
+        #expect(rig.activities.map(\.kind) == [.completion])
+    }
+
+    @Test func aCompletionIsShownAheadOfAnotherRunningTimer() throws {
+        let rig = rig()
+        try #require(rig.module.startCountdown(600) != nil)
+        try #require(rig.module.startCountdown(60) != nil)
+
+        rig.advance(60)
+
+        #expect(rig.host.engine.primary?.kind == .completion)
+        #expect(rig.running.map(\.title) == ["Timer 9:00"])
+    }
+
     @Test func timeLabelsUseMinutesAndSecondsAndAddHoursOnlyWhenNeeded() {
         #expect(TimerModule.clockLabel(0) == "0:00")
         #expect(TimerModule.clockLabel(59.2) == "0:59")
