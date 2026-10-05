@@ -80,6 +80,10 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         }.isSuccess
     }
 
+    /// Call after wake, a clock change or a time zone change: the pending tick is not due at the right
+    /// wall-clock time any more, so the line is recomputed now and the tick re-armed from the new time.
+    public func clockChanged() { current?.refresh() }
+
     /// Moves a listed zone to `index` in the final order; false for an unknown zone or an index out of range.
     @discardableResult
     public func move(_ identifier: String, to index: Int) -> Bool {
@@ -155,6 +159,8 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         private var job: SaysoSubscription?
         /// The line last published, so an unchanged label is never published again.
         private var shown: String?
+        /// Dismissed from the notch; stays hidden, with no tick, until the user changes the list.
+        private var hidden = false
 
         init(module: WorldClocksModule, context: SaysoModuleContext) {
             self.module = module
@@ -189,6 +195,19 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
             module.detach(self)
         }
 
+        func handle(stackID: String, actionID: String) {
+            guard stackID == Self.stackID, actionID == "dismiss" else { return }
+            let wasShown = lock.withLock { () -> Bool in
+                guard running else { return false }
+                hidden = true
+                job?.cancel()
+                job = nil
+                defer { shown = nil }
+                return shown != nil
+            }
+            if wasShown { context.dismiss(stackID: Self.stackID) }
+        }
+
         /// Applies `change` to a copy and saves it only when it succeeds, so a refused edit writes nothing.
         func mutate(_ change: (inout [Entry]) -> Result<Void, WorldClocksError>) -> Result<Void, WorldClocksError> {
             let result = lock.withLock { () -> Result<Void, WorldClocksError> in
@@ -197,6 +216,7 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
                 let result = change(&edited)
                 guard case .success = result else { return result }
                 entries = edited
+                hidden = false
                 module.store.save(edited.map(\.zone))
                 return result
             }
@@ -207,28 +227,35 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         /// Re-arms the single tick and works out the first zone's line under the lock, then publishes outside it
         /// and only when the line changed: publishing takes the host lock, and the host calls into this runtime
         /// while holding that lock.
-        private func refresh() {
+        func refresh() {
             let line = lock.withLock { () -> Line? in
                 guard running else { return nil }
                 let now = module.now()
                 rearm(at: now)
-                let title = entries.first.map { module.reading(of: $0, at: now, local: module.localTimeZone()).title }
+                let first = hidden ? nil : entries.first
+                let title = first.map { module.reading(of: $0, at: now, local: module.localTimeZone()).title }
                 guard title != shown else { return nil }
                 shown = title
                 return title.map(Line.show) ?? .clear
             }
             switch line {
-            case let .show(title)?: context.publish(stackID: Self.stackID, kind: .ambient, title: title)
+            case let .show(title)?:
+                // Background ranks below every other kind, so a clock never hides another module's line.
+                context.publish(
+                    stackID: Self.stackID, kind: .background, title: title,
+                    actions: [SaysoAction(id: "dismiss", title: "Dismiss")]
+                )
             case .clear?: context.dismiss(stackID: Self.stackID)
             case nil: break
             }
         }
 
-        /// One job at the next minute boundary while any zone is listed; none for an empty list. Call with the lock held.
+        /// One job at the next minute boundary while the line shows; none for an empty or hidden list, and none
+        /// for a non-finite clock, which a real timer would fire at once. Call with the lock held.
         private func rearm(at now: Date) {
             job?.cancel()
             job = nil
-            guard !entries.isEmpty else { return }
+            guard !entries.isEmpty, !hidden, now.timeIntervalSince1970.isFinite else { return }
             job = module.scheduler.schedule(at: WorldClocksModule.nextMinute(after: now)) { [weak self] in self?.refresh() }
         }
     }
