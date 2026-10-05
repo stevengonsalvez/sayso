@@ -43,8 +43,9 @@ enum WorldClockTime {
     /// Day number and minute of day on the wall clock in `timeZone`. The UTC offset at that instant carries DST,
     /// so the result never depends on the host's locale or calendar settings.
     private static func wallClock(_ date: Date, in timeZone: TimeZone) -> (day: Int, minuteOfDay: Int) {
-        // Clamped far beyond any real clock so an absurd injected instant cannot trap on Int overflow.
-        let utc = min(max(date.timeIntervalSince1970, -1e13), 1e13).rounded(.down)
+        // Clamped far beyond any real clock, and NaN read as the epoch, so an absurd injected instant cannot trap.
+        let raw = date.timeIntervalSince1970.isNaN ? 0 : date.timeIntervalSince1970
+        let utc = min(max(raw, -1e13), 1e13).rounded(.down)
         let seconds = Int(utc) + timeZone.secondsFromGMT(for: date)
         let day = Int((Double(seconds) / 86_400).rounded(.down))
         return (day, (seconds - day * 86_400) / 60)
