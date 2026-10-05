@@ -238,10 +238,11 @@ final class SaysoAppModel: ObservableObject {
     private var moduleSocket: SaysoModuleSocketServer?
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private let clipboardModule = ClipboardModule(port: PasteboardClipboardPort(), scheduler: SaysoDispatchScheduler())
+    private let fileShelf = FileShelfModule(port: FileSystemShelfPort(), scheduler: SaysoDispatchScheduler())
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule,
+            externalActivities, clipboardModule, fileShelf,
         ],
         events: moduleEvents
     )
@@ -337,7 +338,7 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
-        applyClipboardModuleSetting()
+        applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
         startDictationModule()
@@ -434,17 +435,15 @@ final class SaysoAppModel: ObservableObject {
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
-        applyClipboardModuleSetting()
+        applyOptInModuleSettings()
         settingsStore.save(settings)
     }
 
-    /// The clipboard module reads the pasteboard, so it only runs while the user has opted in.
-    private func applyClipboardModuleSetting() {
-        if settings.clipboardModuleEnabled {
-            modules.enable("clipboard")
-        } else {
-            modules.disable("clipboard")
-        }
+    /// Modules that read the pasteboard or hold file access run only while the user has opted in;
+    /// turning one off stops it and purges what it held.
+    private func applyOptInModuleSettings() {
+        modules.setEnabled("clipboard", settings.clipboardModuleEnabled)
+        modules.setEnabled("file-shelf", settings.fileShelfEnabled)
     }
 
     func refreshAudioInputDevices() {
