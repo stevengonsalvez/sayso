@@ -217,9 +217,9 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     @Test func cpuTicksThatWrapPastTheirLimitStillGiveTheDelta() {
         let near = UInt32.max - 9
         let rig = rig(SystemStatsReading.calm.with { $0.cpuTicks = SystemCPUTicks(user: near, system: 0, idle: near, nice: 0) })
-        rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 10, system: 0, idle: 50, nice: 0) }
+        rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 10, system: 0, idle: 170, nice: 0) }
         rig.advance(SystemStatsModule.idleIntervalSeconds)
-        #expect(close(rig.module.snapshot?.cpuLoad, 20.0 / 80.0), "20 busy and 60 idle ticks across the wrap")
+        #expect(close(rig.module.snapshot?.cpuLoad, 20.0 / 200.0), "20 busy and 180 idle ticks across the wrap")
     }
 
     @Test func noTicksBetweenSamplesGivesNoLoadRatherThanANumber() {
@@ -353,9 +353,11 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(rig.lines.isEmpty, "warning alone is not notable")
         rig.sample { $0.memoryPressure = .critical; $0.memoryUsedFraction = 0.94 }
         #expect(rig.lines.map(\.stackID) == ["system-stats-memory"])
-        #expect(rig.titles == ["Memory pressure critical, 94% used"])
+        #expect(rig.titles == ["Memory pressure critical"], "no used percent: it would repaint the line on every sample")
+        rig.sample { $0.memoryUsedFraction = 0.95 }
+        #expect(rig.titles == ["Memory pressure critical"])
         rig.sample { $0.memoryPressure = .warning }
-        #expect(rig.titles == ["Memory pressure warning, 94% used"], "easing to warning does not clear it")
+        #expect(rig.titles == ["Memory pressure warning"], "easing to warning does not clear it")
         rig.sample { $0.memoryPressure = .normal }
         #expect(rig.lines.isEmpty)
     }
@@ -365,7 +367,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(rig.lines.isEmpty)
         rig.sample { $0.diskFreeBytes = 4_960_000_000 }
         #expect(rig.lines.map(\.stackID) == ["system-stats-disk"])
-        #expect(rig.titles == ["Disk almost full, 5.0 GB free"])
+        #expect(rig.titles == ["Disk almost full, 4.9 GB free"], "rounded down, so it never reads 5.0 below 5 GB")
         rig.sample { $0.diskFreeBytes = 5_900_000_000 }
         #expect(rig.lines.count == 1)
         rig.sample { $0.diskFreeBytes = 6_000_000_000 }
@@ -537,6 +539,38 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         machine.set { $0.batteryFraction = 0.15 }
         advance(SystemStatsModule.idleIntervalSeconds)
         #expect(events.log.last == "show Battery 15%, not plugged in", "and comes back after it clears: \(events.log)")
+    }
+
+    @Test func aViewerChangeNeverPushesAPendingDismissOrClockChangeLater() {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        rig.tap("dismiss", on: "system-stats-battery")
+        rig.module.setObserved(.notch, true)
+        rig.module.setObserved(.notch, false)
+        #expect(rig.scheduler.jobs == [rig.clock.now], "the dismissal still lands at once")
+        rig.advance(0)
+        #expect(rig.lines.isEmpty)
+
+        rig.advance(1)
+        rig.module.clockChanged()
+        rig.module.setObserved(.studio, true)
+        #expect(rig.scheduler.jobs == [rig.clock.now], "the clock change still samples at once")
+    }
+
+    @Test func aSampleTooSoonAfterTheLastKeepsTheMeasuredLoadInsteadOfAFewTicksOfNoise() {
+        let rig = rig()
+        rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 1_300, system: 1_200, idle: 8_500, nice: 0) }
+        rig.advance(SystemStatsModule.idleIntervalSeconds)
+        #expect(close(rig.module.snapshot?.cpuLoad, 0.5))
+
+        // A clock change forces a sample a moment later: 3 busy ticks of 4 would read as 75%.
+        rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 1_303, system: 1_200, idle: 8_501, nice: 0) }
+        rig.module.clockChanged()
+        rig.advance(0)
+        #expect(close(rig.module.snapshot?.cpuLoad, 0.5), "too few ticks to measure: the last load stands")
+
+        rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 1_400, system: 1_200, idle: 8_800, nice: 0) }
+        rig.advance(SystemStatsModule.idleIntervalSeconds)
+        #expect(close(rig.module.snapshot?.cpuLoad, 0.25), "measured from the last sample that counted: 100 busy of 400")
     }
 
     @Test func passesTheModuleAcceptanceContract() {
