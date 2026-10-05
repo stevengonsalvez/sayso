@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 @testable import SaysoCore
 
@@ -490,5 +490,20 @@ private func calculatorRig(locale: String = "en_US") -> CalculatorRig {
         rig.host.enable("calculator")
         #expect(rig.module.history.isEmpty, "nothing comes back after turning it on again")
         #expect(try rig.result("1 + 1").text == "2")
+    }
+}
+
+/// The real adapter, on a uniquely named board so the user's pasteboard is never touched.
+@Suite struct PasteboardCalculatorPortTests {
+    @Test func writeReplacesTheBoardWithPlainTextOnly() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        board.clearContents()
+        board.setData(Data([1, 2, 3]), forType: .png)
+
+        #expect(PasteboardCalculatorPort(pasteboard: board).write("3.106855961 mi"))
+
+        #expect(board.string(forType: .string) == "3.106855961 mi")
+        #expect(board.data(forType: .png) == nil, "the earlier contents are replaced, not mixed in")
     }
 }
