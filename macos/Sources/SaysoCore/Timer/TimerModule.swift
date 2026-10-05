@@ -18,6 +18,8 @@ public struct TimerSnapshot: Equatable, Sendable {
 
     public let id: TimerID
     public let kind: Kind
+    /// The label the notch shows, for example "Focus 23:59 (paused)", so every surface agrees.
+    public let title: String
     /// For a Pomodoro, time spent in the current phase.
     public let elapsed: TimeInterval
     /// Nil for a stopwatch, which has no end.
@@ -163,7 +165,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 let now = module.now()
                 return entries.map {
                     TimerSnapshot(
-                        id: $0.id, kind: $0.kind, elapsed: $0.elapsed(at: now),
+                        id: $0.id, kind: $0.kind, title: Self.title(of: $0, at: now), elapsed: $0.elapsed(at: now),
                         remaining: $0.remaining(at: now), isPaused: $0.runningSince == nil, laps: $0.laps
                     )
                 }
@@ -357,18 +359,21 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             return remaining - (remaining.rounded(.up) - 1)
         }
 
-        private func show(_ entry: Entry, at now: Date) -> Effect {
-            let paused = entry.runningSince == nil
-            let elapsed = entry.elapsed(at: now)
+        private static func title(of entry: Entry, at now: Date) -> String {
             let name = switch entry.kind {
             case .countdown: "Timer"
             case .stopwatch: "Stopwatch"
             case .pomodoro(let phase, _): phase.title
             }
-            let shown = entry.remaining(at: now).map { $0.rounded(.up) } ?? elapsed
+            let shown = entry.remaining(at: now).map { $0.rounded(.up) } ?? entry.elapsed(at: now)
+            return "\(name) \(TimerModule.clockLabel(shown))" + (entry.runningSince == nil ? " (paused)" : "")
+        }
+
+        private func show(_ entry: Entry, at now: Date) -> Effect {
+            let paused = entry.runningSince == nil
+            let elapsed = entry.elapsed(at: now)
             return .publish(
-                stackID: entry.id.stackID, kind: .activeTask,
-                title: "\(name) \(TimerModule.clockLabel(shown))" + (paused ? " (paused)" : ""),
+                stackID: entry.id.stackID, kind: .activeTask, title: Self.title(of: entry, at: now),
                 actions: [
                     paused ? SaysoAction(id: "resume", title: "Resume") : SaysoAction(id: "pause", title: "Pause"),
                     SaysoAction(id: "cancel", title: "Cancel"),
