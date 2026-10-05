@@ -35,6 +35,8 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
     public static let defaultMaxTimers = 5
     public static let completionNoticeSeconds: TimeInterval = 10
     public static let maxLaps = 99
+    /// Longest countdown, 100 hours; far larger values lose the sub-second precision the tick schedule relies on.
+    public static let maxCountdownSeconds: TimeInterval = 100 * 3600
 
     public let descriptor = SaysoModuleDescriptor(
         id: "timer", title: "Timers", surfaces: [.compact, .peek, .expanded, .settings]
@@ -60,10 +62,10 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
 
     public var timers: [TimerSnapshot] { current?.snapshots ?? [] }
 
-    /// Nil while the module is disabled or when the duration is not a positive number of seconds.
+    /// Nil while the module is disabled or when the duration is not in 0 < duration <= `maxCountdownSeconds`.
     @discardableResult
     public func startCountdown(_ duration: TimeInterval) -> TimerID? {
-        guard duration.isFinite, duration > 0 else { return nil }
+        guard duration > 0, duration <= Self.maxCountdownSeconds else { return nil }
         return current?.start(.countdown(duration: duration), duration: duration)
     }
 
@@ -90,9 +92,9 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
     @discardableResult
     public func cancel(_ id: TimerID) -> Bool { current?.cancel(id) ?? false }
 
-    /// "m:ss", or "h:mm:ss" from one hour; fractions are dropped.
+    /// "m:ss", or "h:mm:ss" from one hour; fractions are dropped and values beyond a million hours are capped.
     public static func clockLabel(_ seconds: TimeInterval) -> String {
-        let total = seconds.isFinite ? Int(max(0, seconds.rounded(.down))) : 0
+        let total = seconds.isFinite ? Int(min(max(0, seconds.rounded(.down)), 3.6e9)) : 0
         let (hours, minutes, secs) = (total / 3600, total % 3600 / 60, total % 60)
         return hours > 0
             ? String(format: "%d:%02d:%02d", hours, minutes, secs)
@@ -192,7 +194,9 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             switch actionID {
             case "pause": pause(id)
             case "resume": resume(id)
-            case "cancel": cancel(id)
+            // Dismissing a timer from the notch cancels it: hiding it would leave it running unseen
+            // or reappearing on the next tick.
+            case "cancel", "dismiss": cancel(id)
             default: break
             }
         }
@@ -377,6 +381,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 actions: [
                     paused ? SaysoAction(id: "resume", title: "Resume") : SaysoAction(id: "pause", title: "Pause"),
                     SaysoAction(id: "cancel", title: "Cancel"),
+                    SaysoAction(id: "dismiss", title: "Dismiss"),
                 ],
                 progress: entry.duration.map { elapsed / $0 }
             )
