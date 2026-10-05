@@ -11,6 +11,10 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
     public static let labelTickSeconds: TimeInterval = 1
     /// A paused track stays shown this long after the pause was first seen.
     public static let pausedFadeSeconds: TimeInterval = 60
+    /// After a command, the player is checked again this soon so the line follows it.
+    public static let commandSettleSeconds: TimeInterval = 0.5
+    /// After a refused or failed read, the player is left alone this long.
+    public static let failureBackoffSeconds: TimeInterval = 60
     static let stackID = "now-playing"
 
     public let descriptor = SaysoModuleDescriptor(
@@ -33,6 +37,10 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
         lock.withLock { self.runtime = runtime }
         return runtime
     }
+
+    /// Sends `command` to the player of the current track.
+    @discardableResult
+    public func send(_ command: NowPlayingCommand) -> Bool { current?.send(command) ?? false }
 
     private var current: Runtime? { lock.withLock { runtime } }
 
@@ -103,6 +111,8 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
         private var hidden: TrackKey?
         private var pollDue = Date.distantPast
         private var shown: Line?
+        /// The last read failed; the next failure in a row is not reported again.
+        private var failing = false
 
         init(module: NowPlayingModule, context: SaysoModuleContext) {
             self.module = module
@@ -130,23 +140,50 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
                 pausedSince = nil
                 hidden = nil
                 shown = nil
+                failing = false
             }
             module.detach(self)
         }
 
         func handle(stackID: String, actionID: String) {
-            guard stackID == NowPlayingModule.stackID, actionID == "dismiss" else { return }
-            refresh(read: nil) { hidden = track.map(TrackKey.init) }
+            guard stackID == NowPlayingModule.stackID else { return }
+            switch actionID {
+            case "dismiss": refresh(read: nil) { _ in hidden = track.map(TrackKey.init) }
+            case "play-pause": send(.playPause)
+            case "next": send(.next)
+            case "previous": send(.previous)
+            default: break
+            }
+        }
+
+        /// Sends to the player of the current track, then checks it again soon so the line follows the player.
+        @discardableResult
+        func send(_ command: NowPlayingCommand) -> Bool {
+            guard let app = lock.withLock({ running ? track?.app : nil }) else { return false }
+            do {
+                try module.port.send(command, to: app)
+            } catch {
+                context.reportFailure()
+                return false
+            }
+            refresh(read: nil) { now in pollDue = now.addingTimeInterval(NowPlayingModule.commandSettleSeconds) }
+            return true
         }
 
         /// Reads the player when a check is due, outside the lock: a player can take a while to answer.
         private func tick() {
-            let due = lock.withLock { running && !(module.now() < pollDue) }
-            refresh(read: due ? .success((try? module.port.current()) ?? nil) : nil)
+            guard lock.withLock({ running && !(module.now() < pollDue) }) else { return refresh(read: nil) }
+            do {
+                refresh(read: .success(try module.port.current()))
+            } catch {
+                refresh(read: .failure(error))
+            }
         }
 
-        /// Call with the lock held.
-        private func apply(_ read: Result<NowPlayingSnapshot?, NowPlayingPortError>, at now: Date) {
+        /// Takes in one read. A failed read forgets the track, since it can no longer be vouched for, and reports
+        /// once per run of failures, so a lasting refusal neither floods nor quarantines. Call with the lock held.
+        /// Returns whether a failure must be reported.
+        private func apply(_ read: Result<NowPlayingSnapshot?, NowPlayingPortError>, at now: Date) -> Bool {
             let snapshot = (try? read.get())?.map(NowPlayingModule.sanitized)
             let key = snapshot.map(TrackKey.init)
             if let snapshot {
@@ -161,26 +198,32 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
             if hidden != nil, hidden != key { hidden = nil }
             track = snapshot
             readAt = now
+            let failed = if case .failure = read { true } else { false }
+            defer { failing = failed }
+            return failed && !failing
         }
 
         /// Applies a read and `change`, works out the line and re-arms the single job under the lock, then publishes
         /// outside it and only when the line changed: publishing takes the host lock, and the host calls into this
         /// runtime while holding that lock.
-        private func refresh(read: Result<NowPlayingSnapshot?, NowPlayingPortError>?, _ change: () -> Void = {}) {
-            let effect = lock.withLock { () -> Effect? in
-                guard running else { return nil }
+        private func refresh(read: Result<NowPlayingSnapshot?, NowPlayingPortError>?, _ change: (Date) -> Void = { _ in }) {
+            let (effect, report) = lock.withLock { () -> (Effect?, Bool) in
+                guard running else { return (nil, false) }
                 let now = module.now()
-                if let read { apply(read, at: now) }
-                change()
+                let report = read.map { apply($0, at: now) } ?? false
+                change(now)
                 let line = line(at: now)
                 if read != nil || (line == nil) != (shown == nil) {
-                    pollDue = now.addingTimeInterval(line == nil ? NowPlayingModule.idlePollSeconds : NowPlayingModule.activePollSeconds)
+                    let wait = failing ? NowPlayingModule.failureBackoffSeconds
+                        : line == nil ? NowPlayingModule.idlePollSeconds : NowPlayingModule.activePollSeconds
+                    pollDue = now.addingTimeInterval(wait)
                 }
                 rearm(at: now, showing: line)
-                guard line != shown else { return nil }
+                guard line != shown else { return (nil, report) }
                 shown = line
-                return line.map(Effect.show) ?? .clear
+                return (line.map(Effect.show) ?? .clear, report)
             }
+            if report { context.reportFailure() }
             switch effect {
             case let .show(line)?:
                 context.publish(
