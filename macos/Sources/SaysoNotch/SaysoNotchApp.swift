@@ -253,7 +253,7 @@ final class SaysoAppModel: ObservableObject {
     let controlAudit = ControlAuditStore()
     let secrets = KeychainSecretStore()
     private let automation = SaysoAutomationServer()
-    private let settingsStore = UserDefaultsSettingsStore()
+    private let settingsStore = SaysoAppModel.makeSettingsStore()
     private let hotKeyEngine = HotKeyEngine()
     private let controlFnHotKeyEngine = HotKeyEngine()
     private let shortcutManager = SaysoShortcutManager()
@@ -315,6 +315,7 @@ final class SaysoAppModel: ObservableObject {
             saved.desktopControlEnabled = true
             saved.onboardingCompleted = true
         }
+        if Self.usesFreshSettings { saved.onboardingCompleted = true }
         settings = saved
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
@@ -412,6 +413,19 @@ final class SaysoAppModel: ObservableObject {
                 slmStates[slm.id] = .installed
             }
         }
+    }
+
+    private static let usesFreshSettings = CommandLine.arguments.contains("--ui-test-fresh-settings")
+
+    /// UI test hook: settings live in a throwaway suite wiped at every launch, so UI tests see the defaults
+    /// and never read or write the user's real settings.
+    private static func makeSettingsStore() -> UserDefaultsSettingsStore {
+        guard usesFreshSettings else { return UserDefaultsSettingsStore() }
+        let suite = "ai.sayso.notch.ui-test-settings"
+        // Falling back to the standard defaults here would write test state into the user's real settings.
+        guard let defaults = UserDefaults(suiteName: suite) else { fatalError("UI test settings suite unavailable") }
+        defaults.removePersistentDomain(forName: suite)
+        return UserDefaultsSettingsStore(defaults: defaults)
     }
 
     func save() {
