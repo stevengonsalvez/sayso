@@ -98,13 +98,14 @@ public enum CalculatorEngine {
 }
 
 enum CalculatorToken: Equatable {
-    case number(Double)
+    /// The value and the digits as typed, so an error can quote what the user wrote.
+    case number(Double, String)
     case word(String)
     case symbol(Character)
 
     var text: String {
         switch self {
-        case let .number(value): String(value)
+        case let .number(_, typed): typed
         case let .word(word): word
         case let .symbol(symbol): String(symbol)
         }
@@ -176,7 +177,9 @@ enum CalculatorTokenizer {
             if character.isWhitespace {
                 index += 1
             } else if character.isASCII, character.isNumber || character == "." {
-                tokens.append(.number(try number(in: characters, from: &index)))
+                let start = index
+                let value = try number(in: characters, from: &index)
+                tokens.append(.number(value, String(characters[start..<index])))
             } else if isWordCharacter(character) {
                 let start = index
                 while index < characters.count, isWordCharacter(characters[index]) { index += 1 }
@@ -196,7 +199,8 @@ enum CalculatorTokenizer {
     }
 
     /// Digits with an optional fraction. A comma is a thousands separator only between groups of exactly three
-    /// digits after a first group of one to three, so "1,20" and "1234,567" are refused rather than misread.
+    /// digits after a first group of one to three that does not start with 0, so "1,20", "1234,567" and "0,500"
+    /// (0.5 in a comma-decimal locale) are refused rather than misread.
     private static func number(in characters: [Character], from index: inout Int) throws -> Double {
         func isDigit(_ offset: Int) -> Bool {
             offset < characters.count && characters[offset].isASCII && characters[offset].isNumber
@@ -210,7 +214,7 @@ enum CalculatorTokenizer {
                 groupLength += 1
                 index += 1
             } else if characters[index] == ",", !digits.isEmpty {
-                let validGroup = grouped ? groupLength == 3 : groupLength <= 3
+                let validGroup = grouped ? groupLength == 3 : groupLength <= 3 && digits.first != "0"
                 guard validGroup, isDigit(index + 1), isDigit(index + 2), isDigit(index + 3), !isDigit(index + 4) else {
                     throw CalculatorError.unexpected(",")
                 }
@@ -283,9 +287,15 @@ struct CalculatorParser {
         var value = try parseProduct()
         while let symbol = take(["+", "-", "−"]) {
             let right = try parseProduct()
-            let base = value.resolved
-            let amount = right.percent ? base * right.value / 100 : right.value
-            value = Operand(value: try checked(symbol == "+" ? base + amount : base - amount))
+            let sign: Double = symbol == "+" ? 1 : -1
+            if value.percent, right.percent {
+                // "50% + 50%" adds hundredths and stays a percent.
+                value = Operand(value: try checked(value.value + sign * right.value), percent: true)
+            } else {
+                let base = value.resolved
+                let amount = right.percent ? base * right.value / 100 : right.value
+                value = Operand(value: try checked(base + sign * amount))
+            }
         }
         return value
     }
@@ -339,7 +349,7 @@ struct CalculatorParser {
         guard let token = peek else { throw CalculatorError.incomplete }
         position += 1
         switch token {
-        case let .number(value):
+        case let .number(value, _):
             return Operand(value: try checked(value))
         case .symbol("("):
             let value = try parseSum()
@@ -378,11 +388,13 @@ struct CalculatorParser {
     }
 
     /// Whole multiples of a right angle use exact values, so sin(180) is 0 and tan(90) is undefined rather than
-    /// 1.2e-16 and 1.6e16.
+    /// 1.2e-16 and 1.6e16. Degrees are reduced modulo 360 first, which is exact. Radians far from zero are never
+    /// snapped: there a multiple of pi/2 cannot be told apart from a nearby angle.
     private func trigonometry(_ function: String, _ x: Double) throws -> Double {
-        let quarterTurns = angle == .degrees ? x / 90 : x / (Double.pi / 2)
+        let degrees = angle == .degrees ? fmod(x, 360) : nil
+        let quarterTurns = degrees.map { $0 / 90 } ?? x / (Double.pi / 2)
         let nearest = quarterTurns.rounded()
-        if abs(quarterTurns) < 1e15, abs(quarterTurns - nearest) <= 1e-12 * max(1, abs(quarterTurns)) {
+        if abs(quarterTurns) < 1e6, abs(quarterTurns - nearest) <= 1e-12 * max(1, abs(quarterTurns)) {
             let turn = (Int(nearest) % 4 + 4) % 4
             let (sine, cosine) = ([0.0, 1, 0, -1][turn], [1.0, 0, -1, 0][turn])
             switch function {
@@ -393,7 +405,7 @@ struct CalculatorParser {
                 return sine / cosine
             }
         }
-        let radians = angle == .degrees ? x * .pi / 180 : x
+        let radians = degrees.map { $0 * .pi / 180 } ?? x
         switch function {
         case "sin": return try checked(sin(radians))
         case "cos": return try checked(cos(radians))
