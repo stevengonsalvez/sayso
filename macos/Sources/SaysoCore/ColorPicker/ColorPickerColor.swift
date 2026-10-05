@@ -110,7 +110,7 @@ public struct ColorPickerColor: Hashable, Sendable {
         guard text.hasPrefix(name + "("), text.hasSuffix(")") else { return nil }
         let inner = text.dropFirst(name.count + 1).dropLast()
         let values = inner.contains(",")
-            ? inner.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            ? inner.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             : inner.split(whereSeparator: \.isWhitespace).map(String.init)
         guard values.count == 3, values.allSatisfy({ !$0.isEmpty }) else { return nil }
         return values
