@@ -239,10 +239,12 @@ final class SaysoAppModel: ObservableObject {
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private let clipboardModule = ClipboardModule(port: PasteboardClipboardPort(), scheduler: SaysoDispatchScheduler())
     private let fileShelf = FileShelfModule(port: FileSystemShelfPort(), scheduler: SaysoDispatchScheduler())
+    private let timerModule = TimerModule(scheduler: SaysoDispatchScheduler())
+    private var timerPingSubscription: SaysoSubscription?
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule, fileShelf,
+            externalActivities, clipboardModule, fileShelf, timerModule,
         ],
         events: moduleEvents
     )
@@ -338,6 +340,11 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
+        // Timers need no permission and read nothing private, so they run without an opt-in.
+        modules.enable(timerModule.descriptor.id)
+        timerPingSubscription = moduleEvents.subscribe(TimerPing.self) { _ in
+            DispatchQueue.main.async { NSSound(named: "Glass")?.play() }
+        }
         applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
@@ -448,6 +455,22 @@ final class SaysoAppModel: ObservableObject {
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
+
+    /// The Pomodoro, running or paused; the timer module allows only one.
+    var pomodoro: TimerSnapshot? {
+        timerModule.timers.first { if case .pomodoro = $0.kind { true } else { false } }
+    }
+
+    func startPomodoro() {
+        objectWillChange.send()
+        if timerModule.startPomodoro() == nil { notice = "A Pomodoro is already running." }
+    }
+
+    func cancelPomodoro() {
+        guard let id = pomodoro?.id else { return }
+        objectWillChange.send()
+        timerModule.cancel(id)
+    }
 
     func addToFileShelf(_ urls: [URL]) {
         objectWillChange.send()
@@ -2189,7 +2212,8 @@ final class SaysoAppModel: ObservableObject {
 
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
-        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "shortcut-intents": 8, "tts": 9,
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "shortcut-intents": 8,
+        "tts": 9,
     ]
 
     /// Selects the Studio tab for a module through the shared router; permission problems open Settings.
@@ -3025,6 +3049,8 @@ private struct NotchWorkspace: View {
                     Text("Configure the Sayso dynamic notch and floating desktop overlay.").foregroundStyle(.secondary)
                 }
 
+                timersSection
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3096,6 +3122,33 @@ private struct NotchWorkspace: View {
             }
             .padding(24)
         }
+    }
+
+    /// Studio starts and cancels the Pomodoro; its time shows in the notch through the module activity.
+    private var timersSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Timers").font(.headline)
+                Text("A Pomodoro runs 25 minutes of focus, then a 5 minute break, with a 15 minute break after every fourth focus. The time shows in the notch and a sound plays when a phase changes. It lives in memory and stops when Sayso quits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                if let pomodoro = model.pomodoro {
+                    Text(pomodoro.title)
+                        .font(.body.monospacedDigit())
+                        .accessibilityIdentifier("timer-status")
+                    Spacer()
+                    Button("Cancel Pomodoro") { model.cancelPomodoro() }
+                        .accessibilityIdentifier("timer-cancel")
+                } else {
+                    Button("Start 25 min Pomodoro") { model.startPomodoro() }
+                        .accessibilityIdentifier("timer-start-25")
+                }
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
