@@ -20,15 +20,16 @@ final class ClipboardSettingUITests: XCTestCase {
         tab.click()
         let toggle = app.descendants(matching: .any)["settings-clipboard-toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "clipboard toggle in Settings")
-        XCTAssertFalse(isOn(toggle), "clipboard module must be off unless the user turns it on")
+        XCTAssertEqual(isOn(toggle), false, "clipboard module must be off unless the user turns it on (value: \(String(describing: toggle.value)))")
     }
 
-    /// macOS reports a toggle's value as a number or a string depending on its style.
-    private func isOn(_ toggle: XCUIElement) -> Bool {
+    /// macOS reports a toggle's value as a number or a string depending on its style; nil means unreadable,
+    /// so the test cannot pass by failing to read the value.
+    private func isOn(_ toggle: XCUIElement) -> Bool? {
         switch toggle.value {
         case let number as NSNumber: number.boolValue
-        case let text as String: text == "1"
-        default: false
+        case let text as String where text == "0" || text == "1": text == "1"
+        default: nil
         }
     }
 }
