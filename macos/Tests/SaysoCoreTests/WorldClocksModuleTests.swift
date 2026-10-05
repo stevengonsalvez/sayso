@@ -403,6 +403,60 @@ private func rig(
         #expect(rig.module.readings.map(\.title) == ["London 07:30"])
     }
 
+    // MARK: Real adapters
+
+    @Test func theUserDefaultsStoreRoundTripsTheListUnderItsOwnKey() throws {
+        let name = "ai.sayso.tests.world-clocks.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = UserDefaultsWorldClocksStore(defaults: defaults)
+        #expect(store.load().isEmpty, "nothing saved yet")
+
+        store.save([zone("Asia/Tokyo", "Tokyo"), zone("Asia/Kolkata", "Kolkata")])
+        #expect(UserDefaultsWorldClocksStore(defaults: defaults).load() == [zone("Asia/Tokyo", "Tokyo"), zone("Asia/Kolkata", "Kolkata")])
+        #expect(UserDefaultsWorldClocksStore.key == "ai.sayso.notch.worldClocks.v1")
+        #expect(defaults.data(forKey: UserDefaultsWorldClocksStore.key) != nil)
+    }
+
+    @Test func theUserDefaultsStoreReadsCorruptDataAsEmptyAndKeepsGoodEntries() throws {
+        let name = "ai.sayso.tests.world-clocks.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = UserDefaultsWorldClocksStore(defaults: defaults)
+        let key = UserDefaultsWorldClocksStore.key
+
+        defaults.set(Data("not json".utf8), forKey: key)
+        #expect(store.load().isEmpty)
+        defaults.set("a string, not data", forKey: key)
+        #expect(store.load().isEmpty)
+        defaults.set(Data(#"{"identifier":"Asia/Tokyo","city":"Tokyo"}"#.utf8), forKey: key)
+        #expect(store.load().isEmpty, "an object where a list belongs")
+
+        let mixed = #"[{"identifier":"Asia/Tokyo","city":"Tokyo"},{"identifier":7},{"city":"x"},"junk",{"identifier":"Europe/London","city":"London"}]"#
+        defaults.set(Data(mixed.utf8), forKey: key)
+        #expect(store.load() == [zone("Asia/Tokyo", "Tokyo"), zone("Europe/London", "London")], "one bad entry does not lose the rest")
+    }
+
+    @Test func theRealResolverAcceptsIANANamesAndRejectsAbbreviationsAndOffsets() {
+        // Asia/Kolkata is missing from knownTimeZoneIdentifiers on some macOS releases yet resolves to itself.
+        for identifier in ["Asia/Tokyo", "Asia/Kolkata", "Asia/Kathmandu", "America/New_York", "Europe/London", "Etc/UTC"] {
+            #expect(WorldClocksModule.ianaZone(identifier)?.identifier == identifier, "\(identifier)")
+        }
+        for identifier in ["", "EST", "GMT+5", "Mars/Olympus", "asia/tokyo", "Tokyo"] {
+            #expect(WorldClocksModule.ianaZone(identifier) == nil, "\(identifier)")
+        }
+    }
+
+    @Test func theModuleUsesTheRealResolverByDefault() throws {
+        let module = WorldClocksModule(store: FakeStore(), scheduler: FakeScheduler())
+        let host = SaysoModuleHost(modules: [module])
+        host.enable("world-clocks")
+
+        #expect(throws: WorldClocksError.unknownZone) { try module.add("EST") }
+        try module.add("Asia/Kolkata")
+        #expect(module.zones.map(\.identifier) == ["Asia/Kolkata"])
+    }
+
     @Test func passesTheModuleAcceptanceContract() {
         let module = WorldClocksModule(
             store: FakeStore([zone("Asia/Tokyo", "Tokyo")]), scheduler: FakeScheduler(), resolveZone: resolve
