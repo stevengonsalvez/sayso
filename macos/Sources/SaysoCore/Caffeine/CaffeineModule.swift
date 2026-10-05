@@ -89,6 +89,7 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
             case dismiss
             case ended
             case clearEnded
+            case failed
         }
 
         unowned let module: CaffeineModule
@@ -132,7 +133,7 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
                 // Release first so two assertions are never held, even for a moment.
                 release()
                 guard let assertion = module.port.createAssertion(named: CaffeineModule.assertionName) else {
-                    return (false, [.dismiss, .clearEnded])
+                    return (false, [.dismiss, .clearEnded, .failed])
                 }
                 let deadline: Date? = if case let .timed(seconds) = duration { now.addingTimeInterval(seconds) } else { nil }
                 let session = Held(assertion: assertion, deadline: deadline)
@@ -188,6 +189,8 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
                     )
                 case .clearEnded:
                     context.dismiss(stackID: CaffeineModule.noticeStackID)
+                case .failed:
+                    context.reportFailure()
                 }
             }
             return result
