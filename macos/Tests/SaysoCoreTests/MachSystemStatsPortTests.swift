@@ -21,25 +21,36 @@ private final class ManualScheduler: SaysoScheduling, @unchecked Sendable {
     }
 }
 
-/// Keeps one core busy for `seconds`, so the second sample has ticks to count.
-private func spin(_ seconds: TimeInterval) {
-    let end = Date().addingTimeInterval(seconds)
+private final class Clock: @unchecked Sendable { var now = Date() }
+
+/// Keeps one core busy until the kernel publishes new CPU ticks, at least `seconds` and at most 5 s. The ticks
+/// usually move every few milliseconds but can stall for most of a second on a saturated machine.
+private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: TimeInterval) throws {
+    let port = MachSystemStatsPort()
+    let begun = Date()
     var x = 0.0
-    while Date() < end { x += sin(x) }
+    while true {
+        x += sin(x)
+        let waited = Date().timeIntervalSince(begun)
+        if waited >= 5 { break }
+        if waited >= seconds, try port.read().cpuTicks != start { break }
+    }
     #expect(x.isFinite)
 }
 
 /// Runs against this Mac's real kernel, IOKit and file system: no fakes. Ranges only, since the values move.
 @Suite struct MachSystemStatsPortTests {
     @Test func twoRealSamplesThroughTheModuleGiveACPULoadBetweenZeroAndOne() throws {
-        let scheduler = ManualScheduler()
-        let module = SystemStatsModule(port: MachSystemStatsPort(), scheduler: scheduler)
+        let scheduler = ManualScheduler(), clock = Clock()
+        let module = SystemStatsModule(port: MachSystemStatsPort(), scheduler: scheduler, now: { clock.now })
         let host = SaysoModuleHost(modules: [module])
         host.enable("system-stats")
         scheduler.runNext()
         let first = try #require(module.snapshot, "the real port answered")
         #expect(first.cpuLoad == nil, "one sample is not a load")
-        spin(0.3)
+        try spinUntilTicksMove(from: MachSystemStatsPort().read().cpuTicks, atLeast: 0.3)
+        // Only the module's clock jumps, so its second job counts as due; the ticks cover the real 0.3 s.
+        clock.now += SystemStatsModule.idleIntervalSeconds
         scheduler.runNext()
         let load = try #require(module.snapshot?.cpuLoad)
         #expect((0...1).contains(load))
@@ -50,14 +61,14 @@ private func spin(_ seconds: TimeInterval) {
     @Test func cpuTicksOnlyMoveForward() throws {
         let port = MachSystemStatsPort()
         let before = try port.read().cpuTicks
-        spin(0.1)
+        try spinUntilTicksMove(from: before, atLeast: 0.1)
         let after = try port.read().cpuTicks
         let deltas: [UInt32] = [
             after.user &- before.user, after.system &- before.system, after.idle &- before.idle, after.nice &- before.nice,
         ]
         let elapsed = deltas.reduce(UInt64(0)) { $0 + UInt64($1) }
         #expect(elapsed > 0)
-        #expect(elapsed < 1_000_000, "a tenth of a second, not a wrapped counter")
+        #expect(elapsed < 1_000_000, "seconds of ticks at most, not a wrapped counter")
     }
 
     @Test func memoryUsedIsAFractionStrictlyBetweenZeroAndOne() throws {
