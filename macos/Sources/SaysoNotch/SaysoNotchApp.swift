@@ -249,8 +249,12 @@ final class SaysoAppModel: ObservableObject {
         hourCycle: WorldClockHourCycle(locale: .autoupdatingCurrent)
     )
     private var worldClockObservers: [NSObjectProtocol] = []
-    /// Asks only an already running Music or Spotify, and only while the user has opted in.
-    private let nowPlaying = NowPlayingModule(port: ScriptingNowPlayingPort(), scheduler: SaysoDispatchScheduler())
+    /// Asks only an already running Music or Spotify, and only while the user has opted in. Its own serial queue
+    /// keeps AppleScript and the Automation prompt off the main thread.
+    private let nowPlaying = NowPlayingModule(
+        port: ScriptingNowPlayingPort(),
+        scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.now-playing", qos: .utility))
+    )
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
@@ -370,8 +374,9 @@ final class SaysoAppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
-            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks] _ in
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying] _ in
                 worldClocks.clockChanged()
+                nowPlaying.clockChanged()
             },
             NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
@@ -8589,7 +8594,7 @@ private struct SaysoSettingsView: View {
                 }
                 SaysoSettingItemCard(
                     title: "Now Playing (off by default)",
-                    description: "When on, the notch shows the track playing in Music or Spotify, when nothing more urgent is showing, with its progress and buttons for previous, play or pause, and next. Every few seconds Sayso asks Music or Spotify, only if it is already open, for the track name, artist, playing or paused, position and length; it never opens either app. The first time, macOS asks whether Sayso may control Music or Spotify; you can change that later in System Settings, Privacy & Security, Automation. Nothing is saved or sent anywhere, and turning this off stops the checks and clears the track.",
+                    description: "When on, the open notch shows the track playing in Music or Spotify, with its progress and buttons for previous, play or pause, and next. Timers, alerts, clipboard offers and the file shelf take its place while they show, and a paused track disappears after a minute. Every few seconds Sayso asks Music or Spotify, only if it is already open, for the track name, artist, playing or paused, position and length; it never opens either app. The first time, macOS asks whether Sayso may control Music or Spotify; you can change that later in System Settings, Privacy & Security, Automation. Nothing is saved or sent anywhere, and turning this off stops the checks and clears the track.",
                     example: "Play a song in Music and the notch shows its title, artist and progress."
                 ) {
                     Toggle("Now Playing", isOn: $model.settings.nowPlayingEnabled)
