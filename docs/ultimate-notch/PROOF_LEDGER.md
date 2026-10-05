@@ -138,3 +138,11 @@ Four real bugs found and fixed, each with a regression test written first and ob
 - Studio navigation (Voice output tab opens its pane): RED observed on an app built without accessibility ids (tab not found, 16s); GREEN observed after ids added (passed, 10s). Observed on the packaged app, not notarized.
 - Not covered yet: other tabs, notch surface, Control approve/deny, Models, Vocabulary.
 - Notch review card (XCUITest, `--ui-test-review` hook raises a synthetic review with no pending desktop step): RED observed (no hook, no card), GREEN observed (Approve and Deny buttons present; Deny dismisses the card). Observed on the packaged app. Finding: the collapsed notch pill does not auto-expand for a critical review, so the test opens it first; whether it should auto-expand is an open design question. Not observed: Approve with a real pending desktop step.
+
+## Clipboard module opt-in setting (branch notch-xcuitest-2, 2026-10-05)
+
+- `SaysoSettings.clipboardModuleEnabled` defaults false; older stored settings and a malformed value decode to false; true survives a save and reload through `UserDefaultsSettingsStore`. RED observed (compile failure, member missing), then GREEN (2 tests).
+- App registers `ClipboardModule(PasteboardClipboardPort, SaysoDispatchScheduler)` in the module host and calls `modules.enable`/`modules.disable("clipboard")` from the setting at launch and on every `save()` (toggle and Reset All Settings both go through `save()`).
+- XCUITest `ClipboardSettingUITests`: RED observed on the packaged main build (Settings tab found, `settings-clipboard-toggle` missing). GREEN observed after repackaging: toggle present, value read as off (the test fails if the value is unreadable). The toggle was never flipped. Observed on the packaged app, not notarized.
+- `swift test`: 554 tests pass.
+- NOT observed: the module actually polling the real pasteboard when switched on, a copied tracking link raising the Clean activity in the notch, or the module stopping reads after switching off in the running app. Those paths are covered only by `ClipboardModuleTests` with a fake port and scheduler.

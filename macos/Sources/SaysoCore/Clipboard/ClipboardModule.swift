@@ -100,6 +100,8 @@ public final class ClipboardModule: SaysoModule, @unchecked Sendable {
                 return job
             }
             pending?.cancel()
+            // Off means purged: copied text must not outlive the opt-in.
+            module.clearHistory()
         }
 
         func handle(stackID: String, actionID: String) {

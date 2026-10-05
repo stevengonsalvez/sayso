@@ -202,17 +202,20 @@ private func setup() -> (SaysoModuleHost, ClipboardModule, FakePort, FakeSchedul
     }
 }
 
-@Test func disablingStopsPollingAndClearingEmptiesHistory() {
+@Test func disablingStopsPollingAndPurgesCollectedHistory() {
     let (host, module, port, scheduler, _, _) = setup()
     port.copy("a")
     scheduler.firePending()
-    module.clearHistory()
-    #expect(module.entries.isEmpty)
+    #expect(!module.entries.isEmpty)
 
     host.disable("clipboard")
     #expect(scheduler.jobs.isEmpty)
+    #expect(module.entries.isEmpty, "turning the module off must purge what it collected")
     port.copy("b")
     #expect(module.entries.isEmpty)
+
+    host.enable("clipboard")
+    #expect(module.entries.isEmpty, "re-enabling must not resurrect old entries")
 }
 
 @Test func clipboardModulePassesTheGenericAcceptanceHarness() {

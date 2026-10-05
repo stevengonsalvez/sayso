@@ -237,10 +237,11 @@ final class SaysoAppModel: ObservableObject {
     private let externalActivities = ExternalActivitiesModule()
     private var moduleSocket: SaysoModuleSocketServer?
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
+    private let clipboardModule = ClipboardModule(port: PasteboardClipboardPort(), scheduler: SaysoDispatchScheduler())
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities,
+            externalActivities, clipboardModule,
         ],
         events: moduleEvents
     )
@@ -335,6 +336,7 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
+        applyClipboardModuleSetting()
         startControlModule()
         startExternalAPIIfEnabled()
         startDictationModule()
@@ -418,7 +420,17 @@ final class SaysoAppModel: ObservableObject {
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
+        applyClipboardModuleSetting()
         settingsStore.save(settings)
+    }
+
+    /// The clipboard module reads the pasteboard, so it only runs while the user has opted in.
+    private func applyClipboardModuleSetting() {
+        if settings.clipboardModuleEnabled {
+            modules.enable("clipboard")
+        } else {
+            modules.disable("clipboard")
+        }
     }
 
     func refreshAudioInputDevices() {
@@ -8287,6 +8299,15 @@ private struct SaysoSettingsView: View {
                             }
                         }
                     }
+                }
+                SaysoSettingItemCard(
+                    title: "Watch the clipboard (off by default)",
+                    description: "When on, Sayso checks your clipboard twice a second to keep a short in-memory list of text you copy and to offer to clean tracking links. Items that password managers mark as private are skipped. Nothing is saved to disk or sent anywhere.",
+                    example: "Copy a link with tracking parameters and the notch offers Clean."
+                ) {
+                    Toggle("Watch the clipboard", isOn: $model.settings.clipboardModuleEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-clipboard-toggle")
                 }
 
                 // Section 5: Reset & Maintenance
