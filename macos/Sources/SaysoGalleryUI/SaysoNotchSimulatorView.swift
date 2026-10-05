@@ -48,7 +48,7 @@ public struct SaysoNotchSimulatorView: View {
         case .confirmation: Color(red: 1.0, green: 0.72, blue: 0.20)
         case .failure: Color(red: 1.0, green: 0.35, blue: 0.35)
         case .completion: Color(red: 0.30, green: 0.80, blue: 0.50)
-        case .activeTask, .ambient, .background, nil: Color(red: 0.30, green: 0.56, blue: 1.0)
+        case .activeTask, .ambient, .media, .background, nil: Color(red: 0.30, green: 0.56, blue: 1.0)
         }
     }
     private let secondary = Color.white.opacity(0.60)
@@ -60,6 +60,7 @@ public struct SaysoNotchSimulatorView: View {
         case .completion: "checkmark.circle.fill"
         case .activeTask: "timer"
         case .ambient: "doc.on.clipboard"
+        case .media: "music.note"
         case .background: "clock"
         }
     }
@@ -71,6 +72,7 @@ public struct SaysoNotchSimulatorView: View {
         case .completion: "Completion"
         case .activeTask: "Active task"
         case .ambient: "Ambient"
+        case .media: "Media"
         case .background: "Background"
         }
     }
