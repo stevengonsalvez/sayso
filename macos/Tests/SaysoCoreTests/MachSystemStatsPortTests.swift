@@ -73,15 +73,17 @@ private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: Tim
 
     @Test func memoryUsedIsAFractionStrictlyBetweenZeroAndOne() throws {
         let reading = try MachSystemStatsPort().read()
-        #expect(reading.memoryUsedFraction > 0)
-        #expect(reading.memoryUsedFraction < 1)
+        let used = try #require(reading.memoryUsedFraction)
+        #expect(used > 0)
+        #expect(used < 1)
+        #expect(reading.memoryPressure != nil, "this macOS reports a pressure level")
     }
 
     @Test func diskFreeIsPositiveAndLessThanTheVolume() throws {
-        let reading = try MachSystemStatsPort().read()
+        let free = try #require(MachSystemStatsPort().diskFreeBytes())
         let total = try #require(try URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeTotalCapacityKey]).volumeTotalCapacity)
-        #expect(reading.diskFreeBytes > 0)
-        #expect(reading.diskFreeBytes < Int64(total))
+        #expect(free > 0)
+        #expect(free < Int64(total))
     }
 
     @Test func aBatteryIfPresentHasALevelAndAPowerState() throws {
@@ -92,6 +94,6 @@ private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: Tim
         } else {
             #expect(reading.isPluggedIn == nil, "no battery, no power state")
         }
-        print("SYSTEM-STATS-REAL battery=\(String(describing: reading.batteryFraction)) pluggedIn=\(String(describing: reading.isPluggedIn)) memory=\(reading.memoryUsedFraction) pressure=\(reading.memoryPressure) diskFree=\(reading.diskFreeBytes)")
+        print("SYSTEM-STATS-REAL battery=\(String(describing: reading.batteryFraction)) pluggedIn=\(String(describing: reading.isPluggedIn)) memory=\(String(describing: reading.memoryUsedFraction)) pressure=\(String(describing: reading.memoryPressure))")
     }
 }
