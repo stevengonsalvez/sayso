@@ -92,6 +92,15 @@ private final class Reports: @unchecked Sendable {
     var dismissed: [String] = []
 }
 
+private final class Events: @unchecked Sendable {
+    var log: [String] = []
+    var tapDuringNextPublish = false
+}
+
+private final class RuntimeBox: @unchecked Sendable {
+    var runtime: SaysoModuleRuntime?
+}
+
 private struct Rig {
     let host: SaysoModuleHost
     let module: SystemStatsModule
@@ -487,6 +496,43 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         machine.fail(.unavailable)
         advance(SystemStatsModule.idleIntervalSeconds)
         #expect(reports.failures == 2, "a new failure a full window after the last report is reported")
+    }
+
+    @Test func aDismissLandingWhileASampleIsPublishingNeverLeavesAGhostLine() {
+        let clock = Clock(), scheduler = FakeScheduler(), events = Events()
+        let machine = FakeMachine(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
+        let box = RuntimeBox()
+        let runtime = module.makeRuntime(context: SaysoModuleContext(
+            moduleID: "system-stats",
+            publish: { activity in
+                // The user taps Dismiss on the old line between the sample deciding to repaint and the repaint.
+                if events.tapDuringNextPublish {
+                    events.tapDuringNextPublish = false
+                    box.runtime?.handle(stackID: activity.stackID, actionID: "dismiss")
+                }
+                events.log.append("show \(activity.title)")
+            },
+            dismiss: { events.log.append("clear \($0)") }
+        ))
+        box.runtime = runtime
+        func advance(_ seconds: TimeInterval) {
+            clock.now += seconds
+            scheduler.runDue(clock.now)
+        }
+        runtime.start()
+        advance(0)
+        events.tapDuringNextPublish = true
+        machine.set { $0.batteryFraction = 0.17 }
+        advance(SystemStatsModule.idleIntervalSeconds)
+        advance(0)
+        #expect(events.log.last == "clear system-stats-battery", "the dismissed line ends up cleared: \(events.log)")
+
+        machine.set { $0.batteryFraction = 0.30 }
+        advance(SystemStatsModule.idleIntervalSeconds)
+        machine.set { $0.batteryFraction = 0.15 }
+        advance(SystemStatsModule.idleIntervalSeconds)
+        #expect(events.log.last == "show Battery 15%, not plugged in", "and comes back after it clears: \(events.log)")
     }
 
     @Test func passesTheModuleAcceptanceContract() {
