@@ -306,6 +306,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var systemStatsEnabled = true
     /// On unless turned off: the calculator evaluates only what the user types into it and reads nothing else.
     public var calculatorEnabled = true
+    /// On unless turned off: the colour picker reads only the pixel the user clicks after pressing Pick.
+    public var colorPickerEnabled = true
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
@@ -383,7 +385,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, transcriptionExecutionMode, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
-        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled, calculatorEnabled
+        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled, calculatorEnabled, colorPickerEnabled
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
@@ -453,6 +455,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         nowPlayingEnabled = decoded(Bool.self, .nowPlayingEnabled, fallback: nowPlayingEnabled)
         systemStatsEnabled = decoded(Bool.self, .systemStatsEnabled, fallback: systemStatsEnabled)
         calculatorEnabled = decoded(Bool.self, .calculatorEnabled, fallback: calculatorEnabled)
+        colorPickerEnabled = decoded(Bool.self, .colorPickerEnabled, fallback: colorPickerEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
         byokTranscriptionModel = decoded(String.self, .byokTranscriptionModel, fallback: byokTranscriptionModel)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
