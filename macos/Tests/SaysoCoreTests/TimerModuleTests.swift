@@ -184,6 +184,30 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(rig.activities.map(\.kind) == [.completion])
     }
 
+    @Test func anActionThatLandsAfterAMissedDeadlineFinishesTheOverdueTimerFirst() throws {
+        let rig = rig()
+        let overdue = try #require(rig.module.startCountdown(60))
+        rig.clock.now += 61
+
+        let other = try #require(rig.module.startCountdown(600))
+        #expect(rig.sink.pings == [TimerPing(timerID: overdue, reason: .finished)])
+        #expect(rig.module.timers.map(\.id) == [other])
+        #expect(!rig.module.pause(overdue), "an overdue timer finishes instead of freezing past its end")
+    }
+
+    @Test func pausingAnOverduePomodoroMovesItToTheNextPhaseFirst() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startPomodoro())
+        rig.clock.now += 1510
+
+        #expect(rig.module.pause(id))
+        #expect(rig.module.timers.first?.kind == .pomodoro(phase: .shortBreak, completedFocusSessions: 1))
+        #expect(rig.running.map(\.title) == ["Short break 4:50 (paused)"])
+        #expect(rig.module.resume(id))
+        rig.advance(290)
+        #expect(rig.module.timers.first?.kind == .pomodoro(phase: .focus, completedFocusSessions: 1))
+    }
+
     @Test func aCompletionIsShownAheadOfAnotherRunningTimer() throws {
         let rig = rig()
         try #require(rig.module.startCountdown(600) != nil)
