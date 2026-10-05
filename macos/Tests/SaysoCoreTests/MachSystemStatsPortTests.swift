@@ -23,17 +23,21 @@ private final class ManualScheduler: SaysoScheduling, @unchecked Sendable {
 
 private final class Clock: @unchecked Sendable { var now = Date() }
 
-/// Keeps one core busy until the kernel publishes new CPU ticks, at least `seconds` and at most 5 s. The ticks
-/// usually move every few milliseconds but can stall for most of a second on a saturated machine.
-private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: TimeInterval) throws {
+/// Ticks counted from `start` to `end`, wrapping like the kernel counters.
+private func ticks(from start: SystemCPUTicks, to end: SystemCPUTicks) -> UInt64 {
+    let deltas: [UInt32] = [end.user &- start.user, end.system &- start.system, end.idle &- start.idle, end.nice &- start.nice]
+    return deltas.reduce(UInt64(0)) { $0 + UInt64($1) }
+}
+
+/// Keeps one core busy until the kernel has published enough new CPU ticks for the module to call a load, at most
+/// 5 s. The ticks usually move every few milliseconds but can stall for most of a second on a saturated machine.
+private func spinUntilMeasurable(from start: SystemCPUTicks) throws {
     let port = MachSystemStatsPort()
     let begun = Date()
     var x = 0.0
-    while true {
+    while Date().timeIntervalSince(begun) < 5 {
         x += sin(x)
-        let waited = Date().timeIntervalSince(begun)
-        if waited >= 5 { break }
-        if waited >= seconds, try port.read().cpuTicks != start { break }
+        if ticks(from: start, to: try port.read().cpuTicks) >= SystemStatsModule.minimumTicks { break }
     }
     #expect(x.isFinite)
 }
@@ -48,7 +52,7 @@ private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: Tim
         scheduler.runNext()
         let first = try #require(module.snapshot, "the real port answered")
         #expect(first.cpuLoad == nil, "one sample is not a load")
-        try spinUntilTicksMove(from: MachSystemStatsPort().read().cpuTicks, atLeast: 0.3)
+        try spinUntilMeasurable(from: MachSystemStatsPort().read().cpuTicks)
         // Only the module's clock jumps, so its second job counts as due; the ticks cover the real 0.3 s.
         clock.now += SystemStatsModule.idleIntervalSeconds
         scheduler.runNext()
@@ -61,12 +65,8 @@ private func spinUntilTicksMove(from start: SystemCPUTicks, atLeast seconds: Tim
     @Test func cpuTicksOnlyMoveForward() throws {
         let port = MachSystemStatsPort()
         let before = try port.read().cpuTicks
-        try spinUntilTicksMove(from: before, atLeast: 0.1)
-        let after = try port.read().cpuTicks
-        let deltas: [UInt32] = [
-            after.user &- before.user, after.system &- before.system, after.idle &- before.idle, after.nice &- before.nice,
-        ]
-        let elapsed = deltas.reduce(UInt64(0)) { $0 + UInt64($1) }
+        try spinUntilMeasurable(from: before)
+        let elapsed = ticks(from: before, to: try port.read().cpuTicks)
         #expect(elapsed > 0)
         #expect(elapsed < 1_000_000, "seconds of ticks at most, not a wrapped counter")
     }
