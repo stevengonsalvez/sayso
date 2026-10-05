@@ -1,7 +1,7 @@
 import XCTest
 
-/// Settings pane: the System stats toggle exists and is on by default, and turning it off leaves the System rows in
-/// Notch & HUD in place, reading Off. `--ui-test-fresh-settings` gives the app a throwaway settings suite wiped at
+/// Settings pane: the System stats toggle exists and is on by default; turning it off leaves the System rows in
+/// Notch & HUD in place, reading Off, and turning it on again brings the figures back. `--ui-test-fresh-settings` gives the app a throwaway settings suite wiped at
 /// launch, so the only setting ever flipped is the throwaway one; the user's settings are not read or written. Other
 /// app state (history, shortcuts, keychain) is still the user's. The module only reads counters either way.
 final class SystemStatsSettingUITests: XCTestCase {
@@ -22,22 +22,51 @@ final class SystemStatsSettingUITests: XCTestCase {
         XCTAssertEqual(isOn(toggle), true, "System stats were always on, so they stay on until the user turns them off (value: \(String(describing: toggle.value)))")
     }
 
-    func testTurningTheThrowawaySettingOffShowsTheSystemRowsAsOff() {
+    /// The pane says Off only when the module is really stopped, so this fails if the setting stops reaching the
+    /// module, and the round trip fails if turning it back on does not restart sampling.
+    func testTurningTheThrowawaySettingOffShowsTheSystemRowsAsOffAndOnAgainShowsFigures() {
         let toggle = openSettingsToggle()
         XCTAssertEqual(isOn(toggle), true, "starts on (value: \(String(describing: toggle.value)))")
         toggle.click()
         XCTAssertEqual(isOn(toggle), false, "the click turned the throwaway setting off (value: \(String(describing: toggle.value)))")
 
-        let tab = app.descendants(matching: .any)["studio-tab-notch"]
-        XCTAssertTrue(tab.waitForExistence(timeout: 5), "sidebar tab for Notch & HUD")
-        tab.click()
+        openNotchPane()
         let notice = app.descendants(matching: .any)["system-stats-off"]
         XCTAssertTrue(notice.waitForExistence(timeout: 10), "the System section says the stats are off")
-        for id in ["system-stats-cpu", "system-stats-memory", "system-stats-battery", "system-stats-disk"] {
+        for id in Self.rowShapes.keys.sorted() {
             let row = app.descendants(matching: .any)[id]
             XCTAssertTrue(row.waitForExistence(timeout: 5), "\(id) is still shown")
             XCTAssertEqual(text(of: row), "Off", "\(id) reads Off, not a stale figure")
         }
+
+        let again = openSettingsToggle()
+        again.click()
+        XCTAssertEqual(isOn(again), true, "the click turned the throwaway setting back on (value: \(String(describing: again.value)))")
+        openNotchPane()
+        for (id, shape) in Self.rowShapes.sorted(by: { $0.key < $1.key }) {
+            let row = app.descendants(matching: .any)[id]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), "\(id) is shown")
+            let figure = NSPredicate { element, _ in
+                guard let element = element as? XCUIElement else { return false }
+                return self.text(of: element).range(of: shape, options: .regularExpression) != nil
+            }
+            expectation(for: figure, evaluatedWith: row)
+            waitForExpectations(timeout: 15)
+        }
+        XCTAssertFalse(notice.exists, "the off notice is gone once sampling runs again")
+    }
+
+    private static let rowShapes = [
+        "system-stats-cpu": #"^([0-9]{1,3}%|Measuring)$"#,
+        "system-stats-memory": #"^[0-9]{1,3}% used, pressure (normal|warning|critical)$"#,
+        "system-stats-battery": #"^([0-9]{1,3}%(, (plugged in|on battery))?|No battery)$"#,
+        "system-stats-disk": #"^[0-9]+\.[0-9] GB free$"#,
+    ]
+
+    private func openNotchPane() {
+        let tab = app.descendants(matching: .any)["studio-tab-notch"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 5), "sidebar tab for Notch & HUD")
+        tab.click()
     }
 
     private func openSettingsToggle() -> XCUIElement {
