@@ -1,6 +1,6 @@
 import Foundation
 
-/// Handle for one running countdown.
+/// Handle for one running countdown or Pomodoro.
 public struct TimerID: Hashable, Sendable {
     private let raw = UUID()
 
@@ -12,17 +12,19 @@ public struct TimerID: Hashable, Sendable {
 public struct TimerSnapshot: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         case countdown(duration: TimeInterval)
+        case pomodoro(phase: TimerPhase, completedFocusSessions: Int)
     }
 
     public let id: TimerID
     public let kind: Kind
+    /// For a Pomodoro, time spent in the current phase.
     public let elapsed: TimeInterval
     public let remaining: TimeInterval?
     public let isPaused: Bool
 }
 
-/// Countdowns whose time is always read from the injected clock; ticks only refresh the label,
-/// so a late or missed tick never makes a timer drift.
+/// Countdowns and a Pomodoro whose time is always read from the injected clock; ticks only refresh
+/// the label, so a late or missed tick never makes a timer drift.
 public final class TimerModule: SaysoModule, @unchecked Sendable {
     public static let defaultMaxTimers = 5
     public static let completionNoticeSeconds: TimeInterval = 10
@@ -33,17 +35,20 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
     private let scheduler: SaysoScheduling
     private let now: @Sendable () -> Date
     private let maxTimers: Int
+    private let plan: PomodoroPlan
     private let lock = NSLock()
     private var runtime: Runtime?
 
     public init(
         scheduler: SaysoScheduling,
         now: @escaping @Sendable () -> Date = { Date() },
-        maxTimers: Int = defaultMaxTimers
+        maxTimers: Int = defaultMaxTimers,
+        pomodoro: PomodoroPlan = .standard
     ) {
         self.scheduler = scheduler
         self.now = now
         self.maxTimers = maxTimers
+        self.plan = pomodoro
     }
 
     public var timers: [TimerSnapshot] { current?.snapshots ?? [] }
@@ -52,7 +57,13 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
     @discardableResult
     public func startCountdown(_ duration: TimeInterval) -> TimerID? {
         guard duration.isFinite, duration > 0 else { return nil }
-        return current?.start(.countdown(duration: duration))
+        return current?.start(.countdown(duration: duration), duration: duration)
+    }
+
+    /// Starts at focus; nil while the module is disabled or while another Pomodoro exists, running or paused.
+    @discardableResult
+    public func startPomodoro() -> TimerID? {
+        current?.start(.pomodoro(phase: .focus, completedFocusSessions: 0), duration: plan.duration(of: .focus))
     }
 
     @discardableResult
@@ -90,19 +101,24 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         private struct Entry {
             let id: TimerID
             var kind: TimerSnapshot.Kind
+            /// Length of the countdown or current Pomodoro phase.
+            var duration: TimeInterval
             var accumulated: TimeInterval = 0
             /// Nil while paused.
             var runningSince: Date?
+
+            var isPomodoro: Bool {
+                if case .pomodoro = kind { return true }
+                return false
+            }
+
+            var noticeStackID: String { id.stackID + "-done" }
 
             func elapsed(at now: Date) -> TimeInterval {
                 accumulated + (runningSince.map { now.timeIntervalSince($0) } ?? 0)
             }
 
-            func remaining(at now: Date) -> TimeInterval? {
-                switch kind {
-                case .countdown(let duration): duration - elapsed(at: now)
-                }
-            }
+            func remaining(at now: Date) -> TimeInterval { duration - elapsed(at: now) }
         }
 
         private enum Effect {
@@ -160,11 +176,12 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             }
         }
 
-        func start(_ kind: TimerSnapshot.Kind) -> TimerID? {
+        func start(_ kind: TimerSnapshot.Kind, duration: TimeInterval) -> TimerID? {
             update { entries, now in
-                let entry = Entry(id: TimerID(), kind: kind, runningSince: now)
+                let entry = Entry(id: TimerID(), kind: kind, duration: duration, runningSince: now)
+                if entry.isPomodoro, entries.contains(where: \.isPomodoro) { return nil }
                 entries.append(entry)
-                return (entry.id, [Self.show(entry, at: now)])
+                return (entry.id, [show(entry, at: now)])
             }
         }
 
@@ -175,7 +192,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 else { return nil }
                 entries[index].accumulated = entries[index].elapsed(at: now)
                 entries[index].runningSince = nil
-                return (true, [Self.show(entries[index], at: now)])
+                return (true, [show(entries[index], at: now)])
             } ?? false
         }
 
@@ -185,7 +202,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 guard let index = entries.firstIndex(where: { $0.id == id }), entries[index].runningSince == nil
                 else { return nil }
                 entries[index].runningSince = now
-                return (true, [Self.show(entries[index], at: now)])
+                return (true, [show(entries[index], at: now)])
             } ?? false
         }
 
@@ -194,40 +211,65 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             update { entries, _ in
                 guard let index = entries.firstIndex(where: { $0.id == id }) else { return nil }
                 let removed = entries.remove(at: index)
-                return (true, [.dismiss(stackID: removed.id.stackID)])
+                return (true, [.dismiss(stackID: removed.id.stackID), .dismiss(stackID: removed.noticeStackID)])
             } ?? false
         }
 
-        /// Finishes whatever reached its deadline by `now`, however late the tick fired, and refreshes the rest.
+        /// Settles whatever reached its deadline by `now`, however late the tick fired, and refreshes the rest.
         private func tick() {
             _ = update { entries, now in
                 var effects: [Effect] = []
-                entries.removeAll { entry in
-                    guard entry.runningSince != nil, let remaining = entry.remaining(at: now) else { return false }
-                    if remaining > 0 {
-                        effects.append(Self.show(entry, at: now))
-                        return false
+                entries = entries.compactMap { entry in
+                    guard entry.runningSince != nil else { return entry }
+                    guard entry.remaining(at: now) <= 0 else {
+                        effects.append(show(entry, at: now))
+                        return entry
                     }
-                    effects += Self.finish(entry)
-                    return true
+                    switch entry.kind {
+                    case .countdown(let duration):
+                        effects += [
+                            .dismiss(stackID: entry.id.stackID),
+                            .publish(
+                                stackID: entry.noticeStackID, kind: .completion,
+                                title: "Timer done · \(TimerModule.clockLabel(duration))",
+                                expiresAfter: TimerModule.completionNoticeSeconds
+                            ),
+                            .ping(TimerPing(timerID: entry.id, reason: .finished)),
+                        ]
+                        return nil
+                    case .pomodoro:
+                        let (next, transition) = advance(entry, to: now)
+                        effects += [show(next, at: now)] + transition
+                        return next
+                    }
                 }
                 return ((), effects)
             }
         }
 
-        private static func finish(_ entry: Entry) -> [Effect] {
-            switch entry.kind {
-            case .countdown(let duration):
-                [
-                    .dismiss(stackID: entry.id.stackID),
-                    .publish(
-                        stackID: entry.id.stackID + "-done", kind: .completion,
-                        title: "Timer done · \(TimerModule.clockLabel(duration))",
-                        expiresAfter: TimerModule.completionNoticeSeconds
-                    ),
-                    .ping(TimerPing(timerID: entry.id, reason: .finished)),
-                ]
+        /// Moves a Pomodoro through every phase that ended by `now`. Each phase starts at the instant the
+        /// previous one ended, so a late tick never shifts the schedule. Only the last transition is announced,
+        /// so waking from sleep does not replay a burst of pings.
+        private func advance(_ entry: Entry, to now: Date) -> (Entry, [Effect]) {
+            var entry = entry
+            var ended: TimerPhase?
+            while case let .pomodoro(phase, completed) = entry.kind, entry.remaining(at: now) <= 0 {
+                let done = phase == .focus ? completed + 1 : completed
+                let next = module.plan.phase(after: phase, completedFocusSessions: done)
+                entry.runningSince = now.addingTimeInterval(entry.remaining(at: now))
+                entry.accumulated = 0
+                entry.duration = module.plan.duration(of: next)
+                entry.kind = .pomodoro(phase: next, completedFocusSessions: done)
+                ended = phase
             }
+            guard let ended, case let .pomodoro(started, _) = entry.kind else { return (entry, []) }
+            return (entry, [
+                .publish(
+                    stackID: entry.noticeStackID, kind: .completion, title: "\(ended.title) done · \(started.title)",
+                    expiresAfter: TimerModule.completionNoticeSeconds
+                ),
+                .ping(TimerPing(timerID: entry.id, reason: .phaseStarted(started))),
+            ])
         }
 
         /// Changes state under the lock and re-arms the single tick, then publishes outside it:
@@ -266,27 +308,28 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         }
 
         private static func nextLabelChange(_ entry: Entry, at now: Date) -> TimeInterval? {
-            guard entry.runningSince != nil, let remaining = entry.remaining(at: now), remaining > 0 else { return nil }
+            let remaining = entry.remaining(at: now)
+            guard entry.runningSince != nil, remaining > 0 else { return nil }
             // The label shows whole seconds rounded up, so it changes when `remaining` reaches the next integer below.
             return remaining - (remaining.rounded(.up) - 1)
         }
 
-        private static func show(_ entry: Entry, at now: Date) -> Effect {
+        private func show(_ entry: Entry, at now: Date) -> Effect {
             let paused = entry.runningSince == nil
             let elapsed = entry.elapsed(at: now)
-            switch entry.kind {
-            case .countdown(let duration):
-                let label = TimerModule.clockLabel((duration - elapsed).rounded(.up))
-                return .publish(
-                    stackID: entry.id.stackID, kind: .activeTask,
-                    title: "Timer \(label)" + (paused ? " (paused)" : ""),
-                    actions: [
-                        paused ? SaysoAction(id: "resume", title: "Resume") : SaysoAction(id: "pause", title: "Pause"),
-                        SaysoAction(id: "cancel", title: "Cancel"),
-                    ],
-                    progress: elapsed / duration
-                )
+            let name = switch entry.kind {
+            case .countdown: "Timer"
+            case .pomodoro(let phase, _): phase.title
             }
+            return .publish(
+                stackID: entry.id.stackID, kind: .activeTask,
+                title: "\(name) \(TimerModule.clockLabel(entry.remaining(at: now).rounded(.up)))" + (paused ? " (paused)" : ""),
+                actions: [
+                    paused ? SaysoAction(id: "resume", title: "Resume") : SaysoAction(id: "pause", title: "Pause"),
+                    SaysoAction(id: "cancel", title: "Cancel"),
+                ],
+                progress: elapsed / entry.duration
+            )
         }
     }
 }
