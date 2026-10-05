@@ -6,7 +6,8 @@ public enum SystemStatsViewer: Hashable, Sendable {
     case notch
 }
 
-/// Read-only CPU, memory, battery and disk figures, sampled by one scheduled job.
+/// Read-only CPU, memory, battery and disk figures, sampled by one scheduled job. A notch line appears only while
+/// something is notable (see `SystemStatsAlert`), never as a permanent line.
 ///
 /// Every read of the machine happens inside that job, so with a scheduler on its own queue the reads never run on
 /// the caller's thread, the main thread or under the host lock.
@@ -15,6 +16,11 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
     public static let observedIntervalSeconds: TimeInterval = 5
     /// Between samples while nobody looks.
     public static let idleIntervalSeconds: TimeInterval = 60
+    /// After a failed read the machine is left alone this long, observed or not.
+    public static let failureBackoffSeconds: TimeInterval = 60
+    /// At most one failure is reported in this window, the host's quarantine window, so reads that fail now and
+    /// then mark the module degraded without ever quarantining it.
+    public static let failureReportWindowSeconds: TimeInterval = 300
 
     public let descriptor = SaysoModuleDescriptor(
         id: "system-stats", title: "System", surfaces: [.compact, .expanded, .settings]
@@ -69,6 +75,11 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
     }
 
     fileprivate final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
+        private enum Effect {
+            case show(SystemStatsAlert, String)
+            case clear(SystemStatsAlert)
+        }
+
         unowned let module: SystemStatsModule
         let context: SaysoModuleContext
         private let lock = NSLock()
@@ -77,6 +88,15 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         private var latest: SystemStatsSnapshot?
         private var lastTicks: SystemCPUTicks?
         private var lastSampleAt: Date?
+        /// Conditions entered and not yet cleared; kept across a failed read, which cannot say they cleared.
+        private var active: Set<SystemStatsAlert> = []
+        /// Dismissed from the notch; each stays hidden until its condition clears.
+        private var hidden: Set<SystemStatsAlert> = []
+        /// The lines last published, so an unchanged line is never published again.
+        private var shown: [SystemStatsAlert: String] = [:]
+        /// The last read failed, so the next read waits for the backoff.
+        private var failing = false
+        private var lastReport: Date?
 
         init(module: SystemStatsModule, context: SaysoModuleContext) {
             self.module = module
@@ -103,8 +123,23 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 latest = nil
                 lastTicks = nil
                 lastSampleAt = nil
+                active = []
+                hidden = []
+                shown = [:]
+                failing = false
+                lastReport = nil
             }
             module.detach(self)
+        }
+
+        func handle(stackID: String, actionID: String) {
+            guard actionID == "dismiss", let alert = SystemStatsAlert(stackID: stackID) else { return }
+            let wasShown = lock.withLock { () -> Bool in
+                guard running, shown.removeValue(forKey: alert) != nil else { return false }
+                hidden.insert(alert)
+                return true
+            }
+            if wasShown { context.dismiss(stackID: stackID) }
         }
 
         func cadenceChanged() {
@@ -114,15 +149,18 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             }
         }
 
-        /// Reads the machine outside the lock, then folds the reading in.
+        /// Reads the machine outside the lock, folds the reading in and re-arms under it, then reports and publishes
+        /// outside it: publishing takes the host lock, and the host calls into this runtime while holding that lock.
         private func sample() {
             guard lock.withLock({ running }) else { return }
             let reading = Result { () throws(SystemStatsPortError) in try module.port.read() }
-            lock.withLock {
-                guard running else { return }
+            let (effects, report) = lock.withLock { () -> ([Effect], Bool) in
+                guard running else { return ([], false) }
                 let now = module.now()
-                if case let .success(reading) = reading {
-                    latest = SystemStatsSnapshot(
+                let wasFailing = failing
+                switch reading {
+                case let .success(reading):
+                    let stats = SystemStatsSnapshot(
                         cpuLoad: lastTicks.flatMap { SystemStatsModule.cpuLoad(from: $0, to: reading.cpuTicks) },
                         memoryUsedFraction: reading.memoryUsedFraction,
                         memoryPressure: reading.memoryPressure,
@@ -131,13 +169,65 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                         diskFreeBytes: reading.diskFreeBytes,
                         sampledAt: now
                     )
+                    latest = stats
                     lastTicks = reading.cpuTicks
-                } else {
+                    failing = false
+                    updateAlerts(stats)
+                case .failure:
+                    // Old figures and lines cannot be vouched for; the entered conditions and dismissals are kept.
                     latest = nil
+                    failing = true
                 }
+                // A run of failed reads is one failure: a lasting fault is reported once, not on every sample.
+                let report = failing && !wasFailing && shouldReport(at: now)
                 lastSampleAt = now
                 rearm(at: now)
+                return (lineChanges(), report)
             }
+            if report { context.reportFailure() }
+            for effect in effects {
+                switch effect {
+                case let .show(alert, title):
+                    context.publish(
+                        stackID: alert.stackID, kind: .ambient, title: title,
+                        actions: [SaysoAction(id: "dismiss", title: "Dismiss")]
+                    )
+                case let .clear(alert):
+                    context.dismiss(stackID: alert.stackID)
+                }
+            }
+        }
+
+        /// Call with the lock held.
+        private func updateAlerts(_ stats: SystemStatsSnapshot) {
+            for alert in SystemStatsAlert.allCases {
+                switch alert.verdict(for: stats) {
+                case true?: active.insert(alert)
+                case false?:
+                    active.remove(alert)
+                    hidden.remove(alert)
+                case nil: break
+                }
+            }
+        }
+
+        /// The lines that differ from what was last published. Call with the lock held.
+        private func lineChanges() -> [Effect] {
+            var effects: [Effect] = []
+            for alert in SystemStatsAlert.allCases {
+                let title = latest.flatMap { active.contains(alert) && !hidden.contains(alert) ? alert.title(for: $0) : nil }
+                guard title != shown[alert] else { continue }
+                shown[alert] = title
+                effects.append(title.map { .show(alert, $0) } ?? .clear(alert))
+            }
+            return effects
+        }
+
+        /// At most one report per window. Call with the lock held.
+        private func shouldReport(at now: Date) -> Bool {
+            if let lastReport, now.timeIntervalSince(lastReport) < SystemStatsModule.failureReportWindowSeconds { return false }
+            lastReport = now
+            return true
         }
 
         /// One job: due one interval after the last sample, at once if that is already past (`soon` forces now).
@@ -146,7 +236,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             job?.cancel()
             job = nil
             guard running, now.timeIntervalSince1970.isFinite else { return }
-            let interval = module.isObserved ? SystemStatsModule.observedIntervalSeconds : SystemStatsModule.idleIntervalSeconds
+            let interval = failing ? SystemStatsModule.failureBackoffSeconds
+                : module.isObserved ? SystemStatsModule.observedIntervalSeconds : SystemStatsModule.idleIntervalSeconds
             let due = soon ? now : max(now, lastSampleAt.map { $0.addingTimeInterval(interval) } ?? now)
             job = module.scheduler.schedule(at: due) { [weak self] in self?.sample() }
         }
