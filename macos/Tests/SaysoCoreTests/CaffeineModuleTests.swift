@@ -230,6 +230,31 @@ private func rig() -> Rig {
         #expect(rig.activities.map(\.kind) == [.activeTask])
     }
 
+    @Test func aRefusedAssertionIsReportedAsAFailureAndNothingIsHeld() throws {
+        let rig = rig()
+        rig.port.refuse(true)
+
+        #expect(!rig.module.start(.oneHour))
+        #expect(rig.port.held == 0)
+        #expect(rig.module.session == nil)
+        #expect(rig.running.isEmpty)
+        #expect(rig.retained == 0)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.host.health(of: "caffeine") == .degraded, "the failure reached the host through the context")
+    }
+
+    @Test func aRefusedReplacementLeavesNeitherTheOldNorANewAssertion() throws {
+        let rig = rig()
+        #expect(rig.module.start(.indefinite))
+        rig.port.refuse(true)
+
+        #expect(!rig.module.start(.fifteenMinutes))
+        #expect(rig.port.held == 0, "the old session was released before asking for the new one")
+        #expect(rig.activities.isEmpty, "no stale Awake label stays behind")
+        #expect(rig.module.session == nil)
+        #expect(rig.host.health(of: "caffeine") == .degraded)
+    }
+
     @Test func invalidDurationsAreRefusedWithoutTouchingThePort() {
         let rig = rig()
         for seconds in [0, -1, .infinity, .nan, CaffeineModule.maxTimedSeconds + 1] as [TimeInterval] {
