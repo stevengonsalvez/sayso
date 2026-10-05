@@ -66,3 +66,68 @@ private func failure(_ input: String, angle: CalculatorAngleUnit = .radians) -> 
         #expect(failure("2 + banana") == .unknownWord("banana"))
     }
 }
+
+/// Deterministic pseudo-random source so a fuzz failure reproduces.
+private struct SeededGenerator: RandomNumberGenerator {
+    var state: UInt64
+    mutating func next() -> UInt64 {
+        state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+        return state
+    }
+}
+
+@Suite struct CalculatorEngineErrorTests {
+    @Test func divisionByZeroIsAClearErrorNeverInfinity() {
+        #expect(failure("1/0") == .divisionByZero)
+        #expect(failure("1 ÷ (2 - 2)") == .divisionByZero)
+        #expect(failure("0 ^ -1") == .divisionByZero)
+        #expect(CalculatorError.divisionByZero.message == "Cannot divide by zero")
+    }
+
+    @Test func overflowIsAClearErrorNeverInfinity() {
+        #expect(failure("10 ^ 400") == .overflow)
+        #expect(failure("9 ^ 9 ^ 9") == .overflow)
+        #expect(failure("10^200 * 10^200") == .overflow)
+        #expect(failure("10^400 - 10^400") == .overflow, "the first overflow wins over the NaN it would lead to")
+        #expect(failure(String(repeating: "9", count: 400)) == .overflow)
+        #expect(CalculatorError.overflow.message == "Too large to show")
+    }
+
+    @Test func notANumberIsAClearError() {
+        #expect(failure("(-8) ^ 0.5") == .undefined)
+        #expect(CalculatorError.undefined.message == "Not a real number")
+    }
+
+    @Test func longInputIsRejectedBeforeAnyParsing() throws {
+        let tenThousand = String(repeating: "1+", count: 5000)
+        #expect(tenThousand.count == 10_000)
+        let start = ContinuousClock.now
+        #expect(failure(tenThousand) == .tooLong(limit: CalculatorEngine.maxLength))
+        #expect(ContinuousClock.now - start < .milliseconds(200))
+        #expect(failure(String(repeating: "(", count: 5000) + "1" + String(repeating: ")", count: 5000)) == .tooLong(limit: CalculatorEngine.maxLength))
+        let atLimit = String(repeating: "1+", count: (CalculatorEngine.maxLength - 1) / 2) + "1"
+        #expect(atLimit.count <= CalculatorEngine.maxLength)
+        #expect(try number(atLimit) == Double((CalculatorEngine.maxLength - 1) / 2 + 1))
+    }
+
+    @Test func deepNestingIsRejectedWithinTheDepthBound() throws {
+        let depth = CalculatorEngine.maxDepth
+        func nested(_ count: Int) -> String { String(repeating: "(", count: count) + "1" + String(repeating: ")", count: count) }
+        #expect(failure(nested(depth + 50)) == .tooDeep(limit: depth))
+        #expect(failure(String(repeating: "-", count: 300) + "1") == .tooDeep(limit: depth))
+        #expect(failure(String(repeating: "2^", count: 150) + "1") == .tooDeep(limit: depth))
+        #expect(try number(nested(depth / 2)) == 1, "ordinary nesting still works")
+    }
+
+    @Test func randomInputNeverCrashesAndNeverYieldsANonFiniteNumber() {
+        var generator = SeededGenerator(state: 42)
+        let alphabet = Array("0123456789+-−*×x/÷^().,% piesqrtlnogabsundinf kmc")
+        for _ in 0..<2000 {
+            let length = Int.random(in: 0...120, using: &generator)
+            let input = String((0..<length).map { _ in alphabet.randomElement(using: &generator)! })
+            if case let .success(value) = CalculatorEngine.evaluate(input) {
+                #expect(value.number.isFinite, "\(input) gave \(value.number)")
+            }
+        }
+    }
+}
