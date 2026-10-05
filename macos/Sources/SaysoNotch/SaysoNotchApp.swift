@@ -255,10 +255,22 @@ final class SaysoAppModel: ObservableObject {
         port: ScriptingNowPlayingPort(),
         scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.now-playing", qos: .utility))
     )
+    /// Reads counters only, so it needs no permission and is on by default. Its own serial queue keeps the reads
+    /// off the main thread.
+    private let systemStats = SystemStatsModule(
+        port: MachSystemStatsPort(),
+        scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.system-stats", qos: .utility))
+    )
+    /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
+    /// a closed, minimised or covered window may never tell the view it disappeared.
+    private var systemStatsPaneShown = false
+    private var studioWindowVisible = false
+    private var studioWindowObserver: NSObjectProtocol?
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
+            systemStats,
         ],
         events: moduleEvents
     )
@@ -374,14 +386,17 @@ final class SaysoAppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
-            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying] _ in
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying, systemStats] _ in
                 worldClocks.clockChanged()
                 nowPlaying.clockChanged()
+                systemStats.clockChanged()
             },
             NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
         ]
+        // System stats only read counters; with nobody watching they sample once a minute.
+        modules.enable(systemStats.descriptor.id)
         applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
@@ -429,6 +444,8 @@ final class SaysoAppModel: ObservableObject {
         }
         observeExternalApplications()
         notch.install(model: self)
+        notch.onExpandedChange = { [systemStats] expanded in systemStats.setObserved(.notch, expanded) }
+        systemStats.setObserved(.notch, !notch.isCollapsed)
         if saved.desktopControlEnabled { startAutomation() }
         if CommandLine.arguments.contains("--ui-test-review") {
             // UI test hook: a review with no pending desktop step, so Approve and Deny cannot act on the desktop.
@@ -1797,9 +1814,29 @@ final class SaysoAppModel: ObservableObject {
         window.backgroundColor = NSColor(red: 0x0C / 255.0, green: 0x13 / 255.0, blue: 0x22 / 255.0, alpha: 1.0)
         window.contentView = NSHostingView(rootView: SettingsHome(model: self).frame(minWidth: 1000, minHeight: 680))
         window.center()
+        studioWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                self?.studioWindowVisible = window?.occlusionState.contains(.visible) ?? false
+                self?.updateSystemStatsObservation()
+            }
+        }
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         mainWindow = window
+    }
+
+    /// Latest sample for the Studio pane; nil before the first reading or after a failed one.
+    var systemStatsSnapshot: SystemStatsSnapshot? { systemStats.snapshot }
+
+    func setSystemStatsPaneShown(_ shown: Bool) {
+        systemStatsPaneShown = shown
+        updateSystemStatsObservation()
+    }
+
+    private func updateSystemStatsObservation() {
+        systemStats.setObserved(.studio, systemStatsPaneShown && studioWindowVisible)
     }
 
     func minimizeMainWindow() {
@@ -2309,7 +2346,7 @@ final class SaysoAppModel: ObservableObject {
 
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
-        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7,
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3153,6 +3190,8 @@ private struct NotchWorkspace: View {
 
                 worldClocksSection
 
+                systemStatsSection
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3332,6 +3371,46 @@ private struct NotchWorkspace: View {
         }
         .padding(20)
         .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private extension NotchWorkspace {
+    /// Redraws only this section, at the cadence the module samples at while watched, and tells the module the pane
+    /// is shown so it samples every 5 s instead of once a minute.
+    var systemStatsSection: some View {
+        TimelineView(.periodic(from: .now, by: SystemStatsModule.observedIntervalSeconds)) { _ in systemStatsContent }
+            .onAppear { model.setSystemStatsPaneShown(true) }
+            .onDisappear { model.setSystemStatsPaneShown(false) }
+    }
+
+    @ViewBuilder
+    var systemStatsContent: some View {
+        let stats = model.systemStatsSnapshot
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("System").font(.headline)
+                Text("CPU, memory and battery on this Mac are read every 5 seconds while this pane is open or the notch is expanded, and once a minute otherwise; free disk space, which includes space macOS can purge, once a minute. CPU is the share of time busy since the previous reading. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free; Dismiss notification in the notch menu hides it until that clears. Nothing is saved or sent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                systemStatsRow("CPU", stats?.cpuText, id: "system-stats-cpu")
+                systemStatsRow("Memory", stats?.memoryText, id: "system-stats-memory")
+                systemStatsRow("Battery", stats?.batteryText, id: "system-stats-battery")
+                systemStatsRow("Disk", stats?.diskText, id: "system-stats-disk")
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    func systemStatsRow(_ title: String, _ value: String?, id: String) -> some View {
+        GridRow {
+            Text(title).foregroundStyle(.secondary)
+            Text(value ?? "No reading")
+                .font(.body.monospacedDigit())
+                .accessibilityIdentifier(id)
+        }
     }
 }
 

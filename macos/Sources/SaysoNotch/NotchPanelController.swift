@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SaysoCore
 import SwiftUI
 
@@ -17,6 +18,9 @@ final class NotchPanelController {
     private var globalClickMonitor: Any?
     private let state = NotchPresentationState()
     private weak var model: SaysoAppModel?
+    private var expansionObserver: AnyCancellable?
+    /// Called with true when the notch opens and false when it collapses or hides, once per change.
+    var onExpandedChange: ((Bool) -> Void)?
 
     private let expandedHeight: CGFloat = 236
     private let collapsedHeight: CGFloat = 42
@@ -40,6 +44,10 @@ final class NotchPanelController {
         panel.isMovable = true
         panel.isMovableByWindowBackground = true
         installClickMonitors()
+        // Hiding also collapses, so "not collapsed" is exactly "open on screen".
+        expansionObserver = state.$isCollapsed.removeDuplicates().dropFirst().sink { [weak self] collapsed in
+            self?.onExpandedChange?(!collapsed)
+        }
     }
 
     func install(model: SaysoAppModel) {
