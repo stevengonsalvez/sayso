@@ -215,3 +215,31 @@ private func setup(ttl: TimeInterval? = nil) -> (SaysoModuleHost, FileShelfModul
     #expect(scheduler.jobs.count == 1)
     #expect(port.totalHeld == 2)
 }
+
+@Test func theSettingGateKeepsTheShelfOffUntilOptedInAndPurgesItWhenTurnedOff() {
+    let port = FakePort(), scheduler = FakeScheduler()
+    let module = FileShelfModule(port: port, scheduler: scheduler)
+    let host = SaysoModuleHost(modules: [module])
+    port.add("/tmp/a.txt")
+
+    host.setEnabled("file-shelf", false)
+    #expect(host.health(of: "file-shelf") == .disabled)
+    #expect(module.add([url("/tmp/a.txt")]) == 0, "an off shelf must not take a grant")
+    #expect(port.acquires == 0)
+    #expect(scheduler.jobs.isEmpty)
+
+    host.setEnabled("file-shelf", true)
+    #expect(host.health(of: "file-shelf") == .ready)
+    #expect(module.add([url("/tmp/a.txt")]) == 1)
+    #expect(port.held == ["/tmp/a.txt"])
+
+    host.setEnabled("file-shelf", false)
+    #expect(host.health(of: "file-shelf") == .disabled)
+    #expect(module.items.isEmpty, "turning the shelf off must forget what it held")
+    #expect(port.totalHeld == 0, "turning the shelf off must release every grant")
+    #expect(scheduler.jobs.isEmpty)
+    #expect(!host.engine.stack.contains { $0.moduleID == "file-shelf" })
+
+    host.setEnabled("file-shelf", true)
+    #expect(module.items.isEmpty, "turning it back on must not resurrect old items")
+}
