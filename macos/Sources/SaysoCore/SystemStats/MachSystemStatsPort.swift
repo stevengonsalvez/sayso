@@ -5,8 +5,8 @@ import IOKit.ps
 
 /// Reads this Mac through public interfaces only, never a private framework or a shelled-out tool: Mach host
 /// statistics for CPU ticks and memory, the kernel's memory pressure level through sysctl, IOKit power sources for
-/// the battery and URL resource values for disk space. Each read takes well under a millisecond to a few
-/// milliseconds; call it off the main thread anyway, since the disk figure asks the file system.
+/// the battery and URL resource values for disk space. `read()` takes about a millisecond; `diskFreeBytes()` asks
+/// the file system for purgeable space and was measured at 28 to 569 ms. Call both off the main thread.
 public struct MachSystemStatsPort: SystemStatsPort {
     /// Taken once: every `mach_host_self()` call adds a reference to the host port that would otherwise need
     /// releasing, and a per-sample leak would overflow its reference count over days.
@@ -16,17 +16,14 @@ public struct MachSystemStatsPort: SystemStatsPort {
     public init(volumePath: String = "/") { self.volumePath = volumePath }
 
     public func read() throws(SystemStatsPortError) -> SystemStatsReading {
-        guard let ticks = Self.cpuTicks(), let memory = Self.memoryUsedFraction(), let pressure = Self.memoryPressure(),
-              let disk = diskFreeBytes()
-        else { throw .unavailable }
+        guard let ticks = Self.cpuTicks() else { throw .unavailable }
         let battery = Self.battery()
         return SystemStatsReading(
             cpuTicks: ticks,
-            memoryUsedFraction: memory,
-            memoryPressure: pressure,
+            memoryUsedFraction: Self.memoryUsedFraction(),
+            memoryPressure: Self.memoryPressure(),
             batteryFraction: battery?.fraction,
-            isPluggedIn: battery?.isPluggedIn,
-            diskFreeBytes: disk
+            isPluggedIn: battery?.isPluggedIn
         )
     }
 
@@ -98,7 +95,7 @@ public struct MachSystemStatsPort: SystemStatsPort {
 
     /// A fresh URL per read: resource values are cached on the URL object, and a queue without a run loop
     /// would never see that cache cleared.
-    func diskFreeBytes() -> Int64? {
+    public func diskFreeBytes() -> Int64? {
         let values = try? URL(fileURLWithPath: volumePath).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
         return values?.volumeAvailableCapacityForImportantUsage
     }
