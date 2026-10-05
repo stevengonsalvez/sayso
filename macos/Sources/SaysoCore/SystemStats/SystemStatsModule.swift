@@ -98,6 +98,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         /// The last read failed, so the next read waits for the backoff.
         private var failing = false
         private var lastReport: Date?
+        /// The next job reads the machine even if a sample is not yet due: set on start and after a clock change.
+        private var sampleNow = false
 
         init(module: SystemStatsModule, context: SaysoModuleContext) {
             self.module = module
@@ -112,6 +114,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         func start() {
             lock.withLock {
                 running = true
+                sampleNow = true
                 rearm(at: module.now(), soon: true)
             }
         }
@@ -129,18 +132,20 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 shown = [:]
                 failing = false
                 lastReport = nil
+                sampleNow = false
             }
             module.detach(self)
         }
 
+        /// Only records the dismissal and asks for the job now: the job is the one place lines are published, so a
+        /// dismiss can never land between a sample deciding to repaint a line and the repaint.
         func handle(stackID: String, actionID: String) {
             guard actionID == "dismiss", let alert = SystemStatsAlert(stackID: stackID) else { return }
-            let wasShown = lock.withLock { () -> Bool in
-                guard running, shown.removeValue(forKey: alert) != nil else { return false }
+            lock.withLock {
+                guard running, shown[alert] != nil else { return }
                 hidden.insert(alert)
-                return true
+                rearm(at: module.now(), soon: true)
             }
-            if wasShown { context.dismiss(stackID: stackID) }
         }
 
         /// Samples at once and pulls times recorded against the old clock back to the new one.
@@ -150,6 +155,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 let now = module.now()
                 lastSampleAt = lastSampleAt.map { min($0, now) }
                 lastReport = lastReport.map { min($0, now) }
+                sampleNow = true
                 rearm(at: now, soon: true)
             }
         }
@@ -161,14 +167,24 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             }
         }
 
-        /// Reads the machine outside the lock, folds the reading in and re-arms under it, then reports and publishes
-        /// outside it: publishing takes the host lock, and the host calls into this runtime while holding that lock.
-        private func sample() {
-            guard lock.withLock({ running }) else { return }
-            let reading = Result { () throws(SystemStatsPortError) in try module.port.read() }
+        /// The one job. Reads the machine, when a sample is due, outside the lock; folds the reading in, works out
+        /// the lines and re-arms under it; then reports and publishes outside it: publishing takes the host lock, and
+        /// the host calls into this runtime while holding that lock. A job that only repaints (after a dismiss) does
+        /// not read, so the CPU load is never taken over a few milliseconds.
+        private func run() {
+            guard let due = lock.withLock({ () -> Bool? in
+                guard running else { return nil }
+                defer { sampleNow = false }
+                return sampleNow || lastSampleAt.map { module.now() >= $0.addingTimeInterval(interval) } ?? true
+            }) else { return }
+            let reading = due ? Result { () throws(SystemStatsPortError) in try module.port.read() } : nil
             let (effects, report) = lock.withLock { () -> ([Effect], Bool) in
                 guard running else { return ([], false) }
                 let now = module.now()
+                guard let reading else {
+                    rearm(at: now)
+                    return (lineChanges(), false)
+                }
                 let wasFailing = failing
                 switch reading {
                 case let .success(reading):
@@ -248,10 +264,14 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             job?.cancel()
             job = nil
             guard running, now.timeIntervalSince1970.isFinite else { return }
-            let interval = failing ? SystemStatsModule.failureBackoffSeconds
-                : module.isObserved ? SystemStatsModule.observedIntervalSeconds : SystemStatsModule.idleIntervalSeconds
             let due = soon ? now : max(now, lastSampleAt.map { $0.addingTimeInterval(interval) } ?? now)
-            job = module.scheduler.schedule(at: due) { [weak self] in self?.sample() }
+            job = module.scheduler.schedule(at: due) { [weak self] in self?.run() }
+        }
+
+        /// Between samples now. Call with the lock held.
+        private var interval: TimeInterval {
+            failing ? SystemStatsModule.failureBackoffSeconds
+                : module.isObserved ? SystemStatsModule.observedIntervalSeconds : SystemStatsModule.idleIntervalSeconds
         }
     }
 }
