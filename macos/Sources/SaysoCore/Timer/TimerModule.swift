@@ -110,7 +110,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         lock.withLock { if runtime === stopped { runtime = nil } }
     }
 
-    fileprivate final class Runtime: SaysoModuleRuntime, @unchecked Sendable {
+    fileprivate final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
         private struct Entry {
             let id: TimerID
             var kind: TimerSnapshot.Kind
@@ -170,11 +170,14 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             }
         }
 
+        var retainedResources: Int { lock.withLock { entries.count + (job == nil ? 0 : 1) } }
+
         func start() { lock.withLock { running = true } }
 
         func stop() {
             let pending = lock.withLock { () -> SaysoSubscription? in
                 running = false
+                entries = []
                 defer { job = nil }
                 return job
             }
