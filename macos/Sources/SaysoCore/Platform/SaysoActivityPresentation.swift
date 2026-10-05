@@ -20,6 +20,7 @@ public struct SaysoActivityPresentation: Equatable, Sendable {
         accessibilityLabel = subtitle.map { "\(activity.title), \($0.dropLast()) percent" } ?? activity.title
         switch activity.kind {
         case .background: (tone, symbolName) = (.quiet, "clock")
+        case .media: (tone, symbolName) = (.quiet, "music.note")
         case .ambient: (tone, symbolName) = (.quiet, "circle.fill")
         case .activeTask: (tone, symbolName) = (.active, "arrow.triangle.2.circlepath")
         case .completion: (tone, symbolName) = (.success, "checkmark.circle.fill")

@@ -90,3 +90,16 @@ private func status(
     #expect(result.dismissActionID == "deny-\(step)")
     #expect(result.tapAction == nil)
 }
+
+/// Controls that belong to an activity may sit beside the status text only while that text is the activity.
+@Test func theStatusNamesTheActivityItPaintsSoItsControlsNeverSitBesideOtherText() {
+    let track = SaysoActivity(
+        moduleID: "now-playing", stackID: "now-playing", kind: .media, title: "Song · Artist · Music",
+        actions: [SaysoAction(id: "next", title: "Next")]
+    )
+    #expect(status(primary: track).activity == track)
+    #expect(status(primary: review).activity == review)
+    #expect(status(notice: "Saved", primary: track).activity == nil, "a notice replaces the line")
+    #expect(status(control: true, controlStatus: "Planned", primary: track).activity == nil, "Control status replaces the line")
+    #expect(status(partial: "hello", primary: track).activity == nil, "a dictation preview replaces the line")
+}

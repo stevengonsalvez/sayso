@@ -511,17 +511,24 @@ private struct VoiceWorkspaceContent: View {
 
             // Module activity (download progress, retry, Control review) keeps its own explicit line under main's live view.
             if !isLive, model.primaryModuleActivity != nil {
-                Button(action: { if let tap = statusModel.tapAction { model.performModuleAction(tap) } else { collapse() } }) {
-                    Text(status)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(statusModel.criticalActions.isEmpty ? SaysoPalette.amber : SaysoPalette.crimson)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, minHeight: 24)
+                HStack(spacing: 4) {
+                    Button(action: { if let tap = statusModel.tapAction { model.performModuleAction(tap) } else { collapse() } }) {
+                        Text(status)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(statusModel.criticalActions.isEmpty ? SaysoPalette.amber : SaysoPalette.crimson)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity, minHeight: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(status)
+                    .help(statusModel.tapAction.map { "\(status). Click to \($0.title)." } ?? "\(status). Click to collapse.")
+                    // Media lines carry transport controls, only while the text is that line; they share the status row
+                    // so the fixed panel height holds.
+                    if let shown = statusModel.activity, shown.kind == .media {
+                        MediaTransportButtons(actions: shown.actions) { model.performModuleAction($0) }
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityValue(status)
-                .help(statusModel.tapAction.map { "\(status). Click to \($0.title)." } ?? "\(status). Click to collapse.")
             }
 
             if !statusModel.criticalActions.isEmpty {
@@ -607,6 +614,39 @@ private struct VoiceWorkspaceContent: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(model.activeShortcutAccessibilityHint) for \(model.settings.mode == .dictation ? "Dictation" : "Control"), collapse workspace")
+        }
+    }
+}
+
+/// Previous, play or pause, and next for the shown media line; each runs the action the activity declared.
+private struct MediaTransportButtons: View {
+    let actions: [SaysoAction]
+    let perform: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(actions.filter { $0.id != "dismiss" }, id: \.id) { action in
+                Button { perform(action.id) } label: {
+                    Image(systemName: Self.symbol(for: action))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(action.title)
+                .accessibilityLabel(action.title)
+                .accessibilityIdentifier("notch-media-\(action.id)")
+            }
+        }
+    }
+
+    private static func symbol(for action: SaysoAction) -> String {
+        switch action.id {
+        case "previous": "backward.fill"
+        case "next": "forward.fill"
+        case "play-pause": action.title == "Play" ? "play.fill" : "pause.fill"
+        default: "circle"
         }
     }
 }

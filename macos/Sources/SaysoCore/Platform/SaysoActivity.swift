@@ -3,7 +3,9 @@ import Foundation
 /// Cost-to-miss ordering: a higher raw value outranks a lower one.
 public enum SaysoActivityKind: Int, Comparable, CaseIterable, Sendable {
     /// Glanceable status that costs nothing to miss, such as a clock; shown only when nothing else is.
-    case background = -1
+    case background = -2
+    /// Live media status, such as the playing track: outranks a clock, yields to every ambient offer.
+    case media = -1
     case ambient = 0
     case activeTask
     case completion
