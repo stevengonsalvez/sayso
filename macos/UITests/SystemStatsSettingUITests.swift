@@ -1,0 +1,66 @@
+import XCTest
+
+/// Settings pane: the System stats toggle exists and is on by default, and turning it off leaves the System rows in
+/// Notch & HUD in place, reading Off. `--ui-test-fresh-settings` gives the app a throwaway settings suite wiped at
+/// launch, so the only setting ever flipped is the throwaway one; the user's settings are not read or written. Other
+/// app state (history, shortcuts, keychain) is still the user's. The module only reads counters either way.
+final class SystemStatsSettingUITests: XCTestCase {
+    var app: XCUIApplication!
+
+    override func setUp() {
+        continueAfterFailure = false
+        let path = ProcessInfo.processInfo.environment["SAYSO_APP_PATH"] ?? "\(NSHomeDirectory())/.artifacts/Sayso Notch.app"
+        app = XCUIApplication(url: URL(fileURLWithPath: path))
+        app.launchArguments = ["--ui-test-fresh-settings"]
+        app.launch()
+    }
+
+    override func tearDown() { app.terminate() }
+
+    func testSystemStatsToggleIsPresentAndOnByDefault() {
+        let toggle = openSettingsToggle()
+        XCTAssertEqual(isOn(toggle), true, "System stats were always on, so they stay on until the user turns them off (value: \(String(describing: toggle.value)))")
+    }
+
+    func testTurningTheThrowawaySettingOffShowsTheSystemRowsAsOff() {
+        let toggle = openSettingsToggle()
+        XCTAssertEqual(isOn(toggle), true, "starts on (value: \(String(describing: toggle.value)))")
+        toggle.click()
+        XCTAssertEqual(isOn(toggle), false, "the click turned the throwaway setting off (value: \(String(describing: toggle.value)))")
+
+        let tab = app.descendants(matching: .any)["studio-tab-notch"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 5), "sidebar tab for Notch & HUD")
+        tab.click()
+        let notice = app.descendants(matching: .any)["system-stats-off"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 10), "the System section says the stats are off")
+        for id in ["system-stats-cpu", "system-stats-memory", "system-stats-battery", "system-stats-disk"] {
+            let row = app.descendants(matching: .any)[id]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), "\(id) is still shown")
+            XCTAssertEqual(text(of: row), "Off", "\(id) reads Off, not a stale figure")
+        }
+    }
+
+    private func openSettingsToggle() -> XCUIElement {
+        let tab = app.descendants(matching: .any)["studio-tab-settings"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10), "sidebar tab for Settings")
+        tab.click()
+        let toggle = app.descendants(matching: .any)["settings-system-stats-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "System stats toggle in Settings")
+        return toggle
+    }
+
+    /// The text a row shows; SwiftUI exposes a Text as its value or its label depending on the macOS release.
+    private func text(of element: XCUIElement) -> String {
+        (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
+    }
+
+    /// macOS reports a toggle's value as a number or a string depending on its style; nil means unreadable,
+    /// so the test cannot pass by failing to read the value.
+    private func isOn(_ toggle: XCUIElement) -> Bool? {
+        switch toggle.value {
+        case let number as NSNumber: number.boolValue
+        case let text as String where text == "0" || text == "1": text == "1"
+        default: nil
+        }
+    }
+}
