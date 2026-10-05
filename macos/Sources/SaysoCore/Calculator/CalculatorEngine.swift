@@ -12,6 +12,11 @@ public enum CalculatorError: Error, Equatable, Sendable {
     case incomplete
     case unexpected(String)
     case unknownWord(String)
+    case divisionByZero
+    case overflow
+    case undefined
+    case tooLong(limit: Int)
+    case tooDeep(limit: Int)
 
     public var message: String {
         switch self {
@@ -19,6 +24,11 @@ public enum CalculatorError: Error, Equatable, Sendable {
         case .incomplete: "Incomplete expression"
         case let .unexpected(text): "Unexpected \u{201C}\(text)\u{201D}"
         case let .unknownWord(word): "Unknown word \u{201C}\(word)\u{201D}"
+        case .divisionByZero: "Cannot divide by zero"
+        case .overflow: "Too large to show"
+        case .undefined: "Not a real number"
+        case let .tooLong(limit): "Too long: at most \(limit) characters"
+        case let .tooDeep(limit): "Nested too deeply: at most \(limit) levels"
         }
     }
 }
@@ -35,7 +45,14 @@ public struct CalculatorValue: Equatable, Sendable {
 ///     power   := primary ("^" unary)?
 ///     primary := number | "(" sum ")"
 public enum CalculatorEngine {
+    /// Longer input is refused before tokenizing, so the cost of any input is bounded.
+    public static let maxLength = 500
+    /// Nesting through parentheses, unary signs, exponents and function arguments; bounds the parser's recursion.
+    public static let maxDepth = 64
+
     public static func evaluate(_ input: String, angle: CalculatorAngleUnit = .radians) -> Result<CalculatorValue, CalculatorError> {
+        // utf8 first: counting characters of a huge string is itself linear, so cap the bytes looked at.
+        guard input.utf8.count <= maxLength * 4, input.count <= maxLength else { return .failure(.tooLong(limit: maxLength)) }
         do {
             let tokens = try CalculatorTokenizer.tokens(of: input)
             guard !tokens.isEmpty else { return .failure(.empty) }
@@ -140,6 +157,7 @@ enum CalculatorTokenizer {
 struct CalculatorParser {
     private let tokens: [CalculatorToken]
     private var position = 0
+    private var depth = 0
 
     init(tokens: [CalculatorToken]) {
         self.tokens = tokens
@@ -169,7 +187,7 @@ struct CalculatorParser {
         var value = try parseProduct()
         while let symbol = take(["+", "-", "−"]) {
             let right = try parseProduct()
-            value = symbol == "+" ? value + right : value - right
+            value = try checked(symbol == "+" ? value + right : value - right)
         }
         return value
     }
@@ -178,16 +196,22 @@ struct CalculatorParser {
         var value = try parseUnary()
         while true {
             if take(["*", "×", "·"]) != nil || takeTimesWord() {
-                value *= try parseUnary()
+                value = try checked(value * parseUnary())
             } else if take(["/", "÷"]) != nil {
-                value /= try parseUnary()
+                let divisor = try parseUnary()
+                guard divisor != 0 else { throw CalculatorError.divisionByZero }
+                value = try checked(value / divisor)
             } else {
                 return value
             }
         }
     }
 
+    /// Every recursive path passes through here, so this one counter bounds the recursion.
     private mutating func parseUnary() throws -> Double {
+        depth += 1
+        defer { depth -= 1 }
+        guard depth <= CalculatorEngine.maxDepth else { throw CalculatorError.tooDeep(limit: CalculatorEngine.maxDepth) }
         if take(["-", "−"]) != nil { return -(try parseUnary()) }
         if take(["+"]) != nil { return try parseUnary() }
         return try parsePower()
@@ -196,7 +220,9 @@ struct CalculatorParser {
     private mutating func parsePower() throws -> Double {
         let base = try parsePrimary()
         guard take(["^"]) != nil else { return base }
-        return pow(base, try parseUnary())
+        let exponent = try parseUnary()
+        if base == 0, exponent < 0 { throw CalculatorError.divisionByZero }
+        return try checked(pow(base, exponent))
     }
 
     private mutating func parsePrimary() throws -> Double {
@@ -204,7 +230,7 @@ struct CalculatorParser {
         position += 1
         switch token {
         case let .number(value):
-            return value
+            return try checked(value)
         case .symbol("("):
             let value = try parseSum()
             guard take([")"]) != nil else {
@@ -217,5 +243,12 @@ struct CalculatorParser {
         case let .symbol(symbol):
             throw CalculatorError.unexpected(String(symbol))
         }
+    }
+
+    /// The first infinite or NaN intermediate becomes the error, so a later step cannot hide it.
+    private func checked(_ value: Double) throws -> Double {
+        if value.isNaN { throw CalculatorError.undefined }
+        if value.isInfinite { throw CalculatorError.overflow }
+        return value
     }
 }
