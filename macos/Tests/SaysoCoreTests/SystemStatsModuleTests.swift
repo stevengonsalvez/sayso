@@ -4,32 +4,17 @@ import Testing
 
 private final class Clock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000_000) }
 
-/// Stands in for the machine: returns whatever reading the test set, counting reads.
-private final class FakeMachine: SystemStatsPort, @unchecked Sendable {
-    private let lock = NSLock()
-    private var reading: SystemStatsReading
-    private var error: SystemStatsPortError?
-    private var readCount = 0
+/// Everything the fake machine will say, disk included.
+private struct MachineState {
+    var cpuTicks: SystemCPUTicks
+    var memoryUsedFraction: Double?
+    var memoryPressure: SystemMemoryPressure?
+    var batteryFraction: Double?
+    var isPluggedIn: Bool?
+    var diskFreeBytes: Int64?
 
-    init(_ reading: SystemStatsReading = .calm) { self.reading = reading }
-
-    var reads: Int { lock.withLock { readCount } }
-
-    func set(_ change: (inout SystemStatsReading) -> Void) { lock.withLock { change(&reading) } }
-    func fail(_ error: SystemStatsPortError?) { lock.withLock { self.error = error } }
-
-    func read() throws(SystemStatsPortError) -> SystemStatsReading {
-        lock.lock()
-        defer { lock.unlock() }
-        readCount += 1
-        if let error { throw error }
-        return reading
-    }
-}
-
-private extension SystemStatsReading {
     /// Ticks since boot that would read as 20% busy if mistaken for a load; nothing notable.
-    static let calm = SystemStatsReading(
+    static let calm = MachineState(
         cpuTicks: SystemCPUTicks(user: 1_000, system: 1_000, idle: 8_000, nice: 0),
         memoryUsedFraction: 0.5,
         memoryPressure: .normal,
@@ -37,6 +22,50 @@ private extension SystemStatsReading {
         isPluggedIn: false,
         diskFreeBytes: 100_000_000_000
     )
+
+    func with(_ change: (inout MachineState) -> Void) -> MachineState {
+        var copy = self
+        change(&copy)
+        return copy
+    }
+}
+
+/// Stands in for the machine: returns whatever the test set, counting reads.
+private final class FakeMachine: SystemStatsPort, @unchecked Sendable {
+    private let lock = NSLock()
+    private var state: MachineState
+    private var error: SystemStatsPortError?
+    private var readCount = 0
+    private var diskReadCount = 0
+
+    init(_ state: MachineState = .calm) { self.state = state }
+
+    var reads: Int { lock.withLock { readCount } }
+    var diskReads: Int { lock.withLock { diskReadCount } }
+
+    func set(_ change: (inout MachineState) -> Void) { lock.withLock { change(&state) } }
+    func fail(_ error: SystemStatsPortError?) { lock.withLock { self.error = error } }
+
+    func read() throws(SystemStatsPortError) -> SystemStatsReading {
+        lock.lock()
+        defer { lock.unlock() }
+        readCount += 1
+        if let error { throw error }
+        return SystemStatsReading(
+            cpuTicks: state.cpuTicks,
+            memoryUsedFraction: state.memoryUsedFraction,
+            memoryPressure: state.memoryPressure,
+            batteryFraction: state.batteryFraction,
+            isPluggedIn: state.isPluggedIn
+        )
+    }
+
+    func diskFreeBytes() -> Int64? {
+        lock.withLock {
+            diskReadCount += 1
+            return state.diskFreeBytes
+        }
+    }
 }
 
 private final class FakeScheduler: SaysoScheduling, @unchecked Sendable {
@@ -119,7 +148,7 @@ private struct Rig {
     }
 
     /// Sets the machine and lets the next sample run.
-    func sample(_ change: (inout SystemStatsReading) -> Void) {
+    func sample(_ change: (inout MachineState) -> Void) {
         machine.set(change)
         advance(SystemStatsModule.idleIntervalSeconds)
     }
@@ -133,7 +162,7 @@ private struct Rig {
 }
 
 /// Enables the module and lets the first sample run.
-private func rig(_ reading: SystemStatsReading = .calm) -> Rig {
+private func rig(_ reading: MachineState = .calm) -> Rig {
     let clock = Clock(), scheduler = FakeScheduler(), captured = Captured(), painted = Painted()
     let machine = FakeMachine(reading)
     let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
@@ -216,7 +245,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
 
     @Test func cpuTicksThatWrapPastTheirLimitStillGiveTheDelta() {
         let near = UInt32.max - 9
-        let rig = rig(SystemStatsReading.calm.with { $0.cpuTicks = SystemCPUTicks(user: near, system: 0, idle: near, nice: 0) })
+        let rig = rig(MachineState.calm.with { $0.cpuTicks = SystemCPUTicks(user: near, system: 0, idle: near, nice: 0) })
         rig.machine.set { $0.cpuTicks = SystemCPUTicks(user: 10, system: 0, idle: 170, nice: 0) }
         rig.advance(SystemStatsModule.idleIntervalSeconds)
         #expect(close(rig.module.snapshot?.cpuLoad, 20.0 / 200.0), "20 busy and 180 idle ticks across the wrap")
@@ -230,7 +259,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func readingsAreClampedAndNonFiniteValuesAreUnknown() throws {
-        let wild = rig(SystemStatsReading.calm.with {
+        let wild = rig(MachineState.calm.with {
             $0.memoryUsedFraction = 1.4
             $0.batteryFraction = -0.2
             $0.diskFreeBytes = -5
@@ -240,7 +269,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(clamped.batteryFraction == 0)
         #expect(clamped.diskFreeBytes == 0)
 
-        let broken = rig(SystemStatsReading.calm.with {
+        let broken = rig(MachineState.calm.with {
             $0.memoryUsedFraction = .nan
             $0.batteryFraction = .infinity
         })
@@ -252,7 +281,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func theSnapshotIsFormattedForTheUI() throws {
-        let rig = rig(SystemStatsReading.calm.with {
+        let rig = rig(MachineState.calm.with {
             $0.memoryUsedFraction = 0.625
             $0.memoryPressure = .warning
             $0.batteryFraction = 0.54
@@ -272,7 +301,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aMachineWithNoBatteryReadsNoBattery() throws {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = nil; $0.isPluggedIn = true })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = nil; $0.isPluggedIn = true })
         let snapshot = try #require(rig.module.snapshot)
         #expect(snapshot.batteryFraction == nil)
         #expect(snapshot.isPluggedIn == nil, "no battery, nothing to plug in")
@@ -307,7 +336,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aLowBatteryOnBatteryShowsALowPriorityLineAndPluggingInClearsIt() throws {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = 0.18 })
         let line = try #require(rig.lines.first)
         #expect(rig.lines.count == 1)
         #expect(line.stackID == "system-stats-battery")
@@ -323,7 +352,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func batteryEntersAtTwentyAndClearsOnlyAtTwentyFiveSoItNeverFlaps() {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.21 })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = 0.21 })
         #expect(rig.lines.isEmpty)
         rig.sample { $0.batteryFraction = 0.20 }
         #expect(rig.titles == ["Battery 20%, not plugged in"])
@@ -340,7 +369,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aMachineWithNoBatteryNeverShowsABatteryLine() {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = nil; $0.isPluggedIn = false })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = nil; $0.isPluggedIn = false })
         #expect(rig.lines.isEmpty)
         rig.sample { $0.batteryFraction = .nan }
         #expect(rig.lines.isEmpty, "an unreadable battery is no battery")
@@ -349,7 +378,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func criticalMemoryPressureShowsALineUntilPressureIsNormalAgain() {
-        let rig = rig(SystemStatsReading.calm.with { $0.memoryPressure = .warning; $0.memoryUsedFraction = 0.9 })
+        let rig = rig(MachineState.calm.with { $0.memoryPressure = .warning; $0.memoryUsedFraction = 0.9 })
         #expect(rig.lines.isEmpty, "warning alone is not notable")
         rig.sample { $0.memoryPressure = .critical; $0.memoryUsedFraction = 0.94 }
         #expect(rig.lines.map(\.stackID) == ["system-stats-memory"])
@@ -363,7 +392,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func lessThanFiveGigabytesFreeShowsALineUntilSixAreFree() {
-        let rig = rig(SystemStatsReading.calm.with { $0.diskFreeBytes = 5_000_000_000 })
+        let rig = rig(MachineState.calm.with { $0.diskFreeBytes = 5_000_000_000 })
         #expect(rig.lines.isEmpty)
         rig.sample { $0.diskFreeBytes = 4_960_000_000 }
         #expect(rig.lines.map(\.stackID) == ["system-stats-disk"])
@@ -375,7 +404,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func dismissKeepsALineHiddenUntilItsConditionClearsAndReturns() {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18; $0.diskFreeBytes = 1_000_000_000 })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = 0.18; $0.diskFreeBytes = 1_000_000_000 })
         #expect(rig.lines.count == 2)
         #expect(rig.tap("dismiss", on: "system-stats-battery"))
         #expect(rig.scheduler.jobs == [rig.clock.now], "the job applies the dismissal")
@@ -391,7 +420,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aLineIsRepublishedOnlyWhenItsTextChanges() {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = 0.18 })
         let before = rig.painted.changes.count
         rig.module.setObserved(.notch, true)
         for _ in 0..<6 { rig.advance(SystemStatsModule.observedIntervalSeconds) }
@@ -402,7 +431,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
 
     @Test func aFailingMachineReadIsReportedOnceAndBacksOff() {
         let clock = Clock(), scheduler = FakeScheduler(), reports = Reports()
-        let machine = FakeMachine(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let machine = FakeMachine(MachineState.calm.with { $0.batteryFraction = 0.18 })
         let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
         let runtime = module.makeRuntime(context: SaysoModuleContext(
             moduleID: "system-stats",
@@ -454,7 +483,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aFailedReadKeepsDismissAndTheEnteredState() {
-        let dismissed = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let dismissed = rig(MachineState.calm.with { $0.batteryFraction = 0.18 })
         dismissed.tap("dismiss", on: "system-stats-battery")
         dismissed.machine.fail(.unavailable)
         dismissed.advance(SystemStatsModule.idleIntervalSeconds)
@@ -462,7 +491,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         dismissed.sample { $0.batteryFraction = 0.17 }
         #expect(dismissed.lines.isEmpty, "dismissed and still low: an outage in between does not bring it back")
 
-        let entered = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let entered = rig(MachineState.calm.with { $0.batteryFraction = 0.18 })
         entered.machine.fail(.unavailable)
         entered.advance(SystemStatsModule.idleIntervalSeconds)
         entered.machine.fail(nil)
@@ -506,7 +535,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
 
     @Test func aDismissLandingWhileASampleIsPublishingNeverLeavesAGhostLine() {
         let clock = Clock(), scheduler = FakeScheduler(), events = Events()
-        let machine = FakeMachine(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let machine = FakeMachine(MachineState.calm.with { $0.batteryFraction = 0.18 })
         let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
         let box = RuntimeBox()
         let runtime = module.makeRuntime(context: SaysoModuleContext(
@@ -542,7 +571,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     }
 
     @Test func aViewerChangeNeverPushesAPendingDismissOrClockChangeLater() {
-        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let rig = rig(MachineState.calm.with { $0.batteryFraction = 0.18 })
         rig.tap("dismiss", on: "system-stats-battery")
         rig.module.setObserved(.notch, true)
         rig.module.setObserved(.notch, false)
@@ -573,18 +602,39 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(close(rig.module.snapshot?.cpuLoad, 0.25), "measured from the last sample that counted: 100 busy of 400")
     }
 
+    @Test func freeDiskIsAskedOnceAMinuteEvenWhileObservedBecauseTheQueryIsSlow() {
+        let rig = rig()
+        #expect(rig.machine.diskReads == 1)
+        rig.module.setObserved(.notch, true)
+        rig.machine.set { $0.diskFreeBytes = 90_000_000_000 }
+        for _ in 0..<11 { rig.advance(SystemStatsModule.observedIntervalSeconds) }
+        #expect(rig.machine.reads == 12)
+        #expect(rig.machine.diskReads == 1)
+        #expect(rig.module.snapshot?.diskText == "100.0 GB free", "the last disk reading stands between disk reads")
+        rig.advance(SystemStatsModule.observedIntervalSeconds)
+        #expect(rig.machine.diskReads == 2)
+        #expect(rig.module.snapshot?.diskText == "90.0 GB free")
+    }
+
+    @Test func aFigureTheSystemCannotGiveReadsUnknownWithoutBlankingTheRest() throws {
+        let rig = rig(MachineState.calm.with { $0.memoryPressure = .critical })
+        #expect(rig.titles == ["Memory pressure critical"])
+        rig.sample { $0.memoryPressure = nil; $0.memoryUsedFraction = nil; $0.diskFreeBytes = nil }
+        let snapshot = try #require(rig.module.snapshot, "CPU and battery still read")
+        #expect(snapshot.memoryText == "Unknown")
+        #expect(snapshot.diskText == "Unknown")
+        #expect(snapshot.batteryText == "80%, on battery")
+        #expect(rig.lines.isEmpty, "an unknown pressure cannot vouch for a critical line")
+        #expect(rig.host.health(of: "system-stats") == .ready, "a missing figure is not a failure")
+
+        rig.sample { $0.memoryUsedFraction = 0.7 }
+        #expect(rig.module.snapshot?.memoryText == "70% used")
+    }
+
     @Test func passesTheModuleAcceptanceContract() {
         let module = SystemStatsModule(port: FakeMachine(), scheduler: FakeScheduler())
         #expect(SaysoModuleAcceptance.violations(for: module) == [])
         #expect(module.descriptor.id == "system-stats")
         #expect(module.descriptor.capabilities.isEmpty, "read-only stats need no permission")
-    }
-}
-
-private extension SystemStatsReading {
-    func with(_ change: (inout SystemStatsReading) -> Void) -> SystemStatsReading {
-        var copy = self
-        change(&copy)
-        return copy
     }
 }
