@@ -292,7 +292,7 @@ private struct ColorPickerRig {
     @Test func passesTheModuleAcceptanceContract() {
         let module = ColorPickerModule(sampler: FakeSampler(), pasteboard: ColorPasteboard(), scheduler: ColorScheduler())
         #expect(module.descriptor.id == "color-picker")
-        #expect(module.descriptor.capabilities.isEmpty, "the system sampler needs no Screen Recording permission")
+        #expect(module.descriptor.capabilities.isEmpty, "no capability is declared: the user drives the system sampler")
         #expect(SaysoModuleAcceptance.violations(for: module).isEmpty, "\(SaysoModuleAcceptance.violations(for: module))")
     }
 
