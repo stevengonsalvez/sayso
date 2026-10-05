@@ -312,6 +312,12 @@ private final class CalculatorScheduler: SaysoScheduling, @unchecked Sendable {
         return SaysoSubscription { [weak self] in self?.lock.withLock { self?.pending.removeAll { $0.id == id } } }
     }
 
+    /// The earliest pending action, left pending: lets a test run a timer callback that was already firing when
+    /// its job was cancelled.
+    func snatchEarliest() -> (@Sendable () -> Void)? {
+        lock.withLock { pending.min(by: { $0.at < $1.at })?.action }
+    }
+
     func runDue(_ now: Date) {
         for _ in 0..<1000 {
             let job = lock.withLock { () -> (id: Int, at: Date, action: @Sendable () -> Void)? in
@@ -505,5 +511,55 @@ private func calculatorRig(locale: String = "en_US") -> CalculatorRig {
 
         #expect(board.string(forType: .string) == "3.106855961 mi")
         #expect(board.data(forType: .png) == nil, "the earlier contents are replaced, not mixed in")
+    }
+}
+
+/// Review round: inputs that gave silently wrong answers.
+@Suite struct CalculatorReviewFixTests {
+    @Test func freezingPointsConvertToExactlyZero() throws {
+        #expect(try shown("32 f in c") == "0 °C")
+        #expect(try converted("273.15 k in c").number == 0)
+        #expect(try shown("0 c in k") == "273.15 K")
+    }
+
+    @Test func largeWholeConversionsAreNotRoundedToTwelveDigits() throws {
+        #expect(try shown("1 TiB in B") == "1,099,511,627,776 B")
+        #expect(try shown("1 TiB in bits") == "8,796,093,022,208 bit")
+    }
+
+    @Test func aPercentPlusAPercentAddsHundredths() throws {
+        #expect(try number("50% + 50%") == 1)
+        #expect(try number("10% - 5%") == 0.05)
+        #expect(try number("200 + 10%") == 220, "a percent after a plain number is still a share of it")
+    }
+
+    @Test func aLeadingZeroGroupIsNotAThousandsSeparator() {
+        #expect(failure("0,500") == .unexpected(","))
+    }
+
+    @Test func hugeDegreeAnglesAreReducedBeforeSnapping() throws {
+        #expect(close(try number("sin(100000000000000)", angle: .degrees), -0.984807753012208, within: 1e-9))
+        #expect(close(try number("tan(100000000000000)", angle: .degrees), -5.671281819617711, within: 1e-6))
+        #expect(try number("sin(36180)", angle: .degrees) == 0)
+    }
+
+    @Test func errorsQuoteTheNumberAsTyped() {
+        #expect(failure("2 3") == .unexpected("3"))
+        #expect(failure("1 000") == .unexpected("000"))
+    }
+
+    @Test func theNoticeLastsAsLongAsTheTimerAndCaffeineNotices() {
+        #expect(CalculatorModule.resultNoticeSeconds == 10)
+    }
+
+    @Test func aStaleExpiryNeverEndsANewerNotice() throws {
+        let rig = calculatorRig()
+        _ = try rig.result("1 + 1")
+        let stale = try #require(rig.scheduler.snatchEarliest())
+        _ = try rig.result("2 + 2")
+        stale()
+        #expect(rig.activities.map(\.title) == ["2 + 2 = 4"], "the newer notice stays")
+        #expect(rig.scheduler.jobs.count == 1)
+        #expect(rig.retained == 3, "two history entries and the newer notice's job")
     }
 }
