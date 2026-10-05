@@ -53,7 +53,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         if changed { current?.cadenceChanged() }
     }
 
-    public func clockChanged() {}
+    /// Call after the system clock changes or the Mac wakes: the pending sample was set against the old time.
+    public func clockChanged() { current?.clockChanged() }
 
     fileprivate var isObserved: Bool { lock.withLock { !viewers.isEmpty } }
 
@@ -140,6 +141,17 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 return true
             }
             if wasShown { context.dismiss(stackID: stackID) }
+        }
+
+        /// Samples at once and pulls times recorded against the old clock back to the new one.
+        func clockChanged() {
+            lock.withLock {
+                guard running else { return }
+                let now = module.now()
+                lastSampleAt = lastSampleAt.map { min($0, now) }
+                lastReport = lastReport.map { min($0, now) }
+                rearm(at: now, soon: true)
+            }
         }
 
         func cadenceChanged() {
