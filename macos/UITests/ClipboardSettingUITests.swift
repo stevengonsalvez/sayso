@@ -1,7 +1,7 @@
 import XCTest
 
-/// Settings pane: the clipboard module toggle exists and is off by default. Never flips it, so the user's
-/// real settings are left untouched.
+/// Settings pane: the clipboard module toggle exists and is off by default. Launches with a throwaway settings
+/// suite and never flips the toggle, so the user's real settings are neither read nor changed.
 final class ClipboardSettingUITests: XCTestCase {
     var app: XCUIApplication!
 
@@ -9,6 +9,7 @@ final class ClipboardSettingUITests: XCTestCase {
         continueAfterFailure = false
         let path = ProcessInfo.processInfo.environment["SAYSO_APP_PATH"] ?? "\(NSHomeDirectory())/.artifacts/Sayso Notch.app"
         app = XCUIApplication(url: URL(fileURLWithPath: path))
+        app.launchArguments = ["--ui-test-fresh-settings"]
         app.launch()
     }
 
