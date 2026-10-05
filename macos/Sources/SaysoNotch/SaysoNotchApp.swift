@@ -446,6 +446,27 @@ final class SaysoAppModel: ObservableObject {
         modules.setEnabled("file-shelf", settings.fileShelfEnabled)
     }
 
+    var fileShelfItems: [FileShelfItem] { fileShelf.items }
+
+    func addToFileShelf(_ urls: [URL]) {
+        let added = fileShelf.add(urls)
+        if added < urls.count {
+            notice = "Added \(added) of \(urls.count) to the file shelf. The rest were missing or could not be read."
+        }
+        objectWillChange.send()
+    }
+
+    func revealOnFileShelf(_ id: FileShelfItem.ID) {
+        // The shelf prunes an item whose file has gone, so a failed reveal also updates the list.
+        if !fileShelf.reveal(id: id) { notice = "That file is no longer where it was, so it was removed from the shelf." }
+        objectWillChange.send()
+    }
+
+    func removeFromFileShelf(_ id: FileShelfItem.ID) {
+        fileShelf.remove(id: id)
+        objectWillChange.send()
+    }
+
     func refreshAudioInputDevices() {
         audioInputDevices = audioInputDeviceController.inputDevices()
     }
@@ -8322,6 +8343,18 @@ private struct SaysoSettingsView: View {
                         .labelsHidden()
                         .accessibilityIdentifier("settings-clipboard-toggle")
                 }
+                SaysoSettingItemCard(
+                    title: "File shelf (off by default)",
+                    description: "When on, you can keep up to 20 files or folders on a shelf and reveal them in Finder later. Files stay where they are and are never copied or uploaded. The shelf lives only in memory: it is cleared when Sayso quits, and turning this off clears it and releases Sayso's access to those files.",
+                    example: "Add a screenshot here, then reveal it in Finder when you need it."
+                ) {
+                    Toggle("File shelf", isOn: $model.settings.fileShelfEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-file-shelf-toggle")
+                }
+                if model.settings.fileShelfEnabled {
+                    fileShelfCard
+                }
 
                 // Section 5: Reset & Maintenance
                 SaysoSectionHeader(text: "Reset & Maintenance")
@@ -8430,6 +8463,56 @@ private struct SaysoSettingsView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var fileShelfCard: some View {
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(model.fileShelfItems.isEmpty ? "The shelf is empty" : "On the shelf")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Add files\u{2026}") { chooseFilesForShelf() }
+                        .buttonStyle(.bordered)
+                        .font(.caption)
+                        .accessibilityIdentifier("settings-file-shelf-add")
+                }
+                ForEach(model.fileShelfItems) { item in
+                    HStack {
+                        Image(systemName: item.isDirectory ? "folder" : "doc")
+                            .foregroundStyle(SaysoPalette.muted)
+                        Text(item.name)
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if !item.isDirectory {
+                            Text(ByteCountFormatter.string(fromByteCount: item.byteCount, countStyle: .file))
+                                .font(.caption2)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+                        Spacer()
+                        Button("Reveal") { model.revealOnFileShelf(item.id) }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        Button("Remove") { model.removeFromFileShelf(item.id) }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+    }
+
+    private func chooseFilesForShelf() {
+        let panel = NSOpenPanel()
+        panel.title = "Add to File Shelf"
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        model.addToFileShelf(panel.urls)
     }
 
     private func label(for state: PermissionState) -> String {
