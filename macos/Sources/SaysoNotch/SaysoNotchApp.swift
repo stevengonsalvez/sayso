@@ -8302,7 +8302,7 @@ private struct SaysoSettingsView: View {
                 }
                 SaysoSettingItemCard(
                     title: "Watch the clipboard (off by default)",
-                    description: "When on, Sayso checks your clipboard twice a second to keep a short in-memory list of text you copy and to offer to clean tracking links. Passwords and items marked private are skipped. Nothing is saved to disk or sent anywhere.",
+                    description: "When on, Sayso checks your clipboard twice a second to keep a short in-memory list of text you copy and to offer to clean tracking links. Items that password managers mark as private are skipped. Nothing is saved to disk or sent anywhere.",
                     example: "Copy a link with tracking parameters and the notch offers Clean."
                 ) {
                     Toggle("Watch the clipboard", isOn: $model.settings.clipboardModuleEnabled)
