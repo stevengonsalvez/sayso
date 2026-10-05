@@ -106,9 +106,12 @@ public final class CaffeineModule: SaysoModule, @unchecked Sendable {
 
         var retainedResources: Int { lock.withLock { (held == nil ? 0 : 1) + (job == nil ? 0 : 1) } }
 
+        /// Nil once the deadline has passed, even before the tick that releases the assertion has fired.
         var session: CaffeineSession? {
             lock.withLock {
-                held.map { CaffeineSession(title: title(of: $0, at: module.now()), deadline: $0.deadline) }
+                let now = module.now()
+                guard let held, held.deadline.map({ now < $0 }) ?? true else { return nil }
+                return CaffeineSession(title: title(of: held, at: now), deadline: held.deadline)
             }
         }
 
