@@ -327,6 +327,47 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(rig.scheduler.jobs == [rig.clock.now + SystemStatsModule.observedIntervalSeconds], "still observed")
     }
 
+    /// The app applies `systemStatsEnabled` through `setEnabled` at launch and on every settings save.
+    @Test func theSettingGateKeepsStatsOffAtLaunchAndPurgesThemWhenTurnedOff() {
+        let clock = Clock(), scheduler = FakeScheduler(), captured = Captured()
+        let machine = FakeMachine(MachineState.calm.with { $0.batteryFraction = 0.15 })
+        let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
+        let host = SaysoModuleHost(modules: [Probe(inner: module, captured: captured)], now: { clock.now })
+        let lines = { host.engine.stack.filter { $0.moduleID == "system-stats" } }
+        module.setObserved(.notch, true)
+
+        host.setEnabled("system-stats", false)
+        module.clockChanged()
+        scheduler.runDue(clock.now)
+        #expect(host.health(of: "system-stats") == .disabled)
+        #expect(captured.runtimes.isEmpty, "off at launch never starts a runtime")
+        #expect(scheduler.jobs.isEmpty, "off at launch arms nothing")
+        #expect(machine.reads == 0)
+        #expect(module.snapshot == nil)
+
+        host.setEnabled("system-stats", true)
+        scheduler.runDue(clock.now)
+        let runtime = captured.runtimes.last as? SaysoResourceAccounting
+        #expect(module.snapshot != nil)
+        #expect(lines().map(\.title) == ["Battery 15%, not plugged in"])
+        #expect(runtime?.retainedResources == 1)
+
+        host.setEnabled("system-stats", false)
+        #expect(host.health(of: "system-stats") == .disabled)
+        #expect(runtime?.retainedResources == 0)
+        #expect(scheduler.jobs.isEmpty)
+        #expect(module.snapshot == nil, "turning stats off forgets the last figures")
+        #expect(lines().isEmpty, "turning stats off clears its notch line")
+
+        let reads = machine.reads
+        module.setObserved(.studio, true)
+        module.clockChanged()
+        clock.now += SystemStatsModule.idleIntervalSeconds * 10
+        scheduler.runDue(clock.now)
+        #expect(machine.reads == reads, "an off module never reads the machine")
+        #expect(scheduler.jobs.isEmpty)
+    }
+
     @Test func nothingNotableShowsNoLine() {
         let rig = rig()
         #expect(rig.lines.isEmpty, "a calm machine never puts a permanent line in the notch")
