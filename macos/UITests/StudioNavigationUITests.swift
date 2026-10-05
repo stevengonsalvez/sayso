@@ -19,4 +19,14 @@ final class StudioNavigationUITests: XCTestCase {
         tab.click()
         XCTAssertTrue(app.descendants(matching: .any)["studio-pane-tts"].waitForExistence(timeout: 5))
     }
+
+    func testEveryStudioTabOpensItsPane() {
+        for id in ["speak", "control", "history", "transcription", "models", "cleanup",
+                   "vocabulary", "notch", "shortcuts", "tts", "settings"] {
+            let tab = app.descendants(matching: .any)["studio-tab-\(id)"]
+            XCTAssertTrue(tab.waitForExistence(timeout: 10), "tab \(id)")
+            tab.click()
+            XCTAssertTrue(app.descendants(matching: .any)["studio-pane-\(id)"].waitForExistence(timeout: 5), "pane \(id)")
+        }
+    }
 }
