@@ -382,6 +382,13 @@ final class SaysoAppModel: ObservableObject {
         observeExternalApplications()
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
+        if CommandLine.arguments.contains("--ui-test-review") {
+            // UI test hook: a review with no pending desktop step, so Approve and Deny cannot act on the desktop.
+            DispatchQueue.main.async { [weak self] in
+                self?.controlCoordinator.begin(goal: "UI test review")
+                self?.controlCoordinator.requestReview(reason: "UI test review")
+            }
+        }
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
         Task {
             await history.reclaimUnreferencedAudio(olderThan: launchDate)
@@ -3150,6 +3157,10 @@ private struct ShortcutsWorkspace: View {
 }
 
 private struct SettingsHome: View {
+    private static let studioPaneIDs = [
+        0: "speak", 1: "control", 2: "history", 3: "transcription", 4: "models", 5: "cleanup",
+        6: "vocabulary", 7: "notch", 8: "shortcuts", 9: "tts", 10: "settings",
+    ]
     @ObservedObject var model: SaysoAppModel
 
     private var selectedTabTitle: String {
@@ -3198,23 +3209,23 @@ private struct SettingsHome: View {
 
                 List(selection: $model.selectedTab) {
                     Section("Activity") {
-                        Label("Speak", systemImage: "waveform").tag(0)
-                        Label("Control", systemImage: "cursorarrow.click").tag(1)
-                        Label("History", systemImage: "clock.arrow.circlepath").tag(2)
+                        Label("Speak", systemImage: "waveform").tag(0).accessibilityIdentifier("studio-tab-speak")
+                        Label("Control", systemImage: "cursorarrow.click").tag(1).accessibilityIdentifier("studio-tab-control")
+                        Label("History", systemImage: "clock.arrow.circlepath").tag(2).accessibilityIdentifier("studio-tab-history")
                     }
                     Section("Pipeline") {
-                        Label("Transcription", systemImage: "mic.badge.waveform").tag(3)
-                        Label("Models & Downloads", systemImage: "square.stack.3d.up.fill").tag(4)
-                        Label("AI Cleanup", systemImage: "sparkles").tag(5)
-                        Label("Vocabulary Dictionary", systemImage: "character.book.closed").tag(6)
+                        Label("Transcription", systemImage: "mic.badge.waveform").tag(3).accessibilityIdentifier("studio-tab-transcription")
+                        Label("Models & Downloads", systemImage: "square.stack.3d.up.fill").tag(4).accessibilityIdentifier("studio-tab-models")
+                        Label("AI Cleanup", systemImage: "sparkles").tag(5).accessibilityIdentifier("studio-tab-cleanup")
+                        Label("Vocabulary Dictionary", systemImage: "character.book.closed").tag(6).accessibilityIdentifier("studio-tab-vocabulary")
                     }
                     Section("Desktop & Triggers") {
-                        Label("Notch & HUD", systemImage: "menubar.rectangle").tag(7)
-                        Label("Shortcuts", systemImage: "keyboard").tag(8)
+                        Label("Notch & HUD", systemImage: "menubar.rectangle").tag(7).accessibilityIdentifier("studio-tab-notch")
+                        Label("Shortcuts", systemImage: "keyboard").tag(8).accessibilityIdentifier("studio-tab-shortcuts")
                     }
                     Section("System") {
-                        Label("Voice output", systemImage: "speaker.wave.2").tag(9)
-                        Label("Settings", systemImage: "gearshape").tag(10)
+                        Label("Voice output", systemImage: "speaker.wave.2").tag(9).accessibilityIdentifier("studio-tab-tts")
+                        Label("Settings", systemImage: "gearshape").tag(10).accessibilityIdentifier("studio-tab-settings")
                     }
                 }
                 .listStyle(.sidebar)
@@ -3258,6 +3269,8 @@ private struct SettingsHome: View {
                 default: SaysoSettingsView(model: model)
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("studio-pane-\(Self.studioPaneIDs[model.selectedTab] ?? "settings")")
             .navigationTitle(selectedTabTitle)
             .safeAreaInset(edge: .top, spacing: 0) {
                 SaysoPalette.brandNavyDark
