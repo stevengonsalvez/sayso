@@ -455,6 +455,40 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(entered.titles == ["Battery 22%, not plugged in"], "entered before the outage and not yet recovered")
     }
 
+    @Test func aClockSetBackSamplesAtOnceInsteadOfWaitingForTheOldTime() {
+        let rig = rig()
+        rig.module.setObserved(.studio, true)
+        rig.clock.now -= 3_600
+        rig.module.clockChanged()
+        #expect(rig.scheduler.jobs == [rig.clock.now], "the pending job was set against the old time")
+        rig.advance(0)
+        #expect(rig.machine.reads == 2)
+        #expect(rig.scheduler.jobs == [rig.clock.now + SystemStatsModule.observedIntervalSeconds])
+    }
+
+    @Test func aFailureReportedBeforeTheClockWentBackDoesNotSilenceTheNextOneForAnHour() {
+        let clock = Clock(), scheduler = FakeScheduler(), reports = Reports(), machine = FakeMachine()
+        let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
+        let runtime = module.makeRuntime(context: SaysoModuleContext(
+            moduleID: "system-stats", publish: { _ in }, reportFailure: { reports.failures += 1 }
+        ))
+        func advance(_ seconds: TimeInterval) {
+            clock.now += seconds
+            scheduler.runDue(clock.now)
+        }
+        runtime.start()
+        machine.fail(.unavailable)
+        advance(0)
+        #expect(reports.failures == 1)
+        machine.fail(nil)
+        clock.now -= 3_600
+        module.clockChanged()
+        advance(SystemStatsModule.failureReportWindowSeconds)
+        machine.fail(.unavailable)
+        advance(SystemStatsModule.idleIntervalSeconds)
+        #expect(reports.failures == 2, "a new failure a full window after the last report is reported")
+    }
+
     @Test func passesTheModuleAcceptanceContract() {
         let module = SystemStatsModule(port: FakeMachine(), scheduler: FakeScheduler())
         #expect(SaysoModuleAcceptance.violations(for: module) == [])
