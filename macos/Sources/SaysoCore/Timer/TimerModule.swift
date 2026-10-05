@@ -1,6 +1,6 @@
 import Foundation
 
-/// Handle for one running countdown or Pomodoro.
+/// Handle for one running countdown, stopwatch or Pomodoro.
 public struct TimerID: Hashable, Sendable {
     private let raw = UUID()
 
@@ -12,6 +12,7 @@ public struct TimerID: Hashable, Sendable {
 public struct TimerSnapshot: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         case countdown(duration: TimeInterval)
+        case stopwatch
         case pomodoro(phase: TimerPhase, completedFocusSessions: Int)
     }
 
@@ -19,15 +20,19 @@ public struct TimerSnapshot: Equatable, Sendable {
     public let kind: Kind
     /// For a Pomodoro, time spent in the current phase.
     public let elapsed: TimeInterval
+    /// Nil for a stopwatch, which has no end.
     public let remaining: TimeInterval?
     public let isPaused: Bool
+    /// Stopwatch lap lengths, oldest first.
+    public let laps: [TimeInterval]
 }
 
-/// Countdowns and a Pomodoro whose time is always read from the injected clock; ticks only refresh
+/// Countdowns, stopwatches and a Pomodoro whose time is always read from the injected clock; ticks only refresh
 /// the label, so a late or missed tick never makes a timer drift.
 public final class TimerModule: SaysoModule, @unchecked Sendable {
     public static let defaultMaxTimers = 5
     public static let completionNoticeSeconds: TimeInterval = 10
+    public static let maxLaps = 99
 
     public let descriptor = SaysoModuleDescriptor(
         id: "timer", title: "Timers", surfaces: [.compact, .peek, .expanded, .settings]
@@ -59,6 +64,14 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         guard duration.isFinite, duration > 0 else { return nil }
         return current?.start(.countdown(duration: duration), duration: duration)
     }
+
+    /// Nil while the module is disabled or when timers and stopwatches already fill the cap.
+    @discardableResult
+    public func startStopwatch() -> TimerID? { current?.start(.stopwatch, duration: nil) }
+
+    /// Records a lap and returns its length; nil unless the stopwatch is running and has room for another lap.
+    @discardableResult
+    public func lap(_ id: TimerID) -> TimeInterval? { current?.lap(id) }
 
     /// Starts at focus; nil while the module is disabled or while another Pomodoro exists, running or paused.
     @discardableResult
@@ -101,11 +114,12 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         private struct Entry {
             let id: TimerID
             var kind: TimerSnapshot.Kind
-            /// Length of the countdown or current Pomodoro phase.
-            var duration: TimeInterval
+            /// Length of the countdown or current Pomodoro phase; nil for a stopwatch.
+            var duration: TimeInterval?
             var accumulated: TimeInterval = 0
             /// Nil while paused.
             var runningSince: Date?
+            var laps: [TimeInterval] = []
 
             var isPomodoro: Bool {
                 if case .pomodoro = kind { return true }
@@ -118,7 +132,9 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 accumulated + (runningSince.map { now.timeIntervalSince($0) } ?? 0)
             }
 
-            func remaining(at now: Date) -> TimeInterval { duration - elapsed(at: now) }
+            func remaining(at now: Date) -> TimeInterval? { duration.map { $0 - elapsed(at: now) } }
+
+            func hasEnded(at now: Date) -> Bool { remaining(at: now).map { $0 <= 0 } ?? false }
         }
 
         private enum Effect {
@@ -148,7 +164,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 return entries.map {
                     TimerSnapshot(
                         id: $0.id, kind: $0.kind, elapsed: $0.elapsed(at: now),
-                        remaining: $0.remaining(at: now), isPaused: $0.runningSince == nil
+                        remaining: $0.remaining(at: now), isPaused: $0.runningSince == nil, laps: $0.laps
                     )
                 }
             }
@@ -176,10 +192,14 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             }
         }
 
-        func start(_ kind: TimerSnapshot.Kind, duration: TimeInterval) -> TimerID? {
+        func start(_ kind: TimerSnapshot.Kind, duration: TimeInterval?) -> TimerID? {
             update { entries, now in
                 let entry = Entry(id: TimerID(), kind: kind, duration: duration, runningSince: now)
-                if entry.isPomodoro, entries.contains(where: \.isPomodoro) { return nil }
+                if entry.isPomodoro {
+                    guard !entries.contains(where: \.isPomodoro) else { return nil }
+                } else {
+                    guard entries.filter({ !$0.isPomodoro }).count < module.maxTimers else { return nil }
+                }
                 entries.append(entry)
                 return (entry.id, [show(entry, at: now)])
             }
@@ -206,6 +226,17 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             } ?? false
         }
 
+        func lap(_ id: TimerID) -> TimeInterval? {
+            update { entries, now in
+                guard let index = entries.firstIndex(where: { $0.id == id }), entries[index].kind == .stopwatch,
+                      entries[index].runningSince != nil, entries[index].laps.count < TimerModule.maxLaps
+                else { return nil }
+                let length = entries[index].elapsed(at: now) - entries[index].laps.reduce(0, +)
+                entries[index].laps.append(length)
+                return (length, [])
+            }
+        }
+
         @discardableResult
         func cancel(_ id: TimerID) -> Bool {
             update { entries, _ in
@@ -221,7 +252,7 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                 var effects: [Effect] = []
                 entries = entries.compactMap { entry in
                     guard entry.runningSince != nil else { return entry }
-                    guard entry.remaining(at: now) <= 0 else {
+                    guard entry.hasEnded(at: now) else {
                         effects.append(show(entry, at: now))
                         return entry
                     }
@@ -241,6 +272,8 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
                         let (next, transition) = advance(entry, to: now)
                         effects += [show(next, at: now)] + transition
                         return next
+                    case .stopwatch:
+                        return entry
                     }
                 }
                 return ((), effects)
@@ -253,10 +286,10 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         private func advance(_ entry: Entry, to now: Date) -> (Entry, [Effect]) {
             var entry = entry
             var ended: TimerPhase?
-            while case let .pomodoro(phase, completed) = entry.kind, entry.remaining(at: now) <= 0 {
+            while case let .pomodoro(phase, completed) = entry.kind, let remaining = entry.remaining(at: now), remaining <= 0 {
                 let done = phase == .focus ? completed + 1 : completed
                 let next = module.plan.phase(after: phase, completedFocusSessions: done)
-                entry.runningSince = now.addingTimeInterval(entry.remaining(at: now))
+                entry.runningSince = now.addingTimeInterval(remaining)
                 entry.accumulated = 0
                 entry.duration = module.plan.duration(of: next)
                 entry.kind = .pomodoro(phase: next, completedFocusSessions: done)
@@ -308,9 +341,14 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         }
 
         private static func nextLabelChange(_ entry: Entry, at now: Date) -> TimeInterval? {
-            let remaining = entry.remaining(at: now)
-            guard entry.runningSince != nil, remaining > 0 else { return nil }
-            // The label shows whole seconds rounded up, so it changes when `remaining` reaches the next integer below.
+            guard entry.runningSince != nil else { return nil }
+            guard let remaining = entry.remaining(at: now) else {
+                // A stopwatch label shows whole elapsed seconds, so it changes at the next whole second.
+                let elapsed = entry.elapsed(at: now)
+                return elapsed.rounded(.down) + 1 - elapsed
+            }
+            guard remaining > 0 else { return nil }
+            // A countdown label shows whole seconds rounded up, so it changes when `remaining` reaches the next integer below.
             return remaining - (remaining.rounded(.up) - 1)
         }
 
@@ -319,16 +357,18 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             let elapsed = entry.elapsed(at: now)
             let name = switch entry.kind {
             case .countdown: "Timer"
+            case .stopwatch: "Stopwatch"
             case .pomodoro(let phase, _): phase.title
             }
+            let shown = entry.remaining(at: now).map { $0.rounded(.up) } ?? elapsed
             return .publish(
                 stackID: entry.id.stackID, kind: .activeTask,
-                title: "\(name) \(TimerModule.clockLabel(entry.remaining(at: now).rounded(.up)))" + (paused ? " (paused)" : ""),
+                title: "\(name) \(TimerModule.clockLabel(shown))" + (paused ? " (paused)" : ""),
                 actions: [
                     paused ? SaysoAction(id: "resume", title: "Resume") : SaysoAction(id: "pause", title: "Pause"),
                     SaysoAction(id: "cancel", title: "Cancel"),
                 ],
-                progress: elapsed / entry.duration
+                progress: entry.duration.map { elapsed / $0 }
             )
         }
     }
