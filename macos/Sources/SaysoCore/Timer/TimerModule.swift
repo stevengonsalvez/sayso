@@ -25,6 +25,7 @@ public struct TimerSnapshot: Equatable, Sendable {
 /// so a late or missed tick never makes a timer drift.
 public final class TimerModule: SaysoModule, @unchecked Sendable {
     public static let defaultMaxTimers = 5
+    public static let completionNoticeSeconds: TimeInterval = 10
 
     public let descriptor = SaysoModuleDescriptor(
         id: "timer", title: "Timers", surfaces: [.compact, .peek, .expanded, .settings]
@@ -105,8 +106,12 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
         }
 
         private enum Effect {
-            case publish(stackID: String, kind: SaysoActivityKind, title: String, actions: [SaysoAction], progress: Double?)
+            case publish(
+                stackID: String, kind: SaysoActivityKind, title: String,
+                expiresAfter: TimeInterval? = nil, actions: [SaysoAction] = [], progress: Double? = nil
+            )
             case dismiss(stackID: String)
+            case ping(TimerPing)
         }
 
         unowned let module: TimerModule
@@ -193,9 +198,35 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             } ?? false
         }
 
+        /// Finishes whatever reached its deadline by `now`, however late the tick fired, and refreshes the rest.
         private func tick() {
             _ = update { entries, now in
-                ((), entries.filter { $0.runningSince != nil }.map { Self.show($0, at: now) })
+                var effects: [Effect] = []
+                entries.removeAll { entry in
+                    guard entry.runningSince != nil, let remaining = entry.remaining(at: now) else { return false }
+                    if remaining > 0 {
+                        effects.append(Self.show(entry, at: now))
+                        return false
+                    }
+                    effects += Self.finish(entry)
+                    return true
+                }
+                return ((), effects)
+            }
+        }
+
+        private static func finish(_ entry: Entry) -> [Effect] {
+            switch entry.kind {
+            case .countdown(let duration):
+                [
+                    .dismiss(stackID: entry.id.stackID),
+                    .publish(
+                        stackID: entry.id.stackID + "-done", kind: .completion,
+                        title: "Timer done · \(TimerModule.clockLabel(duration))",
+                        expiresAfter: TimerModule.completionNoticeSeconds
+                    ),
+                    .ping(TimerPing(timerID: entry.id, reason: .finished)),
+                ]
             }
         }
 
@@ -212,10 +243,15 @@ public final class TimerModule: SaysoModule, @unchecked Sendable {
             guard let outcome else { return nil }
             for effect in outcome.1 {
                 switch effect {
-                case let .publish(stackID, kind, title, actions, progress):
-                    context.publish(stackID: stackID, kind: kind, title: title, actions: actions, progress: progress)
+                case let .publish(stackID, kind, title, expiresAfter, actions, progress):
+                    context.publish(
+                        stackID: stackID, kind: kind, title: title,
+                        expiresAfter: expiresAfter, actions: actions, progress: progress
+                    )
                 case let .dismiss(stackID):
                     context.dismiss(stackID: stackID)
+                case let .ping(ping):
+                    context.emit(ping)
                 }
             }
             return outcome.0
