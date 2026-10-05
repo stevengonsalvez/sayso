@@ -22,6 +22,9 @@ final class SystemStatsUITests: XCTestCase {
     }
 
     func testTheSystemSectionShowsAValueForEachRow() {
+        // The notch starts collapsed, so only the open pane can speed sampling up: the CPU percent below then
+        // proves the pane counts as watching.
+        XCTAssertTrue(app.buttons["Open Sayso Dictation workspace"].firstMatch.waitForExistence(timeout: 10), "collapsed notch pill")
         let tab = app.descendants(matching: .any)["studio-tab-notch"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10), "sidebar tab for Notch & HUD")
         tab.click()
