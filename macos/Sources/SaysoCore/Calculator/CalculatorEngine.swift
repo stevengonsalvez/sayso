@@ -19,6 +19,8 @@ public enum CalculatorError: Error, Equatable, Sendable {
     case tooDeep(limit: Int)
     case unknownUnit(String)
     case incompatibleUnits(from: String, to: String)
+    /// The calculator module is turned off, so nothing is evaluated or kept.
+    case off
 
     public var message: String {
         switch self {
@@ -33,6 +35,7 @@ public enum CalculatorError: Error, Equatable, Sendable {
         case let .tooDeep(limit): "Nested too deeply: at most \(limit) levels"
         case let .unknownUnit(unit): "Unknown unit \u{201C}\(unit)\u{201D}"
         case let .incompatibleUnits(from, to): "Cannot convert \(from) to \(to)"
+        case .off: "Calculator is off. Turn it on in Settings."
         }
     }
 }
