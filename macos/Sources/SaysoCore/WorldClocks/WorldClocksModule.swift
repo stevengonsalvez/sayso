@@ -125,19 +125,35 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         let timeZone: TimeZone
     }
 
+    /// The next whole minute strictly after `now`. Every current zone offset is a whole number of minutes,
+    /// so every clock's label changes at this instant and at no other.
+    static func nextMinute(after now: Date) -> Date {
+        Date(timeIntervalSince1970: ((now.timeIntervalSince1970 / 60).rounded(.down) + 1) * 60)
+    }
+
     fileprivate final class Runtime: SaysoModuleRuntime, SaysoResourceAccounting, @unchecked Sendable {
+        private enum Line: Equatable {
+            case show(String)
+            case clear
+        }
+
+        static let stackID = "world-clocks"
+
         unowned let module: WorldClocksModule
         let context: SaysoModuleContext
         private let lock = NSLock()
         private var running = false
         private var entries: [Entry] = []
+        private var job: SaysoSubscription?
+        /// The line last published, so an unchanged label is never published again.
+        private var shown: String?
 
         init(module: WorldClocksModule, context: SaysoModuleContext) {
             self.module = module
             self.context = context
         }
 
-        var retainedResources: Int { 0 }
+        var retainedResources: Int { lock.withLock { job == nil ? 0 : 1 } }
 
         var zones: [WorldClockZone] { lock.withLock { entries.map(\.zone) } }
 
@@ -151,19 +167,23 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
                 running = true
                 entries = module.restored()
             }
+            refresh()
         }
 
         func stop() {
             lock.withLock {
                 running = false
                 entries = []
+                job?.cancel()
+                job = nil
+                shown = nil
             }
             module.detach(self)
         }
 
         /// Applies `change` to a copy and saves it only when it succeeds, so a refused edit writes nothing.
         func mutate(_ change: (inout [Entry]) -> Result<Void, WorldClocksError>) -> Result<Void, WorldClocksError> {
-            lock.withLock {
+            let result = lock.withLock { () -> Result<Void, WorldClocksError> in
                 guard running else { return .failure(.disabled) }
                 var edited = entries
                 let result = change(&edited)
@@ -172,6 +192,36 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
                 module.store.save(edited.map(\.zone))
                 return result
             }
+            if case .success = result { refresh() }
+            return result
+        }
+
+        /// Re-arms the single tick and works out the first zone's line under the lock, then publishes outside it
+        /// and only when the line changed: publishing takes the host lock, and the host calls into this runtime
+        /// while holding that lock.
+        private func refresh() {
+            let line = lock.withLock { () -> Line? in
+                guard running else { return nil }
+                let now = module.now()
+                rearm(at: now)
+                let title = entries.first.map { module.reading(of: $0, at: now, local: module.localTimeZone()).title }
+                guard title != shown else { return nil }
+                shown = title
+                return title.map(Line.show) ?? .clear
+            }
+            switch line {
+            case let .show(title)?: context.publish(stackID: Self.stackID, kind: .ambient, title: title)
+            case .clear?: context.dismiss(stackID: Self.stackID)
+            case nil: break
+            }
+        }
+
+        /// One job at the next minute boundary while any zone is listed; none for an empty list. Call with the lock held.
+        private func rearm(at now: Date) {
+            job?.cancel()
+            job = nil
+            guard !entries.isEmpty else { return }
+            job = module.scheduler.schedule(at: WorldClocksModule.nextMinute(after: now)) { [weak self] in self?.refresh() }
         }
     }
 }
