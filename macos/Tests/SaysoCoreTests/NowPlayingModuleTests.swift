@@ -140,6 +140,13 @@ private struct Probe: SaysoModule {
     }
 }
 
+/// What the module reports through a bare context, so "reported once" can be counted exactly.
+private final class Reports: @unchecked Sendable {
+    var failures = 0
+    var published: [SaysoActivity] = []
+    var dismissed = 0
+}
+
 /// Every change to the now playing line, as the notch would paint it.
 private final class Painted: @unchecked Sendable {
     var lines: [String?] = []
@@ -342,6 +349,85 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(module.descriptor.id == "now-playing")
         #expect(module.descriptor.capabilities == [.automation])
         #expect(SaysoModuleAcceptance.violations(for: module).isEmpty)
+    }
+
+    @Test func transportActionsGoThroughThePortToTheShownPlayer() {
+        let rig = rig { $0.load("Song", app: .music, duration: 240) }
+        rig.player.queue("Next song", duration: 200)
+        #expect(rig.tap("next"))
+        #expect(rig.player.commands == [Sent(command: .next, app: .music)])
+        let reads = rig.player.reads
+        rig.advance(NowPlayingModule.commandSettleSeconds)
+        #expect(rig.player.reads == reads + 1, "checked again soon after a command")
+        #expect(rig.line?.title == "Next song · Artist · Music")
+
+        rig.tap("play-pause")
+        rig.advance(NowPlayingModule.commandSettleSeconds)
+        #expect(rig.line?.title == "Paused · Next song · Artist · Music")
+        rig.tap("previous")
+        #expect(rig.module.send(.playPause))
+        #expect(rig.player.commands.map(\.command) == [.next, .playPause, .previous, .playPause])
+        #expect(rig.player.commands.allSatisfy { $0.app == .music })
+        #expect(rig.scheduler.jobs.count == 1)
+    }
+
+    @Test func aRefusedCommandReportsAFailureWithoutCrashingAndKeepsTheLine() {
+        let rig = rig { $0.load("Song", duration: 240) }
+        rig.player.failCommands(.unavailable)
+        #expect(!rig.module.send(.next))
+        #expect(rig.tap("play-pause"), "the action is still routed; the module absorbs the failure")
+        #expect(rig.host.health(of: "now-playing") == .degraded)
+        #expect(rig.line?.title == "Song · Artist · Spotify")
+        #expect(rig.scheduler.jobs.count == 1)
+    }
+
+    @Test func aCommandWithNoTrackIsRefusedWithoutAskingAPlayer() {
+        let rig = rig()
+        #expect(!rig.module.send(.playPause))
+        #expect(rig.player.commands.isEmpty)
+        #expect(rig.host.health(of: "now-playing") == .ready)
+
+        rig.player.load("Song", duration: 240)
+        rig.advance(NowPlayingModule.idlePollSeconds)
+        rig.host.disable("now-playing")
+        #expect(!rig.module.send(.playPause), "off means no commands either")
+        #expect(rig.player.commands.isEmpty)
+    }
+
+    @Test func aDeniedOrFailingPlayerIsReportedOnceAndCheckedLessOften() {
+        let clock = Clock(), scheduler = FakeScheduler(), player = FakePlayer(clock: clock), reports = Reports()
+        player.failReads(.automationDenied)
+        let module = NowPlayingModule(port: player, scheduler: scheduler, now: { clock.now })
+        let runtime = module.makeRuntime(context: SaysoModuleContext(
+            moduleID: "now-playing",
+            publish: { reports.published.append($0) },
+            reportFailure: { reports.failures += 1 },
+            dismiss: { _ in reports.dismissed += 1 }
+        ))
+        func advance(_ seconds: TimeInterval) {
+            clock.now += seconds
+            scheduler.runDue(clock.now)
+        }
+        runtime.start()
+        advance(0)
+        #expect(reports.failures == 1)
+        #expect(scheduler.jobs == [clock.now + NowPlayingModule.failureBackoffSeconds])
+        for _ in 0..<5 { advance(NowPlayingModule.failureBackoffSeconds) }
+        #expect(player.reads == 6)
+        #expect(reports.failures == 1, "a lasting refusal is reported once, not on every check")
+        #expect(reports.published.isEmpty)
+
+        player.failReads(nil)
+        player.load("Song", duration: 240)
+        advance(NowPlayingModule.failureBackoffSeconds)
+        #expect(reports.published.last?.title == "Song · Artist · Spotify")
+
+        player.failReads(.unavailable)
+        advance(NowPlayingModule.activePollSeconds)
+        #expect(reports.failures == 2, "a new failure after a good read is reported again")
+        #expect(reports.dismissed == 1, "a track that can no longer be read is not left showing")
+        #expect(scheduler.jobs == [clock.now + NowPlayingModule.failureBackoffSeconds])
+        runtime.stop()
     }
 
     @Test func aNonFiniteClockNeitherTrapsNorArms() {
