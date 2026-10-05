@@ -132,3 +132,316 @@ private func color(_ red: UInt8, _ green: UInt8, _ blue: UInt8) -> ColorPickerCo
         }
     }
 }
+
+/// Answers each pick from a queue, or holds it until the test answers, so a pick can be left in flight.
+private final class FakeSampler: ColorSamplingPort, @unchecked Sendable {
+    private let lock = NSLock()
+    private var queued: [ColorPickerColor?] = []
+    private var held: [CheckedContinuation<ColorPickerColor?, Never>] = []
+    private var asked = 0
+    private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    /// How many times the sampler was shown.
+    var requests: Int { lock.withLock { asked } }
+
+    /// The next pick returns this at once; nil is the user pressing Escape.
+    func queue(_ color: ColorPickerColor?) { lock.withLock { queued.append(color) } }
+
+    func pick() async -> ColorPickerColor? {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                asked += 1
+                if queued.isEmpty { held.append(continuation) } else { continuation.resume(returning: queued.removeFirst()) }
+                let due = waiters.filter { $0.count <= asked }
+                waiters.removeAll { $0.count <= asked }
+                return due.map(\.continuation)
+            }
+            ready.forEach { $0.resume() }
+        }
+    }
+
+    /// Returns once the sampler has been shown `count` times in all.
+    func waitForRequests(_ count: Int) async {
+        await withCheckedContinuation { continuation in
+            let done = lock.withLock { () -> Bool in
+                if asked >= count { return true }
+                waiters.append((count, continuation))
+                return false
+            }
+            if done { continuation.resume() }
+        }
+    }
+
+    /// The oldest held pick returns `color`.
+    func answer(_ color: ColorPickerColor?) {
+        let continuation = lock.withLock { held.isEmpty ? nil : held.removeFirst() }
+        continuation?.resume(returning: color)
+    }
+}
+
+/// Records writes only: the port has no way to read the pasteboard, so the module cannot.
+private final class ColorPasteboard: CalculatorPasteboardPort, @unchecked Sendable {
+    private let lock = NSLock()
+    private var writes: [String] = []
+    private var refusing = false
+
+    var written: [String] { lock.withLock { writes } }
+    func refuse(_ on: Bool) { lock.withLock { refusing = on } }
+
+    func write(_ text: String) -> Bool {
+        lock.withLock {
+            guard !refusing else { return false }
+            writes.append(text)
+            return true
+        }
+    }
+}
+
+private final class ColorScheduler: SaysoScheduling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextID = 0
+    private var pending: [(id: Int, at: Date, action: @Sendable () -> Void)] = []
+    var jobs: [Date] { lock.withLock { pending.map(\.at) } }
+
+    func schedule(at date: Date, _ action: @escaping @Sendable () -> Void) -> SaysoSubscription {
+        let id = lock.withLock { () -> Int in nextID += 1; pending.append((nextID, date, action)); return nextID }
+        return SaysoSubscription { [weak self] in self?.lock.withLock { self?.pending.removeAll { $0.id == id } } }
+    }
+
+    /// The earliest pending action, left pending: lets a test run a timer callback that was already firing when its
+    /// job was cancelled.
+    func snatchEarliest() -> (@Sendable () -> Void)? {
+        lock.withLock { pending.min(by: { $0.at < $1.at })?.action }
+    }
+
+    func runDue(_ now: Date) {
+        for _ in 0..<1000 {
+            let job = lock.withLock { () -> (id: Int, at: Date, action: @Sendable () -> Void)? in
+                guard let index = pending.indices.filter({ pending[$0].at <= now }).min(by: { pending[$0].at < pending[$1].at })
+                else { return nil }
+                return pending.remove(at: index)
+            }
+            guard let job else { return }
+            job.action()
+        }
+        Issue.record("jobs kept re-arming at or before now")
+    }
+}
+
+private final class ColorClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000_000) }
+
+private final class ColorRuntimes: @unchecked Sendable { var runtimes: [SaysoModuleRuntime] = [] }
+
+private struct ColorPickerProbe: SaysoModule {
+    let inner: ColorPickerModule
+    let captured: ColorRuntimes
+    var descriptor: SaysoModuleDescriptor { inner.descriptor }
+    func makeRuntime(context: SaysoModuleContext) -> SaysoModuleRuntime {
+        let runtime = inner.makeRuntime(context: context)
+        captured.runtimes.append(runtime)
+        return runtime
+    }
+}
+
+private struct ColorPickerRig {
+    let host: SaysoModuleHost
+    let module: ColorPickerModule
+    let sampler: FakeSampler
+    let pasteboard: ColorPasteboard
+    let scheduler: ColorScheduler
+    let clock: ColorClock
+    let captured: ColorRuntimes
+
+    init() {
+        let sampler = FakeSampler(), pasteboard = ColorPasteboard(), scheduler = ColorScheduler()
+        let clock = ColorClock(), captured = ColorRuntimes()
+        module = ColorPickerModule(sampler: sampler, pasteboard: pasteboard, scheduler: scheduler, now: { clock.now })
+        host = SaysoModuleHost(modules: [ColorPickerProbe(inner: module, captured: captured)], now: { clock.now })
+        host.enable("color-picker")
+        (self.sampler, self.pasteboard, self.scheduler, self.clock, self.captured) = (sampler, pasteboard, scheduler, clock, captured)
+    }
+
+    func advance(_ seconds: TimeInterval) {
+        clock.now += seconds
+        scheduler.runDue(clock.now)
+    }
+
+    /// A pick the user completes at once with `color`, or cancels with nil.
+    func pick(_ color: ColorPickerColor?) async -> ColorPick? {
+        sampler.queue(color)
+        return await module.pick()
+    }
+
+    var titles: [String] { host.engine.stack.filter { $0.moduleID == "color-picker" }.map(\.title) }
+    var retained: Int { (captured.runtimes.last as? SaysoResourceAccounting)?.retainedResources ?? -1 }
+}
+
+@Suite(.timeLimit(.minutes(1))) struct ColorPickerModuleTests {
+    @Test func passesTheModuleAcceptanceContract() {
+        let module = ColorPickerModule(sampler: FakeSampler(), pasteboard: ColorPasteboard(), scheduler: ColorScheduler())
+        #expect(module.descriptor.id == "color-picker")
+        #expect(module.descriptor.capabilities.isEmpty, "the system sampler needs no Screen Recording permission")
+        #expect(SaysoModuleAcceptance.violations(for: module).isEmpty, "\(SaysoModuleAcceptance.violations(for: module))")
+    }
+
+    @Test func aPickIsKeptAndShownBrieflyAsACompletionThatExpiresOnTheScheduler() async throws {
+        let rig = ColorPickerRig()
+        let picked = try #require(await rig.pick(color(0x33, 0x66, 0x99)))
+        #expect(picked.color.hex == "#336699")
+        #expect(rig.module.history == [picked])
+
+        let shown = try #require(rig.host.engine.stack.first { $0.moduleID == "color-picker" })
+        #expect(shown.kind == .completion)
+        #expect(shown.title == "Picked #336699")
+        #expect(shown.expiresAfter == ColorPickerModule.noticeSeconds)
+        #expect(shown.actions.map(\.id) == ["dismiss"])
+        #expect(ColorPickerModule.noticeSeconds == 10, "as long as the calculator, timer and caffeine notices")
+        #expect(rig.scheduler.jobs == [rig.clock.now + ColorPickerModule.noticeSeconds])
+
+        rig.advance(ColorPickerModule.noticeSeconds - 1)
+        #expect(rig.titles == ["Picked #336699"], "still shown just before it expires")
+        rig.advance(1)
+        #expect(rig.titles.isEmpty, "the scheduler job removes it without any engine tick")
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.module.history == [picked], "the pick outlives its notice")
+    }
+
+    @Test func historyKeepsTheLastTenNewestFirstAndSkipsARepeatOfTheLastPick() async throws {
+        let rig = ColorPickerRig()
+        for value in 1...12 { _ = await rig.pick(color(UInt8(value), 0, 0)) }
+        #expect(ColorPickerModule.historyLimit == 10)
+        #expect(rig.module.history.map(\.color.red) == (3...12).reversed().map { UInt8($0) })
+        #expect(Set(rig.module.history.map(\.id)).count == 10, "ids are unique")
+
+        let newest = try #require(rig.module.history.first)
+        let again = try #require(await rig.pick(color(12, 0, 0)))
+        #expect(again == newest, "picking the same colour again keeps the entry it already has")
+        #expect(rig.module.history.count == 10)
+        #expect(rig.titles == ["Picked #0C0000"], "the notice still confirms the pick")
+
+        _ = await rig.pick(color(11, 0, 0))
+        #expect(rig.module.history.prefix(3).map(\.color.red) == [11, 12, 11], "only a repeat of the last pick is skipped")
+    }
+
+    @Test func aCancelledPickChangesNothingAndShowsNothing() async throws {
+        let empty = ColorPickerRig()
+        #expect(await empty.pick(nil) == nil)
+        #expect(empty.module.history.isEmpty)
+        #expect(empty.titles.isEmpty)
+        #expect(empty.scheduler.jobs.isEmpty)
+
+        let rig = ColorPickerRig()
+        let kept = try #require(await rig.pick(color(0x33, 0x66, 0x99)))
+        rig.advance(3)
+        let due = rig.scheduler.jobs
+        #expect(await rig.pick(nil) == nil)
+        #expect(rig.module.history == [kept])
+        #expect(rig.titles == ["Picked #336699"])
+        #expect(rig.scheduler.jobs == due, "the earlier notice keeps its own expiry")
+    }
+
+    @Test func onlyOnePickIsInFlightAndASecondRequestNeverShowsASecondSampler() async throws {
+        let rig = ColorPickerRig()
+        let first = Task { await rig.module.pick() }
+        await rig.sampler.waitForRequests(1)
+        #expect(rig.module.isPicking)
+        #expect(await rig.module.pick() == nil, "ignored while one is pending")
+        #expect(rig.sampler.requests == 1)
+        #expect(rig.retained == 1, "the pending pick is held")
+
+        rig.sampler.answer(color(1, 2, 3))
+        #expect(await first.value?.color == color(1, 2, 3))
+        #expect(!rig.module.isPicking)
+        #expect(await rig.pick(color(4, 5, 6))?.color == color(4, 5, 6), "the next pick shows the sampler again")
+        #expect(rig.sampler.requests == 2)
+    }
+
+    @Test func aNewPickReplacesTheNoticeAndAnOlderTimerNeverEndsIt() async throws {
+        let rig = ColorPickerRig()
+        _ = await rig.pick(color(1, 1, 1))
+        let stale = try #require(rig.scheduler.snatchEarliest())
+        rig.advance(5)
+        _ = await rig.pick(color(2, 2, 2))
+        #expect(rig.titles == ["Picked #020202"])
+        #expect(rig.scheduler.jobs == [rig.clock.now + ColorPickerModule.noticeSeconds], "one job, re-armed")
+
+        stale()
+        #expect(rig.titles == ["Picked #020202"], "the newer notice stays")
+        #expect(rig.scheduler.jobs.count == 1)
+        #expect(rig.retained == 3, "two picks and the newer notice's job")
+        rig.advance(ColorPickerModule.noticeSeconds)
+        #expect(rig.titles.isEmpty)
+    }
+
+    @Test func copyWritesOnlyTheChosenFormatThroughThePort() async throws {
+        let rig = ColorPickerRig()
+        let older = try #require(await rig.pick(color(0x33, 0x66, 0x99)))
+        _ = await rig.pick(color(0, 0, 0))
+        #expect(rig.module.copy(.hex, of: older.id))
+        #expect(rig.module.copy(.rgb, of: older.id))
+        #expect(rig.module.copy(.hsl, of: older.id))
+        #expect(rig.pasteboard.written == ["#336699", "rgb(51, 102, 153)", "hsl(210, 50%, 40%)"])
+        #expect(!rig.module.copy(.hex, of: 9_999), "an unknown id copies nothing")
+        rig.pasteboard.refuse(true)
+        #expect(!rig.module.copy(.hex, of: older.id), "a refused write is reported")
+        #expect(rig.pasteboard.written.count == 3)
+    }
+
+    @Test func theNotchDismissEndsTheNoticeAndItsTimer() async throws {
+        let rig = ColorPickerRig()
+        _ = await rig.pick(color(0x33, 0x66, 0x99))
+        #expect(rig.host.perform(actionID: "dismiss", stackID: "color-picker-pick", moduleID: "color-picker"))
+        #expect(rig.titles.isEmpty)
+        #expect(rig.scheduler.jobs.isEmpty, "dismiss cancels the expiry job")
+        #expect(rig.module.history.count == 1)
+    }
+
+    @Test func offRefusesPicksWithoutShowingTheSamplerAndRefusesCopies() async throws {
+        let rig = ColorPickerRig()
+        let kept = try #require(await rig.pick(color(0x33, 0x66, 0x99)))
+        rig.host.disable("color-picker")
+        #expect(await rig.module.pick() == nil)
+        #expect(rig.sampler.requests == 1, "no sampler while off")
+        #expect(!rig.module.copy(.hex, of: kept.id))
+        #expect(rig.pasteboard.written.isEmpty)
+    }
+
+    @Test func disablingIgnoresAPendingPickAndPurgesHistoryAndTheNotice() async throws {
+        let rig = ColorPickerRig()
+        _ = await rig.pick(color(0x33, 0x66, 0x99))
+        let pending = Task { await rig.module.pick() }
+        await rig.sampler.waitForRequests(2)
+        #expect(rig.retained == 3, "one pick, its notice's job and the pending pick")
+
+        rig.host.disable("color-picker")
+        #expect(rig.retained == 0)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.module.history.isEmpty)
+        #expect(rig.titles.isEmpty)
+
+        rig.sampler.answer(color(9, 9, 9))
+        #expect(await pending.value == nil, "the pick that returns after disable is dropped")
+        #expect(rig.module.history.isEmpty)
+        #expect(rig.titles.isEmpty)
+        #expect(rig.scheduler.jobs.isEmpty)
+    }
+
+    @Test func aPickStillOpenAcrossOffAndOnNeverLandsInTheNewSessionNorOpensASecondSampler() async throws {
+        let rig = ColorPickerRig()
+        let pending = Task { await rig.module.pick() }
+        await rig.sampler.waitForRequests(1)
+        rig.host.disable("color-picker")
+        rig.host.enable("color-picker")
+
+        #expect(await rig.module.pick() == nil, "the system sampler from before is still on screen")
+        #expect(rig.sampler.requests == 1)
+        rig.sampler.answer(color(9, 9, 9))
+        #expect(await pending.value == nil)
+        #expect(rig.module.history.isEmpty, "nothing from before lands in the new session")
+        #expect(rig.titles.isEmpty)
+        #expect(rig.retained == 0)
+
+        #expect(await rig.pick(color(1, 2, 3))?.color == color(1, 2, 3))
+        #expect(rig.sampler.requests == 2)
+    }
+}
