@@ -108,6 +108,11 @@ public final class SaysoModuleHost: @unchecked Sendable {
         onActivitiesChanged?()
     }
 
+    /// Applies an on/off setting; safe to call repeatedly since enable and disable are idempotent.
+    public func setEnabled(_ id: String, _ on: Bool) {
+        if on { enable(id) } else { disable(id) }
+    }
+
     private func recentFailures(_ id: String) -> [Date] {
         let current = now()
         return failures[id, default: []].filter { current.timeIntervalSince($0) < Self.quarantineWindow }

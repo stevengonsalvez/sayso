@@ -1,9 +1,9 @@
 import XCTest
 
-/// Settings pane: the clipboard module toggle exists and is off by default. `--ui-test-fresh-settings` gives the
+/// Settings pane: the file shelf toggle exists and is off by default. `--ui-test-fresh-settings` gives the
 /// app a throwaway settings suite, so the default is checked and the user's settings are not read or written;
 /// other app state (history, shortcuts, keychain) is still the user's. The toggle is never flipped.
-final class ClipboardSettingUITests: XCTestCase {
+final class FileShelfSettingUITests: XCTestCase {
     var app: XCUIApplication!
 
     override func setUp() {
@@ -16,13 +16,14 @@ final class ClipboardSettingUITests: XCTestCase {
 
     override func tearDown() { app.terminate() }
 
-    func testClipboardToggleIsPresentAndOffByDefault() {
+    func testFileShelfToggleIsPresentAndOffByDefault() {
         let tab = app.descendants(matching: .any)["studio-tab-settings"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10), "sidebar tab for Settings")
         tab.click()
-        let toggle = app.descendants(matching: .any)["settings-clipboard-toggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "clipboard toggle in Settings")
-        XCTAssertEqual(isOn(toggle), false, "clipboard module must be off unless the user turns it on (value: \(String(describing: toggle.value)))")
+        let toggle = app.descendants(matching: .any)["settings-file-shelf-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "file shelf toggle in Settings")
+        XCTAssertEqual(isOn(toggle), false, "file shelf must be off unless the user turns it on (value: \(String(describing: toggle.value)))")
+        XCTAssertFalse(app.descendants(matching: .any)["settings-file-shelf-add"].exists, "shelf controls only show while it is on")
     }
 
     /// macOS reports a toggle's value as a number or a string depending on its style; nil means unreadable,

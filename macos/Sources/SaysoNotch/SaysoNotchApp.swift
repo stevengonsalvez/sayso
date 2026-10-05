@@ -238,10 +238,11 @@ final class SaysoAppModel: ObservableObject {
     private var moduleSocket: SaysoModuleSocketServer?
     private lazy var shortcutIntents = ShortcutIntentModule(handler: AppShortcutIntents(model: self))
     private let clipboardModule = ClipboardModule(port: PasteboardClipboardPort(), scheduler: SaysoDispatchScheduler())
+    private let fileShelf = FileShelfModule(port: FileSystemShelfPort(), scheduler: SaysoDispatchScheduler())
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule,
+            externalActivities, clipboardModule, fileShelf,
         ],
         events: moduleEvents
     )
@@ -253,7 +254,7 @@ final class SaysoAppModel: ObservableObject {
     let controlAudit = ControlAuditStore()
     let secrets = KeychainSecretStore()
     private let automation = SaysoAutomationServer()
-    private let settingsStore = UserDefaultsSettingsStore()
+    private let settingsStore = SaysoAppModel.makeSettingsStore()
     private let hotKeyEngine = HotKeyEngine()
     private let controlFnHotKeyEngine = HotKeyEngine()
     private let shortcutManager = SaysoShortcutManager()
@@ -315,6 +316,7 @@ final class SaysoAppModel: ObservableObject {
             saved.desktopControlEnabled = true
             saved.onboardingCompleted = true
         }
+        if Self.usesFreshSettings { saved.onboardingCompleted = true }
         settings = saved
         corrections = SaysoCorrectionLearning(promotionThreshold: saved.autoCorrectionsPromotionThreshold)
         audioInputDevices = audioInputDeviceController.inputDevices()
@@ -336,7 +338,7 @@ final class SaysoAppModel: ObservableObject {
         expiryTicker = SaysoExpiryTicker(host: modules, scheduler: SaysoDispatchScheduler())
         modules.enable("vocabulary")
         modules.enable("models")
-        applyClipboardModuleSetting()
+        applyOptInModuleSettings()
         startControlModule()
         startExternalAPIIfEnabled()
         startDictationModule()
@@ -414,23 +416,56 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    private static let usesFreshSettings = CommandLine.arguments.contains("--ui-test-fresh-settings")
+
+    /// UI test hook: settings live in a throwaway suite wiped at every launch, so UI tests see the defaults
+    /// and never read or write the user's real settings.
+    private static func makeSettingsStore() -> UserDefaultsSettingsStore {
+        guard usesFreshSettings else { return UserDefaultsSettingsStore() }
+        let suite = "ai.sayso.notch.ui-test-settings"
+        // Falling back to the standard defaults here would write test state into the user's real settings.
+        guard let defaults = UserDefaults(suiteName: suite) else { fatalError("UI test settings suite unavailable") }
+        defaults.removePersistentDomain(forName: suite)
+        return UserDefaultsSettingsStore(defaults: defaults)
+    }
+
     func save() {
         if !settings.byokConsentGranted { settings.cloudCleanupEnabled = false }
         corrections.setPromotionThreshold(settings.autoCorrectionsPromotionThreshold)
         if !settings.autoCorrectionsEnabled { corrections.stopMonitoring() }
         hotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
         controlFnHotKeyEngine.updateConfiguration(.init(holdThreshold: settings.hotKeyHoldThresholdSeconds, doubleTapWindow: 0.25, gestureCooldown: 0.08))
-        applyClipboardModuleSetting()
+        applyOptInModuleSettings()
         settingsStore.save(settings)
     }
 
-    /// The clipboard module reads the pasteboard, so it only runs while the user has opted in.
-    private func applyClipboardModuleSetting() {
-        if settings.clipboardModuleEnabled {
-            modules.enable("clipboard")
-        } else {
-            modules.disable("clipboard")
+    /// Modules that read the pasteboard or hold file access run only while the user has opted in;
+    /// turning one off stops it and purges what it held.
+    private func applyOptInModuleSettings() {
+        // Descriptor ids, not literals: the host ignores unknown ids, so a typo would silently skip the purge.
+        modules.setEnabled(clipboardModule.descriptor.id, settings.clipboardModuleEnabled)
+        modules.setEnabled(fileShelf.descriptor.id, settings.fileShelfEnabled)
+    }
+
+    var fileShelfItems: [FileShelfItem] { fileShelf.items }
+
+    func addToFileShelf(_ urls: [URL]) {
+        objectWillChange.send()
+        let added = fileShelf.add(urls)
+        if added < urls.count {
+            notice = "Added \(added) of \(urls.count) to the file shelf. The rest were missing or could not be read."
         }
+    }
+
+    func revealOnFileShelf(_ id: FileShelfItem.ID) {
+        // The shelf prunes an item whose file has gone, so a failed reveal also changes the list.
+        objectWillChange.send()
+        if !fileShelf.reveal(id: id) { notice = "That file is no longer where it was, so it was removed from the shelf." }
+    }
+
+    func removeFromFileShelf(_ id: FileShelfItem.ID) {
+        objectWillChange.send()
+        fileShelf.remove(id: id)
     }
 
     func refreshAudioInputDevices() {
@@ -8309,6 +8344,18 @@ private struct SaysoSettingsView: View {
                         .labelsHidden()
                         .accessibilityIdentifier("settings-clipboard-toggle")
                 }
+                SaysoSettingItemCard(
+                    title: "File shelf (off by default)",
+                    description: "When on, you can keep up to \(FileShelfModule.defaultLimit) files or folders on a shelf, shown in the notch, and reveal them in Finder later; adding more drops the oldest. Files stay where they are and are never copied or uploaded. Every few seconds Sayso checks that shelved files still exist and drops any that moved or were deleted. The shelf lives only in memory: it is cleared when Sayso quits, and turning this off clears it.",
+                    example: "Add a screenshot here, then reveal it in Finder when you need it."
+                ) {
+                    Toggle("File shelf", isOn: $model.settings.fileShelfEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-file-shelf-toggle")
+                }
+                if model.settings.fileShelfEnabled {
+                    fileShelfCard
+                }
 
                 // Section 5: Reset & Maintenance
                 SaysoSectionHeader(text: "Reset & Maintenance")
@@ -8417,6 +8464,58 @@ private struct SaysoSettingsView: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var fileShelfCard: some View {
+        SaysoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(model.fileShelfItems.isEmpty ? "The shelf is empty" : "On the shelf")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Add files\u{2026}") { chooseFilesForShelf() }
+                        .buttonStyle(.bordered)
+                        .font(.caption)
+                        .accessibilityIdentifier("settings-file-shelf-add")
+                }
+                ForEach(model.fileShelfItems) { item in
+                    HStack {
+                        Image(systemName: item.isDirectory ? "folder" : "doc")
+                            .foregroundStyle(SaysoPalette.muted)
+                        Text(item.name)
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        if !item.isDirectory {
+                            Text(ByteCountFormatter.string(fromByteCount: item.byteCount, countStyle: .file))
+                                .font(.caption2)
+                                .foregroundStyle(SaysoPalette.muted)
+                        }
+                        Spacer()
+                        Button("Reveal") { model.revealOnFileShelf(item.id) }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                            .accessibilityLabel("Reveal \(item.name) in Finder")
+                        Button("Remove") { model.removeFromFileShelf(item.id) }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                            .accessibilityLabel("Remove \(item.name) from the shelf")
+                    }
+                }
+            }
+        }
+    }
+
+    private func chooseFilesForShelf() {
+        let panel = NSOpenPanel()
+        panel.title = "Add to File Shelf"
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        model.addToFileShelf(panel.urls)
     }
 
     private func label(for state: PermissionState) -> String {

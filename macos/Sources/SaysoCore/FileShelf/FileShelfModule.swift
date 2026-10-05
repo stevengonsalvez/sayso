@@ -11,6 +11,7 @@ public struct FileShelfItem: Equatable, Identifiable, Sendable {
 
 public final class FileShelfModule: SaysoModule, @unchecked Sendable {
     public static let supportedLimits = [10, 20, 50]
+    public static let defaultLimit = 20
     static let checkInterval: TimeInterval = 5
     static let addedNoticeSeconds: TimeInterval = 2
 
@@ -24,7 +25,7 @@ public final class FileShelfModule: SaysoModule, @unchecked Sendable {
     private let itemLifetime: TimeInterval?
     private let lock = NSLock()
     private var runtime: Runtime?
-    private var limit = 20
+    private var limit = defaultLimit
 
     public init(
         port: FileShelfPort,
