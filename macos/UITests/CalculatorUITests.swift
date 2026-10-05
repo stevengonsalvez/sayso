@@ -22,6 +22,22 @@ final class CalculatorUITests: XCTestCase {
         let copy = app.descendants(matching: .any)["calculator-copy"]
         XCTAssertTrue(copy.exists, "a Copy button for the result")
         XCTAssertTrue(copy.isEnabled, "Copy is offered for a result")
+
+        // The module's short-lived result notice reaches the open notch.
+        openNotch()
+        let line = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "12 × 3 = 36")).firstMatch
+        XCTAssertTrue(line.waitForExistence(timeout: 5), "the result line in the notch")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: line)
+        waitForExpectations(timeout: 15)
+    }
+
+    /// Opens the notch if it is collapsed, and proves it is open so an absent line is not a closed notch.
+    /// Matched by label: SwiftUI gives the minimize button its symbol name as identifier.
+    private func openNotch() {
+        let pill = app.buttons["Open Sayso Dictation workspace"].firstMatch
+        if pill.waitForExistence(timeout: 3) { pill.click() }
+        let minimize = app.buttons.matching(NSPredicate(format: "label == %@", "Minimize Sayso workspace")).firstMatch
+        XCTAssertTrue(minimize.waitForExistence(timeout: 10), "expanded notch")
     }
 
     func testKilometresConvertToMiles() {
