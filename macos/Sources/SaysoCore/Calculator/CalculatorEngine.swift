@@ -1,0 +1,422 @@
+import Foundation
+
+/// How sin, cos and tan read their argument.
+public enum CalculatorAngleUnit: Equatable, Sendable {
+    case degrees
+    case radians
+}
+
+/// Why an input has no result. Every failure is a value, never a trap or an infinite number.
+public enum CalculatorError: Error, Equatable, Sendable {
+    case empty
+    case incomplete
+    case unexpected(String)
+    case unknownWord(String)
+    case divisionByZero
+    case overflow
+    case undefined
+    case tooLong(limit: Int)
+    case tooDeep(limit: Int)
+    case unknownUnit(String)
+    case incompatibleUnits(from: String, to: String)
+    /// The calculator module is turned off, so nothing is evaluated or kept.
+    case off
+
+    public var message: String {
+        switch self {
+        case .empty: "Type a calculation"
+        case .incomplete: "Incomplete expression"
+        case let .unexpected(text): "Unexpected \u{201C}\(text)\u{201D}"
+        case let .unknownWord(word): "Unknown word \u{201C}\(word)\u{201D}"
+        case .divisionByZero: "Cannot divide by zero"
+        case .overflow: "Too large to show"
+        case .undefined: "Not a real number"
+        case let .tooLong(limit): "Too long: at most \(limit) characters"
+        case let .tooDeep(limit): "Nested too deeply: at most \(limit) levels"
+        case let .unknownUnit(unit): "Unknown unit \u{201C}\(unit)\u{201D}"
+        case let .incompatibleUnits(from, to): "Cannot convert \(from) to \(to)"
+        case .off: "Calculator is off. Turn it on in Settings."
+        }
+    }
+}
+
+public struct CalculatorValue: Equatable, Sendable {
+    public let number: Double
+    /// The unit converted to; nil for plain arithmetic.
+    public let unit: CalculatorUnit?
+
+    public init(number: Double, unit: CalculatorUnit? = nil) {
+        self.number = number
+        self.unit = unit
+    }
+}
+
+/// A small recursive-descent evaluator. NSExpression is not used: it raises an Objective-C exception on bad input.
+///
+///     sum     := product (("+" | "-") product)*
+///     product := unary (("*" | "×" | "x" | "/" | "÷") unary)*
+///     unary   := ("-" | "+") unary | power
+///     power   := postfix ("^" unary)?
+///     postfix := primary ("%" ("of" unary)?)?
+///     primary := number | constant | function (("(" sum ")") | unary) | "(" sum ")"
+///
+/// A conversion is `amount unit ("in" | "to" | "as") unit`, where the amount is any expression above.
+///
+/// A bare percent is a hundredth, except as the right side of + or -, where it is that share of the left side:
+/// "200 + 10%" is 220.
+public enum CalculatorEngine {
+    /// Longer input is refused before tokenizing, so the cost of any input is bounded.
+    public static let maxLength = 500
+    /// Nesting through parentheses, unary signs, exponents and function arguments; bounds the parser's recursion.
+    public static let maxDepth = 64
+
+    public static func evaluate(_ input: String, angle: CalculatorAngleUnit = .radians) -> Result<CalculatorValue, CalculatorError> {
+        // utf8 first: counting characters of a huge string is itself linear, so cap the bytes looked at.
+        guard input.utf8.count <= maxLength * 4, input.count <= maxLength else { return .failure(.tooLong(limit: maxLength)) }
+        do {
+            let tokens = try CalculatorTokenizer.tokens(of: input)
+            guard !tokens.isEmpty else { return .failure(.empty) }
+            if let conversion = try CalculatorConversion(tokens: tokens) {
+                var parser = CalculatorParser(tokens: Array(conversion.amount), angle: angle)
+                let amount = try parser.parseAll()
+                let (from, to) = (conversion.from, conversion.to)
+                guard from.dimension == to.dimension else {
+                    throw CalculatorError.incompatibleUnits(from: from.symbol, to: to.symbol)
+                }
+                let number = from.convert(amount, to: to)
+                guard number.isFinite else { throw CalculatorError.overflow }
+                return .success(CalculatorValue(number: number, unit: to))
+            }
+            var parser = CalculatorParser(tokens: tokens, angle: angle)
+            return .success(CalculatorValue(number: try parser.parseAll()))
+        } catch let error as CalculatorError {
+            return .failure(error)
+        } catch {
+            return .failure(.incomplete)
+        }
+    }
+}
+
+enum CalculatorToken: Equatable {
+    /// The value and the digits as typed, so an error can quote what the user wrote.
+    case number(Double, String)
+    case word(String)
+    case symbol(Character)
+
+    var text: String {
+        switch self {
+        case let .number(_, typed): typed
+        case let .word(word): word
+        case let .symbol(symbol): String(symbol)
+        }
+    }
+}
+
+/// Splits "5 km in miles" into the amount tokens and the two units. Keywords are tried from the right, so
+/// "5 in in cm" reads the first "in" as inches, and longer unit spellings first, so "km/h" is not read as "h".
+struct CalculatorConversion {
+    let amount: ArraySlice<CalculatorToken>
+    let from: CalculatorUnit
+    let to: CalculatorUnit
+
+    private static let keywords: Set<String> = ["in", "to", "as"]
+    private static let longestUnitTokens = 3
+
+    /// Nil when the input is not a conversion; throws when it names a source unit but an unknown target.
+    init?(tokens: [CalculatorToken]) throws {
+        let keywordIndices = tokens.indices.reversed().filter {
+            if case let .word(word) = tokens[$0] { Self.keywords.contains(word.lowercased()) } else { false }
+        }
+        var unknownTarget: String?
+        for index in keywordIndices {
+            guard let source = Self.sourceUnit(in: tokens[..<index]) else { continue }
+            let targetTokens = tokens[(index + 1)...]
+            guard let targetName = Self.text(of: targetTokens) else { continue }
+            guard let target = CalculatorUnit.named(targetName) else {
+                unknownTarget = unknownTarget ?? targetName
+                continue
+            }
+            amount = tokens[..<(index - source.length)]
+            from = source.unit
+            to = target
+            return
+        }
+        if let unknownTarget { throw CalculatorError.unknownUnit(unknownTarget) }
+        return nil
+    }
+
+    /// The unit at the end of `tokens`, leaving at least one token for the amount.
+    private static func sourceUnit(in tokens: ArraySlice<CalculatorToken>) -> (unit: CalculatorUnit, length: Int)? {
+        for length in stride(from: min(longestUnitTokens, tokens.count - 1), through: 1, by: -1) {
+            if let name = text(of: tokens.suffix(length)), let unit = CalculatorUnit.named(name) { return (unit, length) }
+        }
+        return nil
+    }
+
+    /// Words and symbols joined without spaces ("km/h", "floz"); nil when empty or holding a number.
+    private static func text(of tokens: ArraySlice<CalculatorToken>) -> String? {
+        guard !tokens.isEmpty else { return nil }
+        var text = ""
+        for token in tokens {
+            if case .number = token { return nil }
+            text += token.text
+        }
+        return text
+    }
+}
+
+enum CalculatorTokenizer {
+    static let symbols: Set<Character> = ["+", "-", "−", "*", "×", "·", "/", "÷", "^", "(", ")", "%"]
+
+    static func tokens(of input: String) throws -> [CalculatorToken] {
+        let characters = Array(input)
+        var tokens: [CalculatorToken] = []
+        var index = 0
+        while index < characters.count {
+            let character = characters[index]
+            if character.isWhitespace {
+                index += 1
+            } else if character.isASCII, character.isNumber || character == "." {
+                let start = index
+                let value = try number(in: characters, from: &index)
+                tokens.append(.number(value, String(characters[start..<index])))
+            } else if isWordCharacter(character) {
+                let start = index
+                while index < characters.count, isWordCharacter(characters[index]) { index += 1 }
+                tokens.append(.word(String(characters[start..<index])))
+            } else if symbols.contains(character) {
+                tokens.append(.symbol(character))
+                index += 1
+            } else {
+                throw CalculatorError.unexpected(String(character))
+            }
+        }
+        return tokens
+    }
+
+    static func isWordCharacter(_ character: Character) -> Bool {
+        character.isLetter || character == "°"
+    }
+
+    /// Digits with an optional fraction. A comma is a thousands separator only between groups of exactly three
+    /// digits after a first group of one to three that does not start with 0, so "1,20", "1234,567" and "0,500"
+    /// (0.5 in a comma-decimal locale) are refused rather than misread.
+    private static func number(in characters: [Character], from index: inout Int) throws -> Double {
+        func isDigit(_ offset: Int) -> Bool {
+            offset < characters.count && characters[offset].isASCII && characters[offset].isNumber
+        }
+        var digits = ""
+        var groupLength = 0
+        var grouped = false
+        while index < characters.count {
+            if isDigit(index) {
+                digits.append(characters[index])
+                groupLength += 1
+                index += 1
+            } else if characters[index] == ",", !digits.isEmpty {
+                let validGroup = grouped ? groupLength == 3 : groupLength <= 3 && digits.first != "0"
+                guard validGroup, isDigit(index + 1), isDigit(index + 2), isDigit(index + 3), !isDigit(index + 4) else {
+                    throw CalculatorError.unexpected(",")
+                }
+                grouped = true
+                groupLength = 0
+                index += 1
+            } else {
+                break
+            }
+        }
+        if index < characters.count, characters[index] == "." {
+            digits.append(".")
+            index += 1
+            while isDigit(index) {
+                digits.append(characters[index])
+                index += 1
+            }
+            if index < characters.count, characters[index] == "." || characters[index] == "," {
+                throw CalculatorError.unexpected(String(characters[index]))
+            }
+        }
+        guard digits != ".", let value = Double(digits) else { throw CalculatorError.unexpected(digits) }
+        return value
+    }
+}
+
+struct CalculatorParser {
+    /// A value whose trailing "%" is not applied yet, so + and - can read it as a share of their left side.
+    private struct Operand {
+        var value: Double
+        var percent = false
+
+        var resolved: Double { percent ? value / 100 : value }
+    }
+
+    static let constants: [String: Double] = ["pi": .pi, "π": .pi, "e": M_E]
+    static let functions: Set<String> = ["sqrt", "sin", "cos", "tan", "ln", "log", "abs", "round"]
+
+    private let tokens: [CalculatorToken]
+    private let angle: CalculatorAngleUnit
+    private var position = 0
+    private var depth = 0
+
+    init(tokens: [CalculatorToken], angle: CalculatorAngleUnit) {
+        self.tokens = tokens
+        self.angle = angle
+    }
+
+    mutating func parseAll() throws -> Double {
+        let value = try parseSum().resolved
+        if let extra = peek { throw CalculatorError.unexpected(extra.text) }
+        return try checked(value)
+    }
+
+    private var peek: CalculatorToken? { position < tokens.count ? tokens[position] : nil }
+
+    private mutating func take(_ symbols: Set<Character>) -> Character? {
+        guard case let .symbol(symbol) = peek, symbols.contains(symbol) else { return nil }
+        position += 1
+        return symbol
+    }
+
+    private mutating func takeWord(_ words: Set<String>) -> Bool {
+        guard case let .word(word) = peek, words.contains(word.lowercased()) else { return false }
+        position += 1
+        return true
+    }
+
+    private mutating func parseSum() throws -> Operand {
+        var value = try parseProduct()
+        while let symbol = take(["+", "-", "−"]) {
+            let right = try parseProduct()
+            let sign: Double = symbol == "+" ? 1 : -1
+            if value.percent, right.percent {
+                // "50% + 50%" adds hundredths and stays a percent.
+                value = Operand(value: try checked(value.value + sign * right.value), percent: true)
+            } else {
+                let base = value.resolved
+                let amount = right.percent ? base * right.value / 100 : right.value
+                value = Operand(value: try checked(base + sign * amount))
+            }
+        }
+        return value
+    }
+
+    private mutating func parseProduct() throws -> Operand {
+        var value = try parseUnary()
+        while true {
+            if take(["*", "×", "·"]) != nil || takeWord(["x"]) {
+                value = Operand(value: try checked(value.resolved * parseUnary().resolved))
+            } else if take(["/", "÷"]) != nil {
+                let divisor = try parseUnary().resolved
+                guard divisor != 0 else { throw CalculatorError.divisionByZero }
+                value = Operand(value: try checked(value.resolved / divisor))
+            } else {
+                return value
+            }
+        }
+    }
+
+    /// Every recursive path passes through here, so this one counter bounds the recursion.
+    private mutating func parseUnary() throws -> Operand {
+        depth += 1
+        defer { depth -= 1 }
+        guard depth <= CalculatorEngine.maxDepth else { throw CalculatorError.tooDeep(limit: CalculatorEngine.maxDepth) }
+        if take(["-", "−"]) != nil {
+            var operand = try parseUnary()
+            operand.value = -operand.value
+            return operand
+        }
+        if take(["+"]) != nil { return try parseUnary() }
+        return try parsePower()
+    }
+
+    private mutating func parsePower() throws -> Operand {
+        let base = try parsePostfix()
+        guard take(["^"]) != nil else { return base }
+        let (root, exponent) = (base.resolved, try parseUnary().resolved)
+        if root == 0, exponent < 0 { throw CalculatorError.divisionByZero }
+        return Operand(value: try checked(pow(root, exponent)))
+    }
+
+    private mutating func parsePostfix() throws -> Operand {
+        let operand = try parsePrimary()
+        guard take(["%"]) != nil else { return operand }
+        let share = Operand(value: operand.resolved, percent: true)
+        guard takeWord(["of"]) else { return share }
+        return Operand(value: try checked(share.resolved * parseUnary().resolved))
+    }
+
+    private mutating func parsePrimary() throws -> Operand {
+        guard let token = peek else { throw CalculatorError.incomplete }
+        position += 1
+        switch token {
+        case let .number(value, _):
+            return Operand(value: try checked(value))
+        case .symbol("("):
+            let value = try parseSum()
+            guard take([")"]) != nil else {
+                if let extra = peek { throw CalculatorError.unexpected(extra.text) }
+                throw CalculatorError.incomplete
+            }
+            return value
+        case let .word(word):
+            let name = word.lowercased()
+            if let constant = Self.constants[name] { return Operand(value: constant) }
+            guard Self.functions.contains(name) else { throw CalculatorError.unknownWord(word) }
+            // "sin(30)^2" squares the sine: parentheses right after a function are its whole argument.
+            let argument = if case .symbol("(") = peek { try parsePrimary() } else { try parseUnary() }
+            return Operand(value: try apply(name, to: argument.resolved))
+        case let .symbol(symbol):
+            throw CalculatorError.unexpected(String(symbol))
+        }
+    }
+
+    private func apply(_ function: String, to x: Double) throws -> Double {
+        switch function {
+        case "sqrt":
+            guard x >= 0 else { throw CalculatorError.undefined }
+            return sqrt(x)
+        case "ln", "log":
+            guard x > 0 else { throw CalculatorError.undefined }
+            return function == "ln" ? log(x) : log10(x)
+        case "abs":
+            return abs(x)
+        case "round":
+            return x.rounded(.toNearestOrAwayFromZero)
+        default:
+            return try trigonometry(function, x)
+        }
+    }
+
+    /// Whole multiples of a right angle use exact values, so sin(180) is 0 and tan(90) is undefined rather than
+    /// 1.2e-16 and 1.6e16. Degrees are reduced modulo 360 first, which is exact. Radians far from zero are never
+    /// snapped: there a multiple of pi/2 cannot be told apart from a nearby angle.
+    private func trigonometry(_ function: String, _ x: Double) throws -> Double {
+        let degrees = angle == .degrees ? fmod(x, 360) : nil
+        let quarterTurns = degrees.map { $0 / 90 } ?? x / (Double.pi / 2)
+        let nearest = quarterTurns.rounded()
+        if abs(quarterTurns) < 1e6, abs(quarterTurns - nearest) <= 1e-12 * max(1, abs(quarterTurns)) {
+            let turn = (Int(nearest) % 4 + 4) % 4
+            let (sine, cosine) = ([0.0, 1, 0, -1][turn], [1.0, 0, -1, 0][turn])
+            switch function {
+            case "sin": return sine
+            case "cos": return cosine
+            default:
+                guard cosine != 0 else { throw CalculatorError.undefined }
+                return sine / cosine
+            }
+        }
+        let radians = degrees.map { $0 * .pi / 180 } ?? x
+        switch function {
+        case "sin": return try checked(sin(radians))
+        case "cos": return try checked(cos(radians))
+        default: return try checked(tan(radians))
+        }
+    }
+
+    /// The first infinite or NaN intermediate becomes the error, so a later step cannot hide it.
+    private func checked(_ value: Double) throws -> Double {
+        if value.isNaN { throw CalculatorError.undefined }
+        if value.isInfinite { throw CalculatorError.overflow }
+        return value
+    }
+}
