@@ -36,6 +36,20 @@ private final class PingSink: @unchecked Sendable {
     func add(_ ping: TimerPing) { lock.withLock { received.append(ping) } }
 }
 
+private final class CapturedRuntimes: @unchecked Sendable { var runtimes: [SaysoModuleRuntime] = [] }
+
+/// Hands the real runtime to the test so resource accounting can be read after the host stops it.
+private struct RuntimeProbe: SaysoModule {
+    let inner: TimerModule
+    let captured: CapturedRuntimes
+    var descriptor: SaysoModuleDescriptor { inner.descriptor }
+    func makeRuntime(context: SaysoModuleContext) -> SaysoModuleRuntime {
+        let runtime = inner.makeRuntime(context: context)
+        captured.runtimes.append(runtime)
+        return runtime
+    }
+}
+
 private struct Rig {
     let host: SaysoModuleHost
     let module: TimerModule
@@ -303,6 +317,41 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
 
         #expect(rig.module.cancel(first))
         #expect(rig.module.startCountdown(60) != nil, "cancelling frees a slot")
+    }
+
+    @Test func disablingCancelsEveryTimerReleasesTheTickAndRetainsNothing() throws {
+        let scheduler = FakeScheduler(), clock = Clock(), captured = CapturedRuntimes()
+        let module = TimerModule(scheduler: scheduler, now: { clock.now })
+        let host = SaysoModuleHost(modules: [RuntimeProbe(inner: module, captured: captured)], now: { clock.now })
+        host.enable("timer")
+        try #require(module.startCountdown(600) != nil)
+        try #require(module.startStopwatch() != nil)
+        let pomodoro = try #require(module.startPomodoro())
+        #expect(module.pause(pomodoro))
+        let runtime = try #require(captured.runtimes.first as? SaysoResourceAccounting)
+        #expect(runtime.retainedResources == 4, "three timers and one tick")
+
+        host.disable("timer")
+
+        #expect(runtime.retainedResources == 0)
+        #expect(scheduler.jobs.isEmpty)
+        #expect(module.timers.isEmpty)
+        #expect(!host.engine.stack.contains { $0.moduleID == "timer" })
+        #expect(module.startCountdown(60) == nil)
+        #expect(module.startPomodoro() == nil)
+
+        host.enable("timer")
+        #expect(module.timers.isEmpty, "turning it back on does not resurrect old timers")
+        #expect(module.startPomodoro() != nil)
+        #expect(scheduler.jobs.count == 1)
+    }
+
+    @Test func timersNeedNoPermissions() {
+        #expect(TimerModule(scheduler: FakeScheduler()).descriptor.capabilities.isEmpty)
+    }
+
+    @Test func timerModulePassesTheGenericAcceptanceHarness() {
+        #expect(SaysoModuleAcceptance.violations(for: TimerModule(scheduler: FakeScheduler())) == [])
     }
 
     @Test func timeLabelsUseMinutesAndSecondsAndAddHoursOnlyWhenNeeded() {
