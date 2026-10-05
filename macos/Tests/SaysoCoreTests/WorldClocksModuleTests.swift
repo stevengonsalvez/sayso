@@ -270,6 +270,139 @@ private func rig(
         #expect(WorldClockHourCycle(locale: Locale(identifier: "ja_JP")) == .twentyFour)
     }
 
+    // MARK: Ambient line and the minute tick
+
+    @Test func theFirstZoneIsAnAmbientLineWithOneJobAtTheNextMinute() throws {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo"), zone("Europe/London", "London")])
+        let line = try #require(rig.activities.first)
+
+        #expect(rig.activities.count == 1, "only the first zone is summarised")
+        #expect(line.kind == .ambient, "ranks below every other activity, so it never interrupts")
+        #expect(line.title == "Tokyo 09:00")
+        #expect(line.actions.isEmpty)
+        #expect(line.expiresAfter == nil)
+        #expect(rig.scheduler.jobs == [instant("2026-01-15T00:01:00Z")], "one job, at the minute boundary, not every second")
+        #expect(rig.retained == 1)
+    }
+
+    @Test func theLineIsRepublishedOnlyWhenTheMinuteChanges() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        let published = rig.captured.changes
+
+        rig.advance(29.999)
+        #expect(rig.captured.changes == published, "nothing is redrawn inside a minute")
+        #expect(rig.activities.first?.title == "Tokyo 09:00")
+
+        rig.advance(0.001)
+        #expect(rig.activities.first?.title == "Tokyo 09:01")
+        #expect(rig.captured.changes == published + 1)
+        #expect(rig.scheduler.jobs == [instant("2026-01-15T00:02:00Z")])
+    }
+
+    @Test func aLateTickReadsTheClockAndArmsOnlyTheNextMinute() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        let published = rig.captured.changes
+
+        rig.advance(3 * 3600 + 15)
+        #expect(rig.activities.first?.title == "Tokyo 12:00")
+        #expect(rig.captured.changes == published + 1, "one late tick, one publish")
+        #expect(rig.scheduler.jobs == [instant("2026-01-15T03:01:00Z")])
+    }
+
+    @Test func editsRepublishOnlyWhenTheFirstZoneChanges() throws {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        let published = rig.captured.changes
+
+        try rig.module.add("Europe/London")
+        #expect(rig.captured.changes == published, "a second zone does not change the line")
+
+        #expect(rig.module.move("Europe/London", to: 0))
+        #expect(rig.activities.map(\.title) == ["London 00:00"])
+        #expect(rig.captured.changes == published + 1)
+
+        #expect(rig.module.remove("Europe/London"))
+        #expect(rig.activities.map(\.title) == ["Tokyo 09:00"])
+        #expect(rig.scheduler.jobs.count == 1)
+    }
+
+    @Test func anEmptyListHasNoLineAndNoJob() throws {
+        let rig = rig()
+        #expect(rig.activities.isEmpty)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.retained == 0)
+
+        try rig.module.add("Asia/Tokyo")
+        #expect(rig.activities.map(\.title) == ["Tokyo 09:00"])
+        #expect(rig.scheduler.jobs.count == 1)
+
+        #expect(rig.module.remove("Asia/Tokyo"))
+        #expect(rig.activities.isEmpty, "removing the last zone clears the line")
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.retained == 0)
+    }
+
+    @Test func disablingCancelsTheTickAndClearsTheLine() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        rig.host.disable("world-clocks")
+
+        #expect(rig.retained == 0)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.activities.isEmpty)
+        #expect(rig.module.readings.isEmpty)
+
+        rig.host.enable("world-clocks")
+        #expect(rig.activities.map(\.title) == ["Tokyo 09:00"], "the saved list comes back on enable")
+        #expect(rig.scheduler.jobs.count == 1)
+    }
+
+    @Test func quarantineCancelsTheTick() throws {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        let context = try #require(rig.captured.contexts.last)
+
+        for _ in 0..<3 { context.reportFailure() }
+        #expect(rig.host.health(of: "world-clocks") == .quarantined)
+        #expect(rig.retained == 0)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.activities.isEmpty)
+    }
+
+    // MARK: Daylight saving, from fixed instants
+
+    @Test func newYorkSpringsForwardFromOneFiftyNineToThreeOnTheTick() {
+        // 2026-03-08 07:00 UTC: 02:00 EST becomes 03:00 EDT.
+        let rig = rig([zone("America/New_York", "New York")], at: "2026-03-08T06:59:00Z")
+        #expect(rig.activities.first?.title == "New York 01:59")
+
+        rig.advance(60)
+        #expect(rig.activities.first?.title == "New York 03:00")
+        #expect(rig.module.readings.map(\.time) == ["03:00"])
+        #expect(rig.scheduler.jobs == [instant("2026-03-08T07:01:00Z")])
+    }
+
+    @Test func newYorkFallsBackAndRepeatsOneOClockOnTheTick() {
+        // 2026-11-01 06:00 UTC: 02:00 EDT becomes 01:00 EST, so 01:00 to 01:59 happens twice.
+        let rig = rig([zone("America/New_York", "New York")], at: "2026-11-01T05:59:00Z")
+        #expect(rig.activities.first?.title == "New York 01:59")
+
+        rig.advance(60)
+        #expect(rig.activities.first?.title == "New York 01:00")
+        rig.advance(59 * 60)
+        #expect(rig.activities.first?.title == "New York 01:59")
+        rig.advance(60)
+        #expect(rig.activities.first?.title == "New York 02:00")
+    }
+
+    @Test func theDayOffsetUsesEachZonesOffsetAtThatInstantAcrossDST() throws {
+        // 2026-03-08 04:30 UTC: still 23:30 on the 7th in New York (EST), already the 8th in London.
+        let rig = rig(at: "2026-03-08T04:30:00Z", local: "America/New_York")
+        try rig.module.add("Europe/London")
+        #expect(rig.module.readings.map(\.title) == ["London 04:30 +1d"])
+
+        // 2026-03-08 07:30 UTC: 03:30 EDT on the 8th in New York.
+        rig.clock.now = instant("2026-03-08T07:30:00Z")
+        #expect(rig.module.readings.map(\.title) == ["London 07:30"])
+    }
+
     @Test func passesTheModuleAcceptanceContract() {
         let module = WorldClocksModule(
             store: FakeStore([zone("Asia/Tokyo", "Tokyo")]), scheduler: FakeScheduler(), resolveZone: resolve
