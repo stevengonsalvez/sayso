@@ -144,19 +144,29 @@ private final class FakeSampler: ColorSamplingPort, @unchecked Sendable {
     /// How many times the sampler was shown.
     var requests: Int { lock.withLock { asked } }
 
-    /// The next pick returns this at once; nil is the user pressing Escape.
-    func queue(_ color: ColorPickerColor?) { lock.withLock { queued.append(color) } }
+    /// The next pick returns this at once, replacing an earlier answer nobody asked for; nil is the user pressing
+    /// Escape.
+    func queue(_ color: ColorPickerColor?) { lock.withLock { queued = [color] } }
 
+    /// Every held pick ends as a cancel if the test is cancelled, a backstop against a hung run.
     func pick() async -> ColorPickerColor? {
-        await withCheckedContinuation { continuation in
-            let ready = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
-                asked += 1
-                if queued.isEmpty { held.append(continuation) } else { continuation.resume(returning: queued.removeFirst()) }
-                let due = waiters.filter { $0.count <= asked }
-                waiters.removeAll { $0.count <= asked }
-                return due.map(\.continuation)
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let ready = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                    asked += 1
+                    if queued.isEmpty { held.append(continuation) } else { continuation.resume(returning: queued.removeFirst()) }
+                    let due = waiters.filter { $0.count <= asked }
+                    waiters.removeAll { $0.count <= asked }
+                    return due.map(\.continuation)
+                }
+                ready.forEach { $0.resume() }
             }
-            ready.forEach { $0.resume() }
+        } onCancel: {
+            let all = lock.withLock { () -> [CheckedContinuation<ColorPickerColor?, Never>] in
+                defer { held = [] }
+                return held
+            }
+            all.forEach { $0.resume(returning: nil) }
         }
     }
 
@@ -345,6 +355,8 @@ private struct ColorPickerRig {
         let first = Task { await rig.module.pick() }
         await rig.sampler.waitForRequests(1)
         #expect(rig.module.isPicking)
+        // An answer is ready, so a module that wrongly shows a second sampler gets it at once and fails, never hangs.
+        rig.sampler.queue(color(7, 7, 7))
         #expect(await rig.module.pick() == nil, "ignored while one is pending")
         #expect(rig.sampler.requests == 1)
         #expect(rig.retained == 1, "the pending pick is held")
@@ -433,6 +445,7 @@ private struct ColorPickerRig {
         rig.host.disable("color-picker")
         rig.host.enable("color-picker")
 
+        rig.sampler.queue(color(7, 7, 7))
         #expect(await rig.module.pick() == nil, "the system sampler from before is still on screen")
         #expect(rig.sampler.requests == 1)
         rig.sampler.answer(color(9, 9, 9))
