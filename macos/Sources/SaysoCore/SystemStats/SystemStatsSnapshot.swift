@@ -5,20 +5,21 @@ public struct SystemStatsSnapshot: Equatable, Sendable {
     /// Fraction of CPU time busy since the previous sample; nil for the first sample, which has nothing to compare.
     public let cpuLoad: Double?
     public let memoryUsedFraction: Double?
-    public let memoryPressure: SystemMemoryPressure
+    public let memoryPressure: SystemMemoryPressure?
     public let batteryFraction: Double?
     /// Nil whenever `batteryFraction` is nil.
     public let isPluggedIn: Bool?
-    public let diskFreeBytes: Int64
+    /// From the latest disk reading, which is taken less often than the rest.
+    public let diskFreeBytes: Int64?
     public let sampledAt: Date
 
     public init(
         cpuLoad: Double?,
         memoryUsedFraction: Double?,
-        memoryPressure: SystemMemoryPressure,
+        memoryPressure: SystemMemoryPressure?,
         batteryFraction: Double?,
         isPluggedIn: Bool?,
-        diskFreeBytes: Int64,
+        diskFreeBytes: Int64?,
         sampledAt: Date
     ) {
         self.cpuLoad = cpuLoad.flatMap(Self.unit)
@@ -26,7 +27,7 @@ public struct SystemStatsSnapshot: Equatable, Sendable {
         self.memoryPressure = memoryPressure
         self.batteryFraction = batteryFraction.flatMap(Self.unit)
         self.isPluggedIn = self.batteryFraction == nil ? nil : isPluggedIn
-        self.diskFreeBytes = max(diskFreeBytes, 0)
+        self.diskFreeBytes = diskFreeBytes.map { max($0, 0) }
         self.sampledAt = sampledAt
     }
 
@@ -37,7 +38,7 @@ public struct SystemStatsSnapshot: Equatable, Sendable {
 
     public var memoryText: String {
         let used = memoryUsedFraction.map { "\(Self.percent($0))% used" } ?? "Unknown"
-        return "\(used), pressure \(memoryPressure.rawValue)"
+        return [used, memoryPressure.map { "pressure \($0.rawValue)" }].compactMap { $0 }.joined(separator: ", ")
     }
 
     public var batteryText: String {
@@ -46,7 +47,7 @@ public struct SystemStatsSnapshot: Equatable, Sendable {
         return "\(batteryPercent)%, \(isPluggedIn ? "plugged in" : "on battery")"
     }
 
-    public var diskText: String { "\(Self.gigabytes(diskFreeBytes)) GB free" }
+    public var diskText: String { diskFreeBytes.map { "\(Self.gigabytes($0)) GB free" } ?? "Unknown" }
 
     /// Decimal gigabytes with one decimal, as Finder counts them; fixed format so it never depends on the locale.
     static func gigabytes(_ bytes: Int64) -> String { String(format: "%.1f", Double(bytes) / 1_000_000_000) }
