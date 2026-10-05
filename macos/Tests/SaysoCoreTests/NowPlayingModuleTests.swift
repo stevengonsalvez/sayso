@@ -28,11 +28,14 @@ private final class FakePlayer: NowPlayingPort, @unchecked Sendable {
     private var commandError: NowPlayingPortError?
     private var readCount = 0
     private var sentCommands: [Sent] = []
+    private var preferences: [NowPlayingApp?] = []
 
     init(clock: Clock) { self.clock = clock }
 
     var reads: Int { locked { readCount } }
     var commands: [Sent] { locked { sentCommands } }
+    /// The player the module asked to be preferred on each read.
+    var preferred: [NowPlayingApp?] { locked { preferences } }
 
     func load(_ title: String, artist: String = "Artist", app: NowPlayingApp = .spotify, duration: TimeInterval?, at start: TimeInterval = 0, playing: Bool = true) {
         locked {
@@ -53,10 +56,11 @@ private final class FakePlayer: NowPlayingPort, @unchecked Sendable {
     func failReads(_ error: NowPlayingPortError?) { locked { readError = error } }
     func failCommands(_ error: NowPlayingPortError?) { locked { commandError = error } }
 
-    func current() throws(NowPlayingPortError) -> NowPlayingSnapshot? {
+    func current(preferring app: NowPlayingApp?) throws(NowPlayingPortError) -> NowPlayingSnapshot? {
         lock.lock()
         defer { lock.unlock() }
         readCount += 1
+        preferences.append(app)
         if let readError { throw readError }
         guard let track else { return nil }
         let elapsed = position + (playingSince.map { clock.now.timeIntervalSince($0) } ?? 0)
@@ -314,6 +318,7 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
     @Test func dismissHidesTheTrackUntilTheTrackChanges() {
         let rig = rig { $0.load("Song", duration: 240) }
         #expect(rig.tap("dismiss"))
+        rig.advance(0)
         #expect(rig.lines.isEmpty)
         #expect(rig.scheduler.jobs == [rig.clock.now + NowPlayingModule.idlePollSeconds], "hidden: no label tick")
 
@@ -351,10 +356,13 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(SaysoModuleAcceptance.violations(for: module).isEmpty)
     }
 
-    @Test func transportActionsGoThroughThePortToTheShownPlayer() {
+    @Test func transportActionsRunFromTheScheduledJobNotInsideTheTap() {
         let rig = rig { $0.load("Song", app: .music, duration: 240) }
         rig.player.queue("Next song", duration: 200)
         #expect(rig.tap("next"))
+        #expect(rig.player.commands.isEmpty, "the tap returns at once; a slow player never holds the caller or the host lock")
+        #expect(rig.scheduler.jobs == [rig.clock.now], "still one job, due now")
+        rig.advance(0)
         #expect(rig.player.commands == [Sent(command: .next, app: .music)])
         let reads = rig.player.reads
         rig.advance(NowPlayingModule.commandSettleSeconds)
@@ -362,36 +370,75 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         #expect(rig.line?.title == "Next song · Artist · Music")
 
         rig.tap("play-pause")
+        rig.tap("previous")
+        rig.advance(0)
+        #expect(rig.player.commands.map(\.command) == [.next, .playPause, .previous], "taps run in order")
+        #expect(rig.player.commands.allSatisfy { $0.app == .music })
         rig.advance(NowPlayingModule.commandSettleSeconds)
         #expect(rig.line?.title == "Paused · Next song · Artist · Music")
-        rig.tap("previous")
-        #expect(rig.module.send(.playPause))
-        #expect(rig.player.commands.map(\.command) == [.next, .playPause, .previous, .playPause])
-        #expect(rig.player.commands.allSatisfy { $0.app == .music })
         #expect(rig.scheduler.jobs.count == 1)
     }
 
-    @Test func aRefusedCommandReportsAFailureWithoutCrashingAndKeepsTheLine() {
+    @Test func repeatedlyRefusedCommandsReportOnceAndNeverQuarantine() {
         let rig = rig { $0.load("Song", duration: 240) }
         rig.player.failCommands(.unavailable)
-        #expect(!rig.module.send(.next))
-        #expect(rig.tap("play-pause"), "the action is still routed; the module absorbs the failure")
-        #expect(rig.host.health(of: "now-playing") == .degraded)
+        for _ in 0..<3 {
+            #expect(rig.tap("next"), "the action is still routed; the module absorbs the failure")
+            rig.advance(0)
+        }
+        #expect(rig.player.commands.count == 3)
+        #expect(rig.host.health(of: "now-playing") == .degraded, "reported, but three refused taps must not quarantine")
         #expect(rig.line?.title == "Song · Artist · Spotify")
         #expect(rig.scheduler.jobs.count == 1)
     }
 
-    @Test func aCommandWithNoTrackIsRefusedWithoutAskingAPlayer() {
-        let rig = rig()
-        #expect(!rig.module.send(.playPause))
-        #expect(rig.player.commands.isEmpty)
+    @Test func aCommandToAPlayerThatQuitIsNotAFailureAndClearsTheLineSoon() {
+        let rig = rig { $0.load("Song", duration: 240) }
+        rig.player.quit()
+        rig.player.failCommands(.playerGone)
+        rig.tap("play-pause")
+        rig.advance(0)
         #expect(rig.host.health(of: "now-playing") == .ready)
+        rig.advance(NowPlayingModule.commandSettleSeconds)
+        #expect(rig.lines.isEmpty, "re-read after the command finds nothing")
+    }
 
-        rig.player.load("Song", duration: 240)
-        rig.advance(NowPlayingModule.idlePollSeconds)
+    @Test func aTapQueuedJustBeforeTurningOffIsDropped() {
+        let rig = rig { $0.load("Song", duration: 240) }
+        rig.tap("next")
         rig.host.disable("now-playing")
-        #expect(!rig.module.send(.playPause), "off means no commands either")
-        #expect(rig.player.commands.isEmpty)
+        rig.advance(0)
+        #expect(rig.player.commands.isEmpty, "off means no commands either")
+        #expect(rig.retained == 0)
+    }
+
+    @Test func aFailedOrEmptyReadDoesNotUndoDismiss() {
+        let rig = rig { $0.load("Song", duration: 240) }
+        rig.tap("dismiss")
+        rig.advance(0)
+        #expect(rig.lines.isEmpty)
+        rig.player.failReads(.unavailable)
+        rig.advance(NowPlayingModule.idlePollSeconds)
+        rig.player.failReads(nil)
+        rig.advance(NowPlayingModule.failureBackoffSeconds)
+        #expect(rig.lines.isEmpty, "the same track is still the dismissed one")
+    }
+
+    @Test func theCurrentPlayerIsPreferredWhenTwoAreEquallyPaused() {
+        let rig = rig { $0.load("Song", app: .spotify, duration: 240) }
+        #expect(rig.player.preferred == [nil], "nothing shown yet, nothing to prefer")
+        rig.advance(NowPlayingModule.activePollSeconds)
+        #expect(rig.player.preferred.last == .spotify)
+    }
+
+    @Test func aClockSetBackDoesNotStallChecksOrTheFade() {
+        let rig = rig { $0.load("Song", duration: 240, playing: false) }
+        rig.clock.now -= 3600
+        rig.module.clockChanged()
+        #expect(rig.scheduler.jobs.count == 1)
+        #expect(rig.scheduler.jobs.allSatisfy { $0 <= rig.clock.now + NowPlayingModule.activePollSeconds }, "\(rig.scheduler.jobs)")
+        rig.advance(NowPlayingModule.pausedFadeSeconds)
+        #expect(rig.lines.isEmpty, "the pause fades a minute after the clock change, not an hour later")
     }
 
     @Test func aDeniedOrFailingPlayerIsReportedOnceAndCheckedLessOften() {
