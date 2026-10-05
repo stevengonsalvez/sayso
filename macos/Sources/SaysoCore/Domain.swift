@@ -302,6 +302,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var fileShelfEnabled = false
     /// Opt-in: Now Playing asks an already running Music or Spotify for its track while this is on.
     public var nowPlayingEnabled = false
+    /// On unless turned off: system stats only read counters on this Mac and were always on before this setting.
+    public var systemStatsEnabled = true
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
@@ -379,7 +381,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, transcriptionExecutionMode, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
-        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled
+        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
@@ -447,6 +449,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         clipboardModuleEnabled = decoded(Bool.self, .clipboardModuleEnabled, fallback: clipboardModuleEnabled)
         fileShelfEnabled = decoded(Bool.self, .fileShelfEnabled, fallback: fileShelfEnabled)
         nowPlayingEnabled = decoded(Bool.self, .nowPlayingEnabled, fallback: nowPlayingEnabled)
+        systemStatsEnabled = decoded(Bool.self, .systemStatsEnabled, fallback: systemStatsEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
         byokTranscriptionModel = decoded(String.self, .byokTranscriptionModel, fallback: byokTranscriptionModel)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
