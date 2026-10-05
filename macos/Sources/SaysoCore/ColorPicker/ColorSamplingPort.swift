@@ -17,9 +17,10 @@ public struct SystemColorSamplingPort: ColorSamplingPort {
     private static func sample() async -> ColorPickerColor? {
         await withCheckedContinuation { continuation in
             let sampler = NSColorSampler()
+            // Held only to keep the sampler alive until it answers; never used from the handler's thread.
+            nonisolated(unsafe) let keepAlive = sampler
             sampler.show { picked in
-                // The sampler is kept alive until it answers.
-                withExtendedLifetime(sampler) { continuation.resume(returning: picked.flatMap(color(from:))) }
+                withExtendedLifetime(keepAlive) { continuation.resume(returning: picked.flatMap(color(from:))) }
             }
         }
     }
