@@ -16,3 +16,30 @@ public protocol WorldClocksStore: Sendable {
     func load() -> [WorldClockZone]
     func save(_ zones: [WorldClockZone])
 }
+
+/// Keeps the list as JSON under one key. Missing or unreadable data reads as an empty list, and an unreadable
+/// entry is skipped rather than losing the rest.
+public final class UserDefaultsWorldClocksStore: WorldClocksStore, @unchecked Sendable {
+    public static let key = "ai.sayso.notch.worldClocks.v1"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public func load() -> [WorldClockZone] {
+        guard let data = defaults.data(forKey: Self.key),
+              let entries = try? JSONDecoder().decode([Lenient].self, from: data) else { return [] }
+        return entries.compactMap(\.zone)
+    }
+
+    public func save(_ zones: [WorldClockZone]) {
+        guard let data = try? JSONEncoder().encode(zones) else { return }
+        defaults.set(data, forKey: Self.key)
+    }
+
+    private struct Lenient: Decodable {
+        let zone: WorldClockZone?
+        init(from decoder: Decoder) throws { zone = try? WorldClockZone(from: decoder) }
+    }
+}
