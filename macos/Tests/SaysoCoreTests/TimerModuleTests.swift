@@ -181,6 +181,79 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(rig.running.map(\.title) == ["Timer 9:00"])
     }
 
+    @Test func aPomodoroMovesFromFocusToBreakToFocusWithALongBreakAfterEveryFourthFocus() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startPomodoro())
+        #expect(rig.running.map(\.title) == ["Focus 25:00"])
+        #expect(rig.running.first?.progress == 0)
+
+        let steps: [(after: TimeInterval, phase: TimerPhase, title: String, notice: String)] = [
+            (1500, .shortBreak, "Short break 5:00", "Focus done · Short break"),
+            (300, .focus, "Focus 25:00", "Short break done · Focus"),
+            (1500, .shortBreak, "Short break 5:00", "Focus done · Short break"),
+            (300, .focus, "Focus 25:00", "Short break done · Focus"),
+            (1500, .shortBreak, "Short break 5:00", "Focus done · Short break"),
+            (300, .focus, "Focus 25:00", "Short break done · Focus"),
+            (1500, .longBreak, "Long break 15:00", "Focus done · Long break"),
+            (900, .focus, "Focus 25:00", "Long break done · Focus"),
+        ]
+        for (index, step) in steps.enumerated() {
+            rig.advance(step.after)
+            #expect(rig.running.map(\.title) == [step.title], "step \(index)")
+            let notice = rig.activities.first { $0.kind == .completion }
+            #expect(notice?.title == step.notice, "step \(index)")
+            #expect(notice?.expiresAfter == TimerModule.completionNoticeSeconds, "step \(index)")
+            #expect(rig.sink.pings.count == index + 1, "one ping per transition, step \(index)")
+            #expect(rig.sink.pings.last == TimerPing(timerID: id, reason: .phaseStarted(step.phase)), "step \(index)")
+        }
+        #expect(rig.module.timers.first?.kind == .pomodoro(phase: .focus, completedFocusSessions: 4))
+    }
+
+    @Test func onlyOnePomodoroRunsAtATimeButCountdownsCanRunBesideIt() throws {
+        let rig = rig()
+        try #require(rig.module.startPomodoro() != nil)
+        #expect(rig.module.startPomodoro() == nil)
+        #expect(rig.module.startCountdown(60) != nil)
+        #expect(rig.module.timers.count == 2)
+    }
+
+    @Test func startingAPomodoroAfterCancellingOneStartsCleanAtFocus() throws {
+        let rig = rig()
+        let first = try #require(rig.module.startPomodoro())
+        rig.advance(1500)
+        #expect(rig.module.cancel(first))
+        #expect(rig.activities.isEmpty, "cancel clears the phase and its transition notice")
+        #expect(rig.scheduler.jobs.isEmpty)
+
+        let second = try #require(rig.module.startPomodoro())
+        #expect(second != first)
+        #expect(rig.module.timers.map(\.kind) == [.pomodoro(phase: .focus, completedFocusSessions: 0)])
+        #expect(rig.running.map(\.title) == ["Focus 25:00"])
+        #expect(rig.scheduler.jobs.count == 1)
+        #expect(rig.sink.pings.count == 1, "cancel and restart do not ping")
+    }
+
+    @Test func aLateTickCatchesUpMissedPhasesFromTheClockAndPingsOnlyForTheCurrentOne() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startPomodoro())
+
+        rig.advance(1500 + 300 + 10)
+
+        #expect(rig.running.map(\.title) == ["Focus 24:50"])
+        #expect(rig.module.timers.first?.kind == .pomodoro(phase: .focus, completedFocusSessions: 1))
+        #expect(rig.sink.pings == [TimerPing(timerID: id, reason: .phaseStarted(.focus))], "no burst of pings after a sleep")
+    }
+
+    @Test func aPausedPomodoroKeepsItsPhaseAndTimeLeft() throws {
+        let rig = rig()
+        let id = try #require(rig.module.startPomodoro())
+        rig.advance(50)
+        #expect(rig.module.pause(id))
+        rig.advance(5000)
+        #expect(rig.running.map(\.title) == ["Focus 24:10 (paused)"])
+        #expect(rig.sink.pings.isEmpty)
+    }
+
     @Test func timeLabelsUseMinutesAndSecondsAndAddHoursOnlyWhenNeeded() {
         #expect(TimerModule.clockLabel(0) == "0:00")
         #expect(TimerModule.clockLabel(59.2) == "0:59")
