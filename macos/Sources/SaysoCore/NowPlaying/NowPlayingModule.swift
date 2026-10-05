@@ -2,6 +2,9 @@ import Foundation
 
 /// Shows the track an already running player is playing, with its progress, and passes transport commands back.
 /// The player is read only at check times; between checks the position is worked out from the injected clock.
+///
+/// Every player call and every publish happens inside the one scheduled job, so with a serial scheduler queue a
+/// slow player never holds the caller, the host lock or the main thread, and publishes never overtake each other.
 public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
     /// Between checks while nothing is shown.
     public static let idlePollSeconds: TimeInterval = 5
@@ -15,6 +18,11 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
     public static let commandSettleSeconds: TimeInterval = 0.5
     /// After a refused or failed read, the player is left alone this long.
     public static let failureBackoffSeconds: TimeInterval = 60
+    /// At most one failure is reported in this window, the host's quarantine window, so a player that fails now and
+    /// then, or a run of refused taps, marks the module degraded without ever quarantining it.
+    public static let failureReportWindowSeconds: TimeInterval = 300
+    /// Taps beyond this many waiting commands are dropped.
+    static let maxPendingCommands = 5
     static let stackID = "now-playing"
 
     public let descriptor = SaysoModuleDescriptor(
@@ -38,9 +46,8 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
         return runtime
     }
 
-    /// Sends `command` to the player of the current track.
-    @discardableResult
-    public func send(_ command: NowPlayingCommand) -> Bool { current?.send(command) ?? false }
+    /// Call after the system clock changes: pending check and fade times were set against the old time.
+    public func clockChanged() { current?.clockChanged() }
 
     private var current: Runtime? { lock.withLock { runtime } }
 
@@ -97,6 +104,13 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
             case clear
         }
 
+        /// What the job did with the player before taking the lock again.
+        private struct Outcome {
+            var read: Result<NowPlayingSnapshot?, NowPlayingPortError>?
+            var commandsRan = false
+            var commandFailed = false
+        }
+
         unowned let module: NowPlayingModule
         let context: SaysoModuleContext
         private let lock = NSLock()
@@ -107,12 +121,15 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
         private var readAt = Date.distantPast
         /// When the current track was first seen paused; nil while it plays.
         private var pausedSince: Date?
-        /// Dismissed from the notch; stays hidden until the track changes.
+        /// Dismissed from the notch; stays hidden until a different track is read.
         private var hidden: TrackKey?
         private var pollDue = Date.distantPast
         private var shown: Line?
-        /// The last read failed; the next failure in a row is not reported again.
+        /// Taps waiting for the job, oldest first.
+        private var pending: [NowPlayingCommand] = []
+        /// The last read failed, so the next read waits for the backoff.
         private var failing = false
+        private var lastReport: Date?
 
         init(module: NowPlayingModule, context: SaysoModuleContext) {
             self.module = module
@@ -125,9 +142,8 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
         func start() {
             lock.withLock {
                 running = true
-                let now = module.now()
-                pollDue = now
-                rearm(at: now, showing: nil)
+                pollDue = module.now()
+                rearm(at: pollDue, soon: true)
             }
         }
 
@@ -140,50 +156,82 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
                 pausedSince = nil
                 hidden = nil
                 shown = nil
+                pending = []
                 failing = false
+                lastReport = nil
             }
             module.detach(self)
         }
 
+        /// Only records the tap and asks for the job now: the host calls this holding its lock, often on the main
+        /// thread, and a player can take seconds to answer.
         func handle(stackID: String, actionID: String) {
             guard stackID == NowPlayingModule.stackID else { return }
-            switch actionID {
-            case "dismiss": refresh(read: nil) { _ in hidden = track.map(TrackKey.init) }
-            case "play-pause": send(.playPause)
-            case "next": send(.next)
-            case "previous": send(.previous)
-            default: break
+            let command: NowPlayingCommand? = switch actionID {
+            case "play-pause": .playPause
+            case "next": .next
+            case "previous": .previous
+            default: nil
+            }
+            lock.withLock {
+                guard running else { return }
+                if let command {
+                    guard pending.count < NowPlayingModule.maxPendingCommands else { return }
+                    pending.append(command)
+                } else if actionID == "dismiss" {
+                    hidden = track.map(TrackKey.init)
+                } else {
+                    return
+                }
+                rearm(at: module.now(), soon: true)
             }
         }
 
-        /// Sends to the player of the current track, then checks it again soon so the line follows the player.
-        @discardableResult
-        func send(_ command: NowPlayingCommand) -> Bool {
-            guard let app = lock.withLock({ running ? track?.app : nil }) else { return false }
-            do {
-                try module.port.send(command, to: app)
-            } catch {
-                context.reportFailure()
-                return false
+        func clockChanged() {
+            lock.withLock {
+                guard running else { return }
+                let now = module.now()
+                pollDue = min(pollDue, now)
+                pausedSince = pausedSince.map { min($0, now) }
+                lastReport = lastReport.map { min($0, now) }
+                readAt = min(readAt, now)
+                rearm(at: now, soon: true)
             }
-            refresh(read: nil) { now in pollDue = now.addingTimeInterval(NowPlayingModule.commandSettleSeconds) }
-            return true
         }
 
-        /// Reads the player when a check is due, outside the lock: a player can take a while to answer.
+        /// Sends waiting commands and reads the player when a check is due, both outside the lock, then folds the
+        /// outcome in.
         private func tick() {
-            guard lock.withLock({ running && !(module.now() < pollDue) }) else { return refresh(read: nil) }
-            do {
-                refresh(read: .success(try module.port.current()))
-            } catch {
-                refresh(read: .failure(error))
+            guard let (commands, app, readDue) = lock.withLock({ () -> ([NowPlayingCommand], NowPlayingApp?, Bool)? in
+                guard running else { return nil }
+                defer { pending = [] }
+                return (pending, track?.app, !(module.now() < pollDue))
+            }) else { return }
+            var outcome = Outcome()
+            if let app {
+                for command in commands {
+                    outcome.commandsRan = true
+                    do {
+                        try module.port.send(command, to: app)
+                    } catch {
+                        // A player that quit is not a fault; the re-read after the command clears its line.
+                        if error != .playerGone { outcome.commandFailed = true }
+                    }
+                }
             }
+            if readDue, !outcome.commandsRan {
+                do {
+                    outcome.read = .success(try module.port.current(preferring: app))
+                } catch {
+                    outcome.read = .failure(error)
+                }
+            }
+            refresh(outcome)
         }
 
-        /// Takes in one read. A failed read forgets the track, since it can no longer be vouched for, and reports
-        /// once per run of failures, so a lasting refusal neither floods nor quarantines. Call with the lock held.
-        /// Returns whether a failure must be reported.
-        private func apply(_ read: Result<NowPlayingSnapshot?, NowPlayingPortError>, at now: Date) -> Bool {
+        /// Takes in one read. A failed read forgets the track, since it can no longer be vouched for. Call with the
+        /// lock held.
+        private func apply(_ read: Result<NowPlayingSnapshot?, NowPlayingPortError>, at now: Date) {
             let snapshot = (try? read.get())?.map(NowPlayingModule.sanitized)
             let key = snapshot.map(TrackKey.init)
             if let snapshot {
@@ -195,25 +243,36 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
             } else {
                 pausedSince = nil
             }
-            if hidden != nil, hidden != key { hidden = nil }
+            // Only a different track undoes Dismiss; a failed or empty read in between does not.
+            if let key, hidden != nil, hidden != key { hidden = nil }
             track = snapshot
             readAt = now
-            let failed = if case .failure = read { true } else { false }
-            defer { failing = failed }
-            return failed && !failing
+            if case .failure = read { failing = true } else { failing = false }
         }
 
-        /// Applies a read and `change`, works out the line and re-arms the single job under the lock, then publishes
-        /// outside it and only when the line changed: publishing takes the host lock, and the host calls into this
-        /// runtime while holding that lock.
-        private func refresh(read: Result<NowPlayingSnapshot?, NowPlayingPortError>?, _ change: (Date) -> Void = { _ in }) {
+        /// At most one report per window. Call with the lock held.
+        private func shouldReport(at now: Date) -> Bool {
+            if let lastReport, now.timeIntervalSince(lastReport) < NowPlayingModule.failureReportWindowSeconds { return false }
+            lastReport = now
+            return true
+        }
+
+        /// Folds in what the job did, works out the line and re-arms the single job under the lock, then reports and
+        /// publishes outside it, and only when the line changed: publishing takes the host lock, and the host calls
+        /// into this runtime while holding that lock.
+        private func refresh(_ outcome: Outcome) {
             let (effect, report) = lock.withLock { () -> (Effect?, Bool) in
                 guard running else { return (nil, false) }
                 let now = module.now()
-                let report = read.map { apply($0, at: now) } ?? false
-                change(now)
+                let wasFailing = failing
+                if let read = outcome.read { apply(read, at: now) }
+                // A run of failed reads is one failure: a lasting refusal is reported once, not on every check.
+                let newlyFailing = failing && !wasFailing
+                let report = (newlyFailing || outcome.commandFailed) && shouldReport(at: now)
                 let line = line(at: now)
-                if read != nil || (line == nil) != (shown == nil) {
+                if outcome.commandsRan {
+                    pollDue = now.addingTimeInterval(NowPlayingModule.commandSettleSeconds)
+                } else if outcome.read != nil || (line == nil) != (shown == nil) {
                     let wait = failing ? NowPlayingModule.failureBackoffSeconds
                         : line == nil ? NowPlayingModule.idlePollSeconds : NowPlayingModule.activePollSeconds
                     pollDue = now.addingTimeInterval(wait)
@@ -258,14 +317,14 @@ public final class NowPlayingModule: SaysoModule, @unchecked Sendable {
             pausedSince.map { now >= $0.addingTimeInterval(NowPlayingModule.pausedFadeSeconds) } ?? false
         }
 
-        /// One job: the next check, or sooner the next label tick while a track with a length plays, or the fade
-        /// of a shown paused track. None for a non-finite clock, which a real timer would fire at once.
-        /// Call with the lock held.
-        private func rearm(at now: Date, showing line: Line?) {
+        /// One job: due now when there is work waiting (`soon`), otherwise the next check, or sooner the next label
+        /// tick while a track with a length plays, or the fade of a shown paused track. None for a non-finite clock,
+        /// which a real timer would fire at once. Call with the lock held.
+        private func rearm(at now: Date, showing line: Line? = nil, soon: Bool = false) {
             job?.cancel()
             job = nil
             guard running, now.timeIntervalSince1970.isFinite else { return }
-            var due = pollDue
+            var due = soon ? now : pollDue
             if let line, line.isPlaying, line.percent != nil {
                 due = min(due, now.addingTimeInterval(NowPlayingModule.labelTickSeconds))
             }
