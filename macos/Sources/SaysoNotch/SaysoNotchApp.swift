@@ -486,7 +486,10 @@ final class SaysoAppModel: ObservableObject {
 
     func startCaffeine(_ duration: CaffeineDuration) {
         objectWillChange.send()
-        if !caffeineModule.start(duration) { notice = "Could not keep the Mac awake. macOS refused the request." }
+        guard !caffeineModule.start(duration) else { return }
+        notice = modules.health(of: caffeineModule.descriptor.id) == .quarantined
+            ? "Caffeine is paused after repeated failures. Quit and reopen Sayso to use it again."
+            : "Caffeine is off. macOS refused to keep the Mac awake."
     }
 
     func stopCaffeine() {
