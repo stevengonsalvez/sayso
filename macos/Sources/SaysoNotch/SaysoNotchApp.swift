@@ -241,10 +241,12 @@ final class SaysoAppModel: ObservableObject {
     private let fileShelf = FileShelfModule(port: FileSystemShelfPort(), scheduler: SaysoDispatchScheduler())
     private let timerModule = TimerModule(scheduler: SaysoDispatchScheduler())
     private var timerPingSubscription: SaysoSubscription?
+    private let caffeineModule = CaffeineModule(port: IOPMAssertionPort(), scheduler: SaysoDispatchScheduler())
+    private var terminateObserver: NSObjectProtocol?
     private lazy var modules = SaysoModuleHost(
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
-            externalActivities, clipboardModule, fileShelf, timerModule,
+            externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule,
         ],
         events: moduleEvents
     )
@@ -344,6 +346,14 @@ final class SaysoAppModel: ObservableObject {
         modules.enable(timerModule.descriptor.id)
         timerPingSubscription = moduleEvents.subscribe(TimerPing.self) { _ in
             DispatchQueue.main.async { NSSound(named: "Glass")?.play() }
+        }
+        // Caffeine holds nothing until the user starts a session, so it is on by default.
+        modules.enable(caffeineModule.descriptor.id)
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // The system also drops the assertion when the process exits; this releases it on a clean quit first.
+            MainActor.assumeIsolated { self?.stopCaffeineForQuit() }
         }
         applyOptInModuleSettings()
         startControlModule()
@@ -470,6 +480,22 @@ final class SaysoAppModel: ObservableObject {
         guard let id = pomodoro?.id else { return }
         objectWillChange.send()
         timerModule.cancel(id)
+    }
+
+    var caffeineSession: CaffeineSession? { caffeineModule.session }
+
+    func startCaffeine(_ duration: CaffeineDuration) {
+        objectWillChange.send()
+        if !caffeineModule.start(duration) { notice = "Could not keep the Mac awake. macOS refused the request." }
+    }
+
+    func stopCaffeine() {
+        objectWillChange.send()
+        caffeineModule.stop()
+    }
+
+    private func stopCaffeineForQuit() {
+        modules.disable(caffeineModule.descriptor.id)
     }
 
     func addToFileShelf(_ urls: [URL]) {
@@ -2212,7 +2238,7 @@ final class SaysoAppModel: ObservableObject {
 
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
-        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "shortcut-intents": 8,
+        "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "shortcut-intents": 8,
         "tts": 9,
     ]
 
@@ -3051,6 +3077,8 @@ private struct NotchWorkspace: View {
 
                 timersSection
 
+                caffeineSection
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3144,6 +3172,36 @@ private struct NotchWorkspace: View {
                 } else {
                     Button("Start 25 min Pomodoro") { model.startPomodoro() }
                         .accessibilityIdentifier("timer-start-25")
+                }
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Studio starts and stops Caffeine; the time left shows in the notch through the module activity.
+    private var caffeineSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Caffeine").font(.headline)
+                Text("Keeps the display and the Mac from going to sleep while idle. Starting again replaces the running session. It lives in memory and stops when Sayso quits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 12) {
+                Button("15 min") { model.startCaffeine(.fifteenMinutes) }
+                    .accessibilityIdentifier("caffeine-start-15")
+                Button("1 hour") { model.startCaffeine(.oneHour) }
+                    .accessibilityIdentifier("caffeine-start-60")
+                Button("Until stopped") { model.startCaffeine(.indefinite) }
+                    .accessibilityIdentifier("caffeine-start-indefinite")
+                if let session = model.caffeineSession {
+                    Spacer()
+                    Text(session.title)
+                        .font(.body.monospacedDigit())
+                        .accessibilityIdentifier("caffeine-status")
+                    Button("Stop") { model.stopCaffeine() }
+                        .accessibilityIdentifier("caffeine-stop")
                 }
             }
         }
