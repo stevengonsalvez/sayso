@@ -29,8 +29,8 @@ private func assertionNamesHeldByThisProcess() -> [String] {
     @Test func droppingTheHandleReleasesTheAssertion() throws {
         do {
             let assertion = try #require(IOPMAssertionPort().createAssertion(named: name))
-            #expect(assertionNamesHeldByThisProcess().contains(name))
-            _ = assertion
+            // Without this an optimised build may free the handle before the check.
+            withExtendedLifetime(assertion) { #expect(assertionNamesHeldByThisProcess().contains(name)) }
         }
         #expect(!assertionNamesHeldByThisProcess().contains(name))
     }
