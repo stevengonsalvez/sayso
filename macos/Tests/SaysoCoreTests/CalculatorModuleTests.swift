@@ -196,7 +196,7 @@ private func converted(_ input: String) throws -> (number: Double, symbol: Strin
 @Suite struct CalculatorEngineConversionTests {
     @Test func lengthConvertsAndNamesTheTargetUnit() throws {
         let miles = try converted("5 km in miles")
-        #expect(close(miles.number, 3.1068559611866697, within: 1e-12))
+        #expect(close(miles.number, 3.1068559611866697, within: 1e-10), "conversions keep 12 significant digits")
         #expect(miles.symbol == "mi")
         #expect(try converted("5 in in cm").number == 12.7, "the inch keeps its name next to the in keyword")
         #expect(try converted("12 inches to feet").number == 1)
@@ -215,7 +215,7 @@ private func converted(_ input: String) throws -> (number: Double, symbol: Strin
     }
 
     @Test func massVolumeSpeedAndDataSizeConvert() throws {
-        #expect(close(try converted("1 kg in lb").number, 2.2046226218487757, within: 1e-12))
+        #expect(close(try converted("1 kg in lb").number, 2.2046226218487757, within: 1e-10))
         #expect(close(try converted("16 oz in lb").number, 1, within: 1e-12))
         #expect(close(try converted("1 gal in l").number, 3.785411784, within: 1e-12))
         #expect(try converted("1 l in ml").number == 1000)
