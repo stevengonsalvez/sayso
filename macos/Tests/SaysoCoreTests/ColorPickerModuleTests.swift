@@ -79,6 +79,8 @@ private func color(_ red: UInt8, _ green: UInt8, _ blue: UInt8) -> ColorPickerCo
         #expect(ColorPickerColor.parse("rgb(1 2 3)") == color(1, 2, 3))
         #expect(ColorPickerColor.parse("RGB( 51 , 102 , 153 )") == color(51, 102, 153))
         #expect(ColorPickerColor.parse("rgb(1.4, 2.6, 254.5)") == color(1, 3, 255), "fractions round to the nearest")
+        #expect(ColorPickerColor.parse("rgb(1,\n2,\t3)") == color(1, 2, 3), "a newline next to a comma is space too")
+        #expect(ColorPickerColor.parse("rgb(1\n2\n3)") == color(1, 2, 3))
     }
 
     @Test func hslIsReadAndConvertedToRgb() {
