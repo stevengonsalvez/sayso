@@ -8345,7 +8345,7 @@ private struct SaysoSettingsView: View {
                 }
                 SaysoSettingItemCard(
                     title: "File shelf (off by default)",
-                    description: "When on, you can keep up to 20 files or folders on a shelf and reveal them in Finder later. Files stay where they are and are never copied or uploaded. The shelf lives only in memory: it is cleared when Sayso quits, and turning this off clears it and releases Sayso's access to those files.",
+                    description: "When on, you can keep up to \(FileShelfModule.defaultLimit) files or folders on a shelf, shown in the notch, and reveal them in Finder later; adding more drops the oldest. Files stay where they are and are never copied or uploaded. Every few seconds Sayso checks that shelved files still exist and drops any that moved or were deleted. The shelf lives only in memory: it is cleared when Sayso quits, and turning this off clears it.",
                     example: "Add a screenshot here, then reveal it in Finder when you need it."
                 ) {
                     Toggle("File shelf", isOn: $model.settings.fileShelfEnabled)
