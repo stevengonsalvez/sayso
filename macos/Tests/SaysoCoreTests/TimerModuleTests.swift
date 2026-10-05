@@ -378,6 +378,18 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(SaysoModuleAcceptance.violations(for: TimerModule(scheduler: FakeScheduler())) == [])
     }
 
+    @Test func aSnapshotCarriesTheSameTitleTheNotchShows() throws {
+        let rig = rig()
+        let pomodoro = try #require(rig.module.startPomodoro())
+        try #require(rig.module.startStopwatch() != nil)
+        rig.advance(61.5)
+        #expect(rig.module.pause(pomodoro))
+
+        let titles = Set(rig.module.timers.map(\.title))
+        #expect(titles == ["Focus 23:59 (paused)", "Stopwatch 1:01"])
+        #expect(titles == Set(rig.running.map(\.title)))
+    }
+
     @Test func timeLabelsUseMinutesAndSecondsAndAddHoursOnlyWhenNeeded() {
         #expect(TimerModule.clockLabel(0) == "0:00")
         #expect(TimerModule.clockLabel(59.2) == "0:59")
