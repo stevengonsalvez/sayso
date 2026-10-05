@@ -19,12 +19,21 @@ final class NotchReviewUITests: XCTestCase {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
 
+    /// The collapsed pill does not auto-expand for a review, so the user opens it first.
+    private func expandNotch() {
+        let pill = app.buttons["Open Sayso Dictation workspace"].firstMatch
+        XCTAssertTrue(pill.waitForExistence(timeout: 15), "collapsed notch pill")
+        pill.click()
+    }
+
     func testReviewCardOffersExplicitApproveAndDeny() {
+        expandNotch()
         XCTAssertTrue(button(prefix: "Approve").waitForExistence(timeout: 15), "Approve button on the review card")
         XCTAssertTrue(button(prefix: "Deny").exists, "Deny button on the review card")
     }
 
     func testDenyDismissesTheReviewCard() {
+        expandNotch()
         let deny = button(prefix: "Deny")
         XCTAssertTrue(deny.waitForExistence(timeout: 15))
         deny.click()
