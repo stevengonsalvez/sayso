@@ -14,7 +14,8 @@ public struct CalculatorResult: Equatable, Sendable, Identifiable {
 /// pasteboard port can only be written. Results live in memory, at most `historyLimit`, and are purged on disable.
 public final class CalculatorModule: SaysoModule, @unchecked Sendable {
     public static let historyLimit = 10
-    public static let resultNoticeSeconds: TimeInterval = 8
+    /// As long as the Timer and Caffeine completion notices.
+    public static let resultNoticeSeconds: TimeInterval = 10
     /// The notch title keeps at most this many characters of the expression.
     public static let titleExpressionLimit = 40
     static let stackID = "calculator-result"
@@ -101,6 +102,8 @@ public final class CalculatorModule: SaysoModule, @unchecked Sendable {
         private var results: [CalculatorResult] = []
         private var nextID = 1
         private var job: SaysoSubscription?
+        /// Bumped for every new notice, so a timer callback already under way for an older one changes nothing.
+        private var notice = 0
         private var running = false
 
         init(module: CalculatorModule, context: SaysoModuleContext) {
@@ -152,8 +155,9 @@ public final class CalculatorModule: SaysoModule, @unchecked Sendable {
                 nextID += 1
                 results = Array(([result] + results).prefix(CalculatorModule.historyLimit))
                 job?.cancel()
+                notice += 1
                 let due = module.now().addingTimeInterval(CalculatorModule.resultNoticeSeconds)
-                job = module.scheduler.schedule(at: due) { [weak self] in self?.expire() }
+                job = module.scheduler.schedule(at: due) { [weak self, notice] in self?.expire(notice) }
                 return result
             }
             guard let result else { return nil }
@@ -166,9 +170,9 @@ public final class CalculatorModule: SaysoModule, @unchecked Sendable {
             return result
         }
 
-        private func expire() {
+        private func expire(_ expiring: Int) {
             let due = lock.withLock { () -> Bool in
-                guard running, job != nil else { return false }
+                guard running, job != nil, notice == expiring else { return false }
                 job = nil
                 return true
             }
