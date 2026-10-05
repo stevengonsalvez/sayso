@@ -238,3 +238,47 @@ private func converted(_ input: String) throws -> (number: Double, symbol: Strin
         #expect(try CalculatorEngine.evaluate("2 + 2").get().unit == nil, "plain arithmetic has no unit")
     }
 }
+
+private func shown(_ input: String, locale: String = "en_US", angle: CalculatorAngleUnit = .radians) throws -> String {
+    let value = try CalculatorEngine.evaluate(input, angle: angle).get()
+    return CalculatorFormatter(locale: Locale(identifier: locale)).string(for: value)
+}
+
+@Suite struct CalculatorFormatterTests {
+    @Test func floatNoiseNeverShows() throws {
+        #expect(try shown("0.1 + 0.2") == "0.3")
+        #expect(try shown("1 - 0.9") == "0.1")
+        #expect(try shown("0.1 * 3") == "0.3")
+        #expect(try shown("12 × 3") == "36")
+    }
+
+    @Test func atMostTenSignificantDigits() throws {
+        #expect(try shown("1 / 3") == "0.3333333333")
+        #expect(try shown("2 / 3") == "0.6666666667")
+        #expect(try shown("123456789.123") == "123,456,789.1")
+        #expect(try shown("5 km in miles") == "3.106855961 mi")
+        #expect(try shown("100 f in c") == "37.77777778 °C")
+    }
+
+    @Test func wholeNumbersShowInFullUpToFifteenDigitsThenInScientificNotation() throws {
+        #expect(try shown("1234567") == "1,234,567")
+        #expect(try shown("123456789012345") == "123,456,789,012,345", "a whole number is never rounded to ten digits")
+        #expect(try shown("2 ^ 60") == "1.152921505E18")
+        #expect(try shown("12345678901.5") == "1.23456789E10", "ten digits cannot show this fraction, so it is scientific")
+        #expect(try shown("10 ^ -7") == "1E-7")
+        #expect(try shown("0.000123") == "0.000123")
+    }
+
+    @Test func negativeZeroShowsAsZero() throws {
+        #expect(try shown("-0") == "0")
+        #expect(try shown("-1 * 0") == "0")
+        #expect(try shown("sin(180)", angle: .degrees) == "0")
+    }
+
+    @Test func decimalAndGroupingSeparatorsFollowTheInjectedLocale() throws {
+        #expect(try shown("1.5", locale: "de_DE") == "1,5")
+        #expect(try shown("1234.5", locale: "de_DE") == "1.234,5")
+        #expect(try shown("0.1 + 0.2", locale: "de_DE") == "0,3")
+        #expect(try shown("2 gb in mb", locale: "de_DE") == "2.000 MB")
+    }
+}
