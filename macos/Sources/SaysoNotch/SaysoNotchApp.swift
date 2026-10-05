@@ -3389,7 +3389,7 @@ private extension NotchWorkspace {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("System").font(.headline)
-                Text("CPU, memory, battery and free disk space on this Mac, read every 5 seconds while this pane is open or the notch is expanded and once a minute otherwise. CPU is the share of time busy since the previous reading. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free; Dismiss notification in the notch menu hides it until that clears. Nothing is saved or sent.")
+                Text("CPU, memory and battery on this Mac are read every 5 seconds while this pane is open or the notch is expanded, and once a minute otherwise; free disk space, which includes space macOS can purge, once a minute. CPU is the share of time busy since the previous reading. The notch shows a line only when the battery is at 20% or less and not plugged in, memory pressure is critical, or less than 5 GB of disk is free; Dismiss notification in the notch menu hides it until that clears. Nothing is saved or sent.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
