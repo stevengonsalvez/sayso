@@ -28,6 +28,15 @@ private final class FakeScheduler: SaysoScheduling, @unchecked Sendable {
         return SaysoSubscription { [weak self] in self?.lock.withLock { self?.pending.removeAll { $0.id == id } } }
     }
 
+    /// Fires the earliest job whatever its due time, like a real timer firing a little early.
+    func fireEarliest() {
+        let job = lock.withLock { () -> (id: Int, at: Date, action: @Sendable () -> Void)? in
+            guard let index = pending.indices.min(by: { pending[$0].at < pending[$1].at }) else { return nil }
+            return pending.remove(at: index)
+        }
+        job?.action()
+    }
+
     /// Fires every job due at `now`, earliest first, like a real timer firing late.
     func runDue(_ now: Date) {
         for _ in 0..<10_000 {
@@ -66,6 +75,15 @@ private struct Probe: SaysoModule {
         captured.contexts.append(context)
         return runtime
     }
+}
+
+/// Stands in for Clipboard or File shelf: another module publishing its own ambient line.
+private final class PeerModule: SaysoModule, SaysoModuleRuntime, @unchecked Sendable {
+    let descriptor = SaysoModuleDescriptor(id: "peer", title: "Peer")
+    var context: SaysoModuleContext?
+    func makeRuntime(context: SaysoModuleContext) -> SaysoModuleRuntime { self.context = context; return self }
+    func start() {}
+    func stop() {}
 }
 
 /// Only these identifiers resolve, so "unknown" never depends on the host's time zone database.
@@ -277,9 +295,9 @@ private func rig(
         let line = try #require(rig.activities.first)
 
         #expect(rig.activities.count == 1, "only the first zone is summarised")
-        #expect(line.kind == .ambient, "ranks below every other activity, so it never interrupts")
+        #expect(line.kind == .background, "ranks below every other activity, so it never interrupts")
         #expect(line.title == "Tokyo 09:00")
-        #expect(line.actions.isEmpty)
+        #expect(line.actions.map(\.id) == ["dismiss"])
         #expect(line.expiresAfter == nil)
         #expect(rig.scheduler.jobs == [instant("2026-01-15T00:01:00Z")], "one job, at the minute boundary, not every second")
         #expect(rig.retained == 1)
@@ -364,6 +382,72 @@ private func rig(
         #expect(rig.retained == 0)
         #expect(rig.scheduler.jobs.isEmpty)
         #expect(rig.activities.isEmpty)
+    }
+
+    @Test func anEarlyTickDoesNotRepublishAndArmsOneJobForTheSameMinute() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")], at: "2026-01-15T00:00:59Z")
+        rig.clock.now += 0.99
+        let published = rig.captured.changes
+
+        rig.scheduler.fireEarliest()
+        #expect(rig.captured.changes == published, "the label did not change, so nothing is published")
+        #expect(rig.activities.first?.title == "Tokyo 09:00")
+        #expect(rig.scheduler.jobs == [instant("2026-01-15T00:01:00Z")])
+    }
+
+    @Test func aClockLineNeverHidesAnotherModulesLineWhicheverCameFirst() throws {
+        let clock = Clock(now: instant("2026-01-15T00:00:30Z"), local: TimeZone(identifier: "UTC")!)
+        let peer = PeerModule()
+        let clocks = WorldClocksModule(
+            store: FakeStore([zone("Asia/Tokyo", "Tokyo")]), scheduler: FakeScheduler(),
+            now: { clock.now }, localTimeZone: { clock.local }, resolveZone: resolve
+        )
+        let host = SaysoModuleHost(modules: [clocks, peer], now: { clock.now })
+        host.enable("world-clocks")
+        host.enable("peer")
+        let context = try #require(peer.context)
+
+        // Clipboard's Clean link offer and the File shelf line are ambient and arrive after the clock.
+        context.publish(stackID: "clean-link", kind: .ambient, title: "Clean link")
+        #expect(host.engine.primary?.title == "Clean link")
+
+        context.dismiss(stackID: "clean-link")
+        #expect(host.engine.primary?.title == "Tokyo 09:00", "the clock shows only when nothing else is there")
+    }
+
+    @Test func dismissingTheLineHidesItAndStopsTheTickUntilTheListChanges() throws {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        #expect(rig.host.perform(actionID: "dismiss", stackID: "world-clocks", moduleID: "world-clocks"))
+
+        #expect(rig.activities.isEmpty)
+        #expect(rig.scheduler.jobs.isEmpty, "nothing to redraw while hidden")
+        #expect(rig.retained == 0)
+        rig.advance(3600)
+        #expect(rig.activities.isEmpty, "the next minute does not bring it back")
+        #expect(rig.module.readings.map(\.title) == ["Tokyo 10:00"], "the pane still reads the time")
+
+        try rig.module.add("Europe/London")
+        #expect(rig.activities.map(\.title) == ["Tokyo 10:00"], "changing the list shows the line again")
+        #expect(rig.scheduler.jobs.count == 1)
+    }
+
+    @Test func aClockChangeOrWakeRefreshesTheLineAtOnce() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        // Asleep for ten hours: the pending job was due long ago but has not fired.
+        rig.clock.now = instant("2026-01-15T10:00:10Z")
+
+        rig.module.clockChanged()
+        #expect(rig.activities.map(\.title) == ["Tokyo 19:00"])
+        #expect(rig.scheduler.jobs == [instant("2026-01-15T10:01:00Z")], "the stale job is replaced, not added to")
+    }
+
+    @Test func aNonFiniteClockNeitherTrapsNorArmsATick() {
+        let rig = rig([zone("Asia/Tokyo", "Tokyo")])
+        rig.clock.now = Date(timeIntervalSince1970: .nan)
+
+        rig.module.clockChanged()
+        _ = rig.module.readings
+        #expect(rig.scheduler.jobs.isEmpty, "no job at a NaN instant, which a real timer would fire at once")
     }
 
     // MARK: Daylight saving, from fixed instants
