@@ -220,6 +220,45 @@ private func rig() -> Rig {
         #expect(missed.activities.map(\.kind) == [.completion])
     }
 
+    @Test func aSessionPastItsDeadlineIsNotReportedAsRunningBeforeTheTickFires() {
+        let rig = rig()
+        #expect(rig.module.start(.fifteenMinutes))
+        rig.clock.now += 900
+
+        #expect(rig.module.session == nil, "the deadline passed, so Studio must not offer Stop for it")
+    }
+
+    @Test func startingAfterAMissedDeadlineLeavesOnlyTheNewSession() {
+        let rig = rig()
+        #expect(rig.module.start(.fifteenMinutes))
+        rig.clock.now += 1000
+
+        #expect(rig.module.start(.oneHour))
+        #expect(rig.activities.map(\.kind) == [.activeTask])
+        #expect(rig.running.first?.title == "Awake · 1 h left")
+        #expect(rig.port.held == 1)
+        #expect(rig.port.peakHeld == 1)
+    }
+
+    @Test func labelsRoundUpToWholeMinutesAndShowHours() {
+        #expect(CaffeineModule.title(remaining: 24 * 3600) == "Awake · 24 h left")
+        #expect(CaffeineModule.title(remaining: 3660) == "Awake · 1 h 1 min left")
+        #expect(CaffeineModule.title(remaining: 3600.5) == "Awake · 1 h 1 min left")
+        #expect(CaffeineModule.title(remaining: 3600) == "Awake · 1 h left")
+        #expect(CaffeineModule.title(remaining: 60) == "Awake · 1 min left")
+        #expect(CaffeineModule.title(remaining: 0.2) == "Awake · 1 min left")
+        #expect(CaffeineModule.title(remaining: nil) == "Awake · ∞")
+    }
+
+    @Test func theLabelChangesExactlyOnTheMinute() {
+        let rig = rig()
+        #expect(rig.module.start(.oneHour))
+        rig.advance(59.999)
+        #expect(rig.running.first?.title == "Awake · 1 h left")
+        rig.advance(0.001)
+        #expect(rig.running.first?.title == "Awake · 59 min left")
+    }
+
     @Test func startingANewSessionClearsTheEndedNotice() throws {
         let rig = rig()
         #expect(rig.module.start(.fifteenMinutes))
