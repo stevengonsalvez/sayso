@@ -382,6 +382,13 @@ final class SaysoAppModel: ObservableObject {
         observeExternalApplications()
         notch.install(model: self)
         if saved.desktopControlEnabled { startAutomation() }
+        if CommandLine.arguments.contains("--ui-test-review") {
+            // UI test hook: a review with no pending desktop step, so Approve and Deny cannot act on the desktop.
+            DispatchQueue.main.async { [weak self] in
+                self?.controlCoordinator.begin(goal: "UI test review")
+                self?.controlCoordinator.requestReview(reason: "UI test review")
+            }
+        }
         DispatchQueue.main.async { [weak self] in self?.showMainWindow() }
         Task {
             await history.reclaimUnreferencedAudio(olderThan: launchDate)
