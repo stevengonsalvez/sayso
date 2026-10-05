@@ -17,10 +17,16 @@ public struct CalculatorUnit: Equatable, Sendable {
     public static func named(_ name: String) -> CalculatorUnit? { table[name.lowercased()] }
 
     /// Rounded to 12 significant digits, two more than are shown: this drops the noise of binary factors and of
-    /// temperature offsets cancelling (0 °C was 31.999999999999943 °F), which reaches the 15th digit.
+    /// temperature offsets cancelling (0 °C was 31.999999999999943 °F), which reaches the 15th digit. A result
+    /// that is tiny next to the terms it came from is that noise alone (32 °F was 5.7e-14 °C) and reads 0. Whole
+    /// results, and results of 10^12 or more, are left alone: the formatter shows whole numbers digit for digit,
+    /// so rounding them would invent digits (1 TiB was 1,099,511,627,780 B).
     func convert(_ value: Double, to target: CalculatorUnit) -> Double {
-        let converted = (value + offset) * scale / target.scale - target.offset
-        guard converted.isFinite, converted != 0 else { return converted }
+        let scaled = (value + offset) * scale / target.scale
+        let converted = scaled - target.offset
+        guard converted.isFinite else { return converted }
+        if abs(converted) <= 1e-12 * max(abs(scaled), abs(target.offset)) { return 0 }
+        guard converted != converted.rounded(), abs(converted) < 1e12 else { return converted }
         return Double(String(format: "%.11e", converted)) ?? converted
     }
 
