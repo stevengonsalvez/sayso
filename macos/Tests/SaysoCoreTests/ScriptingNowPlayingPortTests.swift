@@ -8,7 +8,12 @@ private final class FakeScripts: @unchecked Sendable {
     private let lock = NSLock()
     private var sources: [String] = []
     private var answers: [NowPlayingApp: Result<NSAppleEventDescriptor, ScriptingNowPlayingPort.ScriptError>] = [:]
+    private var asked: [NowPlayingApp] = []
     var running: Set<NowPlayingApp> = []
+    /// What macOS answers when asked for Automation of each player; granted unless set.
+    var permission: [NowPlayingApp: OSStatus] = [:]
+
+    var permissionRequests: [NowPlayingApp] { lock.withLock { asked } }
 
     var ran: [String] { lock.withLock { sources } }
 
@@ -24,9 +29,19 @@ private final class FakeScripts: @unchecked Sendable {
         }
     }
 
-    var port: ScriptingNowPlayingPort {
-        ScriptingNowPlayingPort(isRunning: { [self] in running.contains($0) }, run: { [self] in run($0) })
+    func askPermission(_ app: NowPlayingApp) -> OSStatus {
+        lock.withLock {
+            asked.append(app)
+            return permission[app] ?? 0
+        }
     }
+
+    /// One port per fake, so what it remembers between calls is exercised.
+    private(set) lazy var port = ScriptingNowPlayingPort(
+        isRunning: { [self] in running.contains($0) },
+        askPermission: { [self] in askPermission($0) },
+        run: { [self] in run($0) }
+    )
 }
 
 private func track(_ state: String, _ title: String, _ artist: String, position: Double, duration: Double) -> NSAppleEventDescriptor {
@@ -44,8 +59,9 @@ private func track(_ state: String, _ title: String, _ artist: String, position:
     @Test func withNoPlayerRunningNothingIsAskedAndNoCommandIsSent() throws {
         let scripts = FakeScripts()
         #expect(try scripts.port.current() == nil)
-        #expect(throws: NowPlayingPortError.unavailable) { try scripts.port.send(.playPause, to: .music) }
+        #expect(throws: NowPlayingPortError.playerGone) { try scripts.port.send(.playPause, to: .music) }
         #expect(scripts.ran.isEmpty, "a player that is not running is never addressed, so it is never launched")
+        #expect(scripts.permissionRequests.isEmpty)
     }
 
     @Test func onlyARunningPlayerIsAskedAndTheScriptItselfRefusesToLaunchIt() throws {
@@ -75,6 +91,36 @@ private func track(_ state: String, _ title: String, _ artist: String, position:
         scripts.answer(.music, .success(track("paused", "Old", "A", position: 10, duration: 200)))
         scripts.answer(.spotify, .success(track("playing", "New", "B", position: 5, duration: 100_000)))
         #expect(try scripts.port.current()?.title == "New")
+    }
+
+    @Test func whenBothArePausedTheCallersPlayerWins() throws {
+        let scripts = FakeScripts()
+        scripts.running = [.music, .spotify]
+        scripts.answer(.music, .success(track("paused", "Old", "A", position: 10, duration: 200)))
+        scripts.answer(.spotify, .success(track("paused", "Mine", "B", position: 5, duration: 100_000)))
+        #expect(try scripts.port.current(preferring: .spotify)?.title == "Mine")
+        #expect(try scripts.port.current(preferring: .music)?.title == "Old")
+    }
+
+    @Test func aSpotifyLengthThatCannotBeMillisecondsIsReadAsSeconds() throws {
+        let scripts = FakeScripts()
+        scripts.running = [.spotify]
+        scripts.answer(.spotify, .success(track("playing", "Song", "B", position: 61, duration: 240)))
+        #expect(try scripts.port.current()?.duration == 240, "240 ms would end before the 61 s position")
+    }
+
+    @Test func automationIsAskedForOnceBeforeTheFirstScriptAndARefusalRunsNoScript() throws {
+        let scripts = FakeScripts()
+        scripts.running = [.music]
+        scripts.permission[.music] = -1743
+        #expect(throws: NowPlayingPortError.automationDenied) { try scripts.port.current() }
+        #expect(scripts.ran.isEmpty, "no script is sent to a player the user refused")
+
+        scripts.permission[.music] = 0
+        _ = try scripts.port.current()
+        _ = try scripts.port.current()
+        #expect(scripts.permissionRequests == [.music, .music], "asked again after a refusal, then remembered once granted")
+        #expect(scripts.ran.count == 2)
     }
 
     @Test func anEmptyOrMalformedAnswerMeansNoTrack() throws {
@@ -118,6 +164,10 @@ private func track(_ state: String, _ title: String, _ artist: String, position:
 
         scripts.answer(.music, .failure(.init(code: -1743)))
         #expect(throws: NowPlayingPortError.automationDenied) { try scripts.port.send(.next, to: .music) }
-        #expect(throws: NowPlayingPortError.unavailable) { try scripts.port.send(.next, to: .spotify) }
+        #expect(throws: NowPlayingPortError.playerGone) { try scripts.port.send(.next, to: .spotify) }
+        scripts.answer(.music, .failure(.init(code: -600)))
+        #expect(throws: NowPlayingPortError.playerGone) { try scripts.port.send(.next, to: .music) }
+        scripts.answer(.music, .failure(.init(code: -1712)))
+        #expect(throws: NowPlayingPortError.unavailable) { try scripts.port.send(.next, to: .music) }
     }
 }
