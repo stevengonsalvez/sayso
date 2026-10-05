@@ -510,7 +510,7 @@ private struct VoiceWorkspaceContent: View {
             }
 
             // Module activity (download progress, retry, Control review) keeps its own explicit line under main's live view.
-            if !isLive, let primary = model.primaryModuleActivity {
+            if !isLive, model.primaryModuleActivity != nil {
                 HStack(spacing: 4) {
                     Button(action: { if let tap = statusModel.tapAction { model.performModuleAction(tap) } else { collapse() } }) {
                         Text(status)
@@ -523,9 +523,10 @@ private struct VoiceWorkspaceContent: View {
                     .buttonStyle(.plain)
                     .accessibilityValue(status)
                     .help(statusModel.tapAction.map { "\(status). Click to \($0.title)." } ?? "\(status). Click to collapse.")
-                    // Media lines carry transport controls; they share the status row so the fixed panel height holds.
-                    if primary.kind == .media, statusModel.criticalActions.isEmpty {
-                        MediaTransportButtons(actions: primary.actions) { model.performModuleAction($0) }
+                    // Media lines carry transport controls, only while the text is that line; they share the status row
+                    // so the fixed panel height holds.
+                    if let shown = statusModel.activity, shown.kind == .media {
+                        MediaTransportButtons(actions: shown.actions) { model.performModuleAction($0) }
                     }
                 }
             }
@@ -617,7 +618,6 @@ private struct VoiceWorkspaceContent: View {
     }
 }
 
-/// Docked Notch HUD designed specifically for conforming to the MacBook display notch
 /// Previous, play or pause, and next for the shown media line; each runs the action the activity declared.
 private struct MediaTransportButtons: View {
     let actions: [SaysoAction]
@@ -651,6 +651,7 @@ private struct MediaTransportButtons: View {
     }
 }
 
+/// Docked Notch HUD designed specifically for conforming to the MacBook display notch
 private struct DockedNotchHUD: View {
     @ObservedObject var model: SaysoAppModel
     @ObservedObject var state: NotchPresentationState
