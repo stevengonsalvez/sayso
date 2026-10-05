@@ -282,3 +282,213 @@ private func shown(_ input: String, locale: String = "en_US", angle: CalculatorA
         #expect(try shown("2 gb in mb", locale: "de_DE") == "2.000 MB")
     }
 }
+
+/// Records writes only: the port has no way to read the pasteboard, so the module cannot.
+private final class FakePasteboard: CalculatorPasteboardPort, @unchecked Sendable {
+    private let lock = NSLock()
+    private var writes: [String] = []
+    private var refusing = false
+
+    var written: [String] { lock.withLock { writes } }
+    func refuse(_ on: Bool) { lock.withLock { refusing = on } }
+
+    func write(_ text: String) -> Bool {
+        lock.withLock {
+            guard !refusing else { return false }
+            writes.append(text)
+            return true
+        }
+    }
+}
+
+private final class CalculatorScheduler: SaysoScheduling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextID = 0
+    private var pending: [(id: Int, at: Date, action: @Sendable () -> Void)] = []
+    var jobs: [Date] { lock.withLock { pending.map(\.at) } }
+
+    func schedule(at date: Date, _ action: @escaping @Sendable () -> Void) -> SaysoSubscription {
+        let id = lock.withLock { () -> Int in nextID += 1; pending.append((nextID, date, action)); return nextID }
+        return SaysoSubscription { [weak self] in self?.lock.withLock { self?.pending.removeAll { $0.id == id } } }
+    }
+
+    func runDue(_ now: Date) {
+        for _ in 0..<1000 {
+            let job = lock.withLock { () -> (id: Int, at: Date, action: @Sendable () -> Void)? in
+                guard let index = pending.indices.filter({ pending[$0].at <= now }).min(by: { pending[$0].at < pending[$1].at })
+                else { return nil }
+                return pending.remove(at: index)
+            }
+            guard let job else { return }
+            job.action()
+        }
+        Issue.record("jobs kept re-arming at or before now")
+    }
+}
+
+private final class CalculatorClock: @unchecked Sendable { var now = Date(timeIntervalSince1970: 1_000_000) }
+
+private final class CapturedRuntimes: @unchecked Sendable { var runtimes: [SaysoModuleRuntime] = [] }
+
+private struct CalculatorProbe: SaysoModule {
+    let inner: CalculatorModule
+    let captured: CapturedRuntimes
+    var descriptor: SaysoModuleDescriptor { inner.descriptor }
+    func makeRuntime(context: SaysoModuleContext) -> SaysoModuleRuntime {
+        let runtime = inner.makeRuntime(context: context)
+        captured.runtimes.append(runtime)
+        return runtime
+    }
+}
+
+private struct CalculatorRig {
+    let host: SaysoModuleHost
+    let module: CalculatorModule
+    let pasteboard: FakePasteboard
+    let scheduler: CalculatorScheduler
+    let clock: CalculatorClock
+    let captured: CapturedRuntimes
+
+    func advance(_ seconds: TimeInterval) {
+        clock.now += seconds
+        scheduler.runDue(clock.now)
+    }
+
+    var activities: [SaysoActivity] { host.engine.stack.filter { $0.moduleID == "calculator" } }
+    var retained: Int { (captured.runtimes.last as? SaysoResourceAccounting)?.retainedResources ?? -1 }
+
+    func result(_ input: String) throws -> CalculatorResult { try module.evaluate(input).get() }
+}
+
+private func calculatorRig(locale: String = "en_US") -> CalculatorRig {
+    let pasteboard = FakePasteboard(), scheduler = CalculatorScheduler(), clock = CalculatorClock(), captured = CapturedRuntimes()
+    let module = CalculatorModule(
+        pasteboard: pasteboard, scheduler: scheduler, locale: Locale(identifier: locale), now: { clock.now }
+    )
+    let host = SaysoModuleHost(modules: [CalculatorProbe(inner: module, captured: captured)], now: { clock.now })
+    host.enable("calculator")
+    return CalculatorRig(
+        host: host, module: module, pasteboard: pasteboard, scheduler: scheduler, clock: clock, captured: captured
+    )
+}
+
+@Suite struct CalculatorModuleTests {
+    @Test func passesTheModuleAcceptanceContract() {
+        let module = CalculatorModule(pasteboard: FakePasteboard(), scheduler: CalculatorScheduler())
+        #expect(module.descriptor.id == "calculator")
+        #expect(module.descriptor.capabilities.isEmpty, "pure logic: no permission, no network")
+        #expect(SaysoModuleAcceptance.violations(for: module).isEmpty, "\(SaysoModuleAcceptance.violations(for: module))")
+    }
+
+    @Test func evaluatingReturnsTheResultAndShowsAShortLivedCompletionThatExpiresOnTheScheduler() throws {
+        let rig = calculatorRig()
+        let result = try rig.result("12 × 3")
+        #expect(result.text == "36")
+        #expect(result.expression == "12 × 3")
+        #expect(result.value.number == 36)
+
+        let shown = try #require(rig.activities.first)
+        #expect(rig.activities.count == 1)
+        #expect(shown.kind == .completion)
+        #expect(shown.title == "12 × 3 = 36")
+        #expect(shown.expiresAfter == CalculatorModule.resultNoticeSeconds)
+        #expect(shown.actions.map(\.id) == ["copy", "dismiss"])
+        #expect(rig.scheduler.jobs == [rig.clock.now + CalculatorModule.resultNoticeSeconds])
+
+        rig.advance(CalculatorModule.resultNoticeSeconds - 1)
+        #expect(rig.activities.count == 1, "still shown just before it expires")
+        rig.advance(1)
+        #expect(rig.activities.isEmpty, "the scheduler job removes it without any engine tick")
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.module.history.map(\.text) == ["36"], "the result outlives its notice")
+    }
+
+    @Test func aNewResultReplacesTheNoticeAndRestartsItsTime() throws {
+        let rig = calculatorRig()
+        _ = try rig.result("1 + 1")
+        rig.advance(5)
+        _ = try rig.result("5 km in miles")
+        #expect(rig.activities.map(\.title) == ["5 km in miles = 3.106855961 mi"])
+        #expect(rig.scheduler.jobs == [rig.clock.now + CalculatorModule.resultNoticeSeconds], "one job, re-armed")
+        rig.advance(CalculatorModule.resultNoticeSeconds - 1)
+        #expect(rig.activities.count == 1)
+    }
+
+    @Test func anErrorIsReturnedWithoutTouchingHistoryOrTheNotch() throws {
+        let rig = calculatorRig()
+        _ = try rig.result("2 + 2")
+        #expect(rig.module.evaluate("1/0") == .failure(.divisionByZero))
+        #expect(rig.module.history.map(\.text) == ["4"])
+        #expect(rig.activities.map(\.title) == ["2 + 2 = 4"])
+    }
+
+    @Test func historyKeepsTheLastTenResultsNewestFirst() throws {
+        let rig = calculatorRig()
+        for value in 1...12 { _ = try rig.result("\(value) * 1") }
+        #expect(rig.module.history.map(\.text) == (3...12).reversed().map(String.init))
+        #expect(CalculatorModule.historyLimit == 10)
+        #expect(Set(rig.module.history.map(\.id)).count == 10, "ids are unique")
+    }
+
+    @Test func copyWritesOnlyTheResultTextThroughThePort() throws {
+        let rig = calculatorRig()
+        let first = try rig.result("5 km in miles")
+        _ = try rig.result("12 x 3")
+        #expect(rig.module.copy(first.id))
+        #expect(rig.pasteboard.written == ["3.106855961 mi"])
+        #expect(!rig.module.copy(9_999), "an unknown id copies nothing")
+        rig.pasteboard.refuse(true)
+        #expect(!rig.module.copy(first.id), "a refused write is reported")
+        #expect(rig.pasteboard.written == ["3.106855961 mi"])
+    }
+
+    @Test func theNotchCopyActionCopiesTheShownResultAndDismissEndsTheNotice() throws {
+        let rig = calculatorRig()
+        _ = try rig.result("12 × 3")
+        #expect(rig.host.perform(actionID: "copy", stackID: "calculator-result", moduleID: "calculator"))
+        #expect(rig.pasteboard.written == ["36"])
+        #expect(rig.host.perform(actionID: "dismiss", stackID: "calculator-result", moduleID: "calculator"))
+        #expect(rig.activities.isEmpty)
+        #expect(rig.scheduler.jobs.isEmpty, "dismiss cancels the expiry job")
+    }
+
+    @Test func longExpressionsAreShortenedInTheNotchTitleOnly() throws {
+        let rig = calculatorRig()
+        let input = (1...30).map(String.init).joined(separator: " + ")
+        let result = try rig.result(input)
+        #expect(result.expression == input)
+        let title = try #require(rig.activities.first?.title)
+        #expect(title.hasSuffix(" = 465"))
+        #expect(title.count <= CalculatorModule.titleExpressionLimit + " = 465".count)
+        #expect(title.contains("…"))
+    }
+
+    @Test func formatsInTheInjectedLocaleAndReadsAnglesInTheChosenUnit() throws {
+        let rig = calculatorRig(locale: "de_DE")
+        #expect(try rig.result("1.5").text == "1,5")
+        #expect(rig.module.angleUnit == .degrees, "degrees by default, like the macOS Calculator")
+        #expect(try rig.result("sin(90)").text == "1")
+        rig.module.angleUnit = .radians
+        #expect(try rig.result("sin(90)").text == "0,8939966636")
+    }
+
+    @Test func disablingPurgesHistoryCancelsTheJobAndRefusesWork() throws {
+        let rig = calculatorRig()
+        let kept = try rig.result("12 × 3")
+        #expect(rig.retained == 2, "one history entry and one expiry job")
+
+        rig.host.disable("calculator")
+        #expect(rig.retained == 0)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.module.history.isEmpty)
+        #expect(rig.activities.isEmpty)
+        #expect(rig.module.evaluate("1 + 1") == .failure(.off))
+        #expect(CalculatorError.off.message == "Calculator is off. Turn it on in Settings.")
+        #expect(!rig.module.copy(kept.id))
+        #expect(rig.pasteboard.written.isEmpty)
+
+        rig.host.enable("calculator")
+        #expect(rig.module.history.isEmpty, "nothing comes back after turning it on again")
+        #expect(try rig.result("1 + 1").text == "2")
+    }
+}
