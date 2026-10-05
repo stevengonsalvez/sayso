@@ -442,8 +442,9 @@ final class SaysoAppModel: ObservableObject {
     /// Modules that read the pasteboard or hold file access run only while the user has opted in;
     /// turning one off stops it and purges what it held.
     private func applyOptInModuleSettings() {
-        modules.setEnabled("clipboard", settings.clipboardModuleEnabled)
-        modules.setEnabled("file-shelf", settings.fileShelfEnabled)
+        // Descriptor ids, not literals: the host ignores unknown ids, so a typo would silently skip the purge.
+        modules.setEnabled(clipboardModule.descriptor.id, settings.clipboardModuleEnabled)
+        modules.setEnabled(fileShelf.descriptor.id, settings.fileShelfEnabled)
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
