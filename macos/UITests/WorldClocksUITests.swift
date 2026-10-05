@@ -52,6 +52,8 @@ final class WorldClocksUITests: XCTestCase {
 
         openNotch()
         XCTAssertTrue(notchLine.waitForExistence(timeout: 10), "Tokyo time in the open notch")
+        // Logged so the proof ledger can quote what was actually shown, not only that a pattern matched.
+        print("WORLD-CLOCKS-OBSERVED row=\"\(label)\" notch=\"\(notchLine.label)\"")
 
         let remove = app.descendants(matching: .any)["world-clocks-remove-Asia/Tokyo"]
         XCTAssertTrue(remove.waitForExistence(timeout: 5), "Remove button for Tokyo")
