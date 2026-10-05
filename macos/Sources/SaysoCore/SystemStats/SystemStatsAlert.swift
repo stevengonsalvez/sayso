@@ -48,11 +48,13 @@ enum SystemStatsAlert: String, CaseIterable, Sendable {
         switch self {
         case .battery:
             return "Battery \(stats.batteryPercent ?? 0)%, not plugged in"
+        // No figure that moves on every sample: each new title repaints the notch.
         case .memory:
-            let used = stats.memoryUsedFraction.map { "\(SystemStatsSnapshot.percent($0))% used" }
-            return ["Memory pressure \(stats.memoryPressure.rawValue)", used].compactMap { $0 }.joined(separator: ", ")
+            return "Memory pressure \(stats.memoryPressure.rawValue)"
         case .disk:
-            return "Disk almost full, \(SystemStatsSnapshot.gigabytes(stats.diskFreeBytes)) GB free"
+            // Rounded down, so a line that appears below 5 GB never reads "5.0 GB free".
+            let tenths = (Double(stats.diskFreeBytes) / 100_000_000).rounded(.down) / 10
+            return "Disk almost full, \(String(format: "%.1f", tenths)) GB free"
         }
     }
 }
