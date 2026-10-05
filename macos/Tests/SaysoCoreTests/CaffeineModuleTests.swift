@@ -168,6 +168,68 @@ private func rig() -> Rig {
         }
     }
 
+    @Test func theLabelFollowsTheClockOneMinuteAtATime() throws {
+        let rig = rig()
+        let start = rig.clock.now
+        #expect(rig.module.start(.oneHour))
+        #expect(rig.scheduler.jobs == [start + 60], "the label next changes when 59 minutes are left")
+
+        rig.advance(61)
+        #expect(rig.running.first?.title == "Awake · 59 min left")
+
+        rig.clock.now += 1200
+        #expect(rig.running.first?.title == "Awake · 59 min left", "no tick fired yet")
+        rig.scheduler.runDue(rig.clock.now)
+        #expect(rig.running.first?.title == "Awake · 39 min left", "one late tick reads the clock, not a tick count")
+        #expect(rig.scheduler.jobs == [start + 1320])
+    }
+
+    @Test func aTimedSessionEndsAtItsExactDeadlineWithAnExpiringNotice() throws {
+        let rig = rig()
+        let deadline = rig.clock.now + 900
+        #expect(rig.module.start(.fifteenMinutes))
+
+        rig.advance(899.999)
+        #expect(rig.port.held == 1, "still awake a millisecond before the deadline")
+        #expect(rig.running.first?.title == "Awake · 1 min left")
+        #expect(rig.scheduler.jobs == [deadline], "the last job is due exactly at the deadline")
+
+        rig.advance(0.001)
+        #expect(rig.port.held == 0)
+        #expect(rig.running.isEmpty)
+        #expect(rig.module.session == nil)
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.retained == 0)
+        let notice = try #require(rig.activities.first { $0.kind == .completion })
+        #expect(notice.title == "Caffeine off · Mac can sleep")
+        #expect(notice.expiresAfter == CaffeineModule.completionNoticeSeconds)
+        #expect(rig.activities.count == 1)
+    }
+
+    @Test func aLateTickEndsTheSessionOnceAndAnyCallSettlesAMissedDeadline() throws {
+        let late = rig(), missed = rig()
+        #expect(late.module.start(.fifteenMinutes))
+        late.advance(3 * 3600)
+        #expect(late.port.held == 0)
+        #expect(late.activities.filter { $0.kind == .completion }.count == 1)
+
+        #expect(missed.module.start(.fifteenMinutes))
+        missed.clock.now += 901
+        #expect(!missed.module.stop(), "the deadline already ended it, so there is nothing to stop")
+        #expect(missed.port.held == 0)
+        #expect(missed.activities.map(\.kind) == [.completion])
+    }
+
+    @Test func startingANewSessionClearsTheEndedNotice() throws {
+        let rig = rig()
+        #expect(rig.module.start(.fifteenMinutes))
+        rig.advance(900)
+        #expect(rig.activities.map(\.kind) == [.completion])
+
+        #expect(rig.module.start(.indefinite))
+        #expect(rig.activities.map(\.kind) == [.activeTask])
+    }
+
     @Test func invalidDurationsAreRefusedWithoutTouchingThePort() {
         let rig = rig()
         for seconds in [0, -1, .infinity, .nan, CaffeineModule.maxTimedSeconds + 1] as [TimeInterval] {
