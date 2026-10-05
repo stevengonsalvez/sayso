@@ -17,6 +17,8 @@ public enum CalculatorError: Error, Equatable, Sendable {
     case undefined
     case tooLong(limit: Int)
     case tooDeep(limit: Int)
+    case unknownUnit(String)
+    case incompatibleUnits(from: String, to: String)
 
     public var message: String {
         switch self {
@@ -29,12 +31,21 @@ public enum CalculatorError: Error, Equatable, Sendable {
         case .undefined: "Not a real number"
         case let .tooLong(limit): "Too long: at most \(limit) characters"
         case let .tooDeep(limit): "Nested too deeply: at most \(limit) levels"
+        case let .unknownUnit(unit): "Unknown unit \u{201C}\(unit)\u{201D}"
+        case let .incompatibleUnits(from, to): "Cannot convert \(from) to \(to)"
         }
     }
 }
 
 public struct CalculatorValue: Equatable, Sendable {
     public let number: Double
+    /// The unit converted to; nil for plain arithmetic.
+    public let unit: CalculatorUnit?
+
+    public init(number: Double, unit: CalculatorUnit? = nil) {
+        self.number = number
+        self.unit = unit
+    }
 }
 
 /// A small recursive-descent evaluator. NSExpression is not used: it raises an Objective-C exception on bad input.
@@ -45,6 +56,8 @@ public struct CalculatorValue: Equatable, Sendable {
 ///     power   := postfix ("^" unary)?
 ///     postfix := primary ("%" ("of" unary)?)?
 ///     primary := number | constant | function (("(" sum ")") | unary) | "(" sum ")"
+///
+/// A conversion is `amount unit ("in" | "to" | "as") unit`, where the amount is any expression above.
 ///
 /// A bare percent is a hundredth, except as the right side of + or -, where it is that share of the left side:
 /// "200 + 10%" is 220.
@@ -60,9 +73,19 @@ public enum CalculatorEngine {
         do {
             let tokens = try CalculatorTokenizer.tokens(of: input)
             guard !tokens.isEmpty else { return .failure(.empty) }
+            if let conversion = try CalculatorConversion(tokens: tokens) {
+                var parser = CalculatorParser(tokens: Array(conversion.amount), angle: angle)
+                let amount = try parser.parseAll()
+                let (from, to) = (conversion.from, conversion.to)
+                guard from.dimension == to.dimension else {
+                    throw CalculatorError.incompatibleUnits(from: from.symbol, to: to.symbol)
+                }
+                let number = from.convert(amount, to: to)
+                guard number.isFinite else { throw CalculatorError.overflow }
+                return .success(CalculatorValue(number: number, unit: to))
+            }
             var parser = CalculatorParser(tokens: tokens, angle: angle)
-            let value = try parser.parseAll()
-            return .success(CalculatorValue(number: value))
+            return .success(CalculatorValue(number: try parser.parseAll()))
         } catch let error as CalculatorError {
             return .failure(error)
         } catch {
@@ -82,6 +105,59 @@ enum CalculatorToken: Equatable {
         case let .word(word): word
         case let .symbol(symbol): String(symbol)
         }
+    }
+}
+
+/// Splits "5 km in miles" into the amount tokens and the two units. Keywords are tried from the right, so
+/// "5 in in cm" reads the first "in" as inches, and longer unit spellings first, so "km/h" is not read as "h".
+struct CalculatorConversion {
+    let amount: ArraySlice<CalculatorToken>
+    let from: CalculatorUnit
+    let to: CalculatorUnit
+
+    private static let keywords: Set<String> = ["in", "to", "as"]
+    private static let longestUnitTokens = 3
+
+    /// Nil when the input is not a conversion; throws when it names a source unit but an unknown target.
+    init?(tokens: [CalculatorToken]) throws {
+        let keywordIndices = tokens.indices.reversed().filter {
+            if case let .word(word) = tokens[$0] { Self.keywords.contains(word.lowercased()) } else { false }
+        }
+        var unknownTarget: String?
+        for index in keywordIndices {
+            guard let source = Self.sourceUnit(in: tokens[..<index]) else { continue }
+            let targetTokens = tokens[(index + 1)...]
+            guard let targetName = Self.text(of: targetTokens) else { continue }
+            guard let target = CalculatorUnit.named(targetName) else {
+                unknownTarget = unknownTarget ?? targetName
+                continue
+            }
+            amount = tokens[..<(index - source.length)]
+            from = source.unit
+            to = target
+            return
+        }
+        if let unknownTarget { throw CalculatorError.unknownUnit(unknownTarget) }
+        return nil
+    }
+
+    /// The unit at the end of `tokens`, leaving at least one token for the amount.
+    private static func sourceUnit(in tokens: ArraySlice<CalculatorToken>) -> (unit: CalculatorUnit, length: Int)? {
+        for length in stride(from: min(longestUnitTokens, tokens.count - 1), through: 1, by: -1) {
+            if let name = text(of: tokens.suffix(length)), let unit = CalculatorUnit.named(name) { return (unit, length) }
+        }
+        return nil
+    }
+
+    /// Words and symbols joined without spaces ("km/h", "floz"); nil when empty or holding a number.
+    private static func text(of tokens: ArraySlice<CalculatorToken>) -> String? {
+        guard !tokens.isEmpty else { return nil }
+        var text = ""
+        for token in tokens {
+            if case .number = token { return nil }
+            text += token.text
+        }
+        return text
     }
 }
 
