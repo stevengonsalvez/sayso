@@ -53,7 +53,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         if changed { current?.cadenceChanged() }
     }
 
-    /// Call after the system clock changes or the Mac wakes: the pending sample was set against the old time.
+    /// Call after the system clock changes: the pending sample was set against the old time.
     public func clockChanged() { current?.clockChanged() }
 
     fileprivate var isObserved: Bool { lock.withLock { !viewers.isEmpty } }
@@ -65,13 +65,16 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         lock.withLock { if runtime === stopped { runtime = nil } }
     }
 
+    /// Fewer ticks than this, about one core-second, are too few to call a load.
+    static let minimumTicks: UInt64 = 100
+
     /// Busy share of the ticks between two readings. Wrapping subtraction keeps a counter that passed
-    /// `UInt32.max` right; no ticks at all gives nil, never a made-up number.
+    /// `UInt32.max` right; too few ticks give nil, never a made-up number.
     static func cpuLoad(from previous: SystemCPUTicks, to current: SystemCPUTicks) -> Double? {
         let busy = UInt64(current.user &- previous.user) + UInt64(current.system &- previous.system)
             + UInt64(current.nice &- previous.nice)
         let total = busy + UInt64(current.idle &- previous.idle)
-        guard total > 0 else { return nil }
+        guard total >= minimumTicks else { return nil }
         return Double(busy) / Double(total)
     }
 
@@ -100,6 +103,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         private var lastReport: Date?
         /// The next job reads the machine even if a sample is not yet due: set on start and after a clock change.
         private var sampleNow = false
+        /// A dismissal waits for the next job to clear its line.
+        private var repaintNow = false
 
         init(module: SystemStatsModule, context: SaysoModuleContext) {
             self.module = module
@@ -115,7 +120,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             lock.withLock {
                 running = true
                 sampleNow = true
-                rearm(at: module.now(), soon: true)
+                rearm(at: module.now())
             }
         }
 
@@ -133,6 +138,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 failing = false
                 lastReport = nil
                 sampleNow = false
+                repaintNow = false
             }
             module.detach(self)
         }
@@ -144,7 +150,8 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             lock.withLock {
                 guard running, shown[alert] != nil else { return }
                 hidden.insert(alert)
-                rearm(at: module.now(), soon: true)
+                repaintNow = true
+                rearm(at: module.now())
             }
         }
 
@@ -156,7 +163,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 lastSampleAt = lastSampleAt.map { min($0, now) }
                 lastReport = lastReport.map { min($0, now) }
                 sampleNow = true
-                rearm(at: now, soon: true)
+                rearm(at: now)
             }
         }
 
@@ -174,7 +181,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
         private func run() {
             guard let due = lock.withLock({ () -> Bool? in
                 guard running else { return nil }
-                defer { sampleNow = false }
+                defer { (sampleNow, repaintNow) = (false, false) }
                 return sampleNow || lastSampleAt.map { module.now() >= $0.addingTimeInterval(interval) } ?? true
             }) else { return }
             let reading = due ? Result { () throws(SystemStatsPortError) in try module.port.read() } : nil
@@ -189,7 +196,7 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                 switch reading {
                 case let .success(reading):
                     let stats = SystemStatsSnapshot(
-                        cpuLoad: lastTicks.flatMap { SystemStatsModule.cpuLoad(from: $0, to: reading.cpuTicks) },
+                        cpuLoad: cpuLoad(advancingTo: reading.cpuTicks),
                         memoryUsedFraction: reading.memoryUsedFraction,
                         memoryPressure: reading.memoryPressure,
                         batteryFraction: reading.batteryFraction,
@@ -198,7 +205,6 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                         sampledAt: now
                     )
                     latest = stats
-                    lastTicks = reading.cpuTicks
                     failing = false
                     updateAlerts(stats)
                 case .failure:
@@ -224,6 +230,19 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
                     context.dismiss(stackID: alert.stackID)
                 }
             }
+        }
+
+        /// The load since the last sample that had enough ticks to measure. A sample forced moments after another
+        /// keeps the last load and the older baseline, so the next one measures over the whole span. Call with the
+        /// lock held.
+        private func cpuLoad(advancingTo ticks: SystemCPUTicks) -> Double? {
+            guard let lastTicks else {
+                self.lastTicks = ticks
+                return nil
+            }
+            guard let load = SystemStatsModule.cpuLoad(from: lastTicks, to: ticks) else { return latest?.cpuLoad }
+            self.lastTicks = ticks
+            return load
         }
 
         /// Call with the lock held.
@@ -258,13 +277,14 @@ public final class SystemStatsModule: SaysoModule, @unchecked Sendable {
             return true
         }
 
-        /// One job: due one interval after the last sample, at once if that is already past (`soon` forces now).
-        /// None for a non-finite clock, which a real timer would fire at once. Call with the lock held.
-        private func rearm(at now: Date, soon: Bool = false) {
+        /// One job: at once while a forced sample or a dismissal waits, so no later re-arm can push either back;
+        /// otherwise one interval after the last sample, or at once if that is already past. None for a non-finite
+        /// clock, which a real timer would fire at once. Call with the lock held.
+        private func rearm(at now: Date) {
             job?.cancel()
             job = nil
             guard running, now.timeIntervalSince1970.isFinite else { return }
-            let due = soon ? now : max(now, lastSampleAt.map { $0.addingTimeInterval(interval) } ?? now)
+            let due = sampleNow || repaintNow ? now : max(now, lastSampleAt.map { $0.addingTimeInterval(interval) } ?? now)
             job = module.scheduler.schedule(at: due) { [weak self] in self?.run() }
         }
 
