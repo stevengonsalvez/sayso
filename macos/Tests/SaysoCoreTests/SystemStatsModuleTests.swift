@@ -376,6 +376,10 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18; $0.diskFreeBytes = 1_000_000_000 })
         #expect(rig.lines.count == 2)
         #expect(rig.tap("dismiss", on: "system-stats-battery"))
+        #expect(rig.scheduler.jobs == [rig.clock.now], "the job applies the dismissal")
+        let reads = rig.machine.reads
+        rig.advance(0)
+        #expect(rig.machine.reads == reads, "a repaint is not a sample")
         #expect(rig.lines.map(\.stackID) == ["system-stats-disk"], "only the dismissed line goes")
         rig.sample { $0.batteryFraction = 0.17 }
         #expect(rig.lines.map(\.stackID) == ["system-stats-disk"], "still low: stays hidden")
