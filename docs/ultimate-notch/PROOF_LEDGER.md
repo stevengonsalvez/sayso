@@ -130,3 +130,10 @@ That transcript is now a fixture in `ControlSpeechFixtureTests`: `ControlTryNowP
 ## /code-review round on PR #54 (2026-10-04, medium, fix bugs only)
 
 Four real bugs found and fixed, each with a regression test written first and observed RED: the notch menu Deny and Approve tint missed step-bound ids (`deny-<uuid>`, `approve-<uuid>`), Vocabulary Retry on the `save-failed-<id>` card did nothing, and External API stack slots never freed on expiry. 552 tests pass. The tint fix is a view detail with no unit test. Not fixed (low impact, noted by the review): `VocabularyBridge.sync()` only runs on store change, and the clipboard source-app denylist uses the frontmost app at poll time.
+
+## XCUITest harness (branch notch-xcuitest)
+
+- `macos/project.yml` (xcodegen) generates `SaysoUITests.xcodeproj`; tests in `macos/UITests/`, app path via `TEST_RUNNER_SAYSO_APP_PATH`.
+- Run: `TEST_RUNNER_SAYSO_APP_PATH="$PWD/.artifacts/Sayso Notch.app" xcodebuild test -project SaysoUITests.xcodeproj -scheme SaysoUITests -destination 'platform=macOS'`. Needs Automation Mode enabled and no other Sayso running.
+- Studio navigation (Voice output tab opens its pane): RED observed on an app built without accessibility ids (tab not found, 16s); GREEN observed after ids added (passed, 10s). Observed on the packaged app, not notarized.
+- Not covered yet: other tabs, notch surface, Control approve/deny, Models, Vocabulary.
