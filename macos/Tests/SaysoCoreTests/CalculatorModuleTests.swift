@@ -187,3 +187,54 @@ private func close(_ a: Double, _ b: Double, within tolerance: Double = 1e-12) -
         #expect(try number("cos 0") == 1)
     }
 }
+
+private func converted(_ input: String) throws -> (number: Double, symbol: String?) {
+    let value = try CalculatorEngine.evaluate(input).get()
+    return (value.number, value.unit?.symbol)
+}
+
+@Suite struct CalculatorEngineConversionTests {
+    @Test func lengthConvertsAndNamesTheTargetUnit() throws {
+        let miles = try converted("5 km in miles")
+        #expect(close(miles.number, 3.1068559611866697, within: 1e-12))
+        #expect(miles.symbol == "mi")
+        #expect(try converted("5 in in cm").number == 12.7, "the inch keeps its name next to the in keyword")
+        #expect(try converted("12 inches to feet").number == 1)
+        #expect(try converted("5 KM IN MILES").symbol == "mi", "unit names are case insensitive")
+        #expect(try converted("2 * 3 km in m").number == 6000, "the amount can be an expression")
+    }
+
+    @Test func temperatureUsesOffsetsNotJustFactors() throws {
+        let celsius = try converted("100 f in c")
+        #expect(close(celsius.number, 37.77777777777778, within: 1e-9))
+        #expect(celsius.symbol == "°C")
+        #expect(try converted("0 c to f").number == 32)
+        #expect(try converted("-40 c in f").number == -40)
+        #expect(close(try converted("300 k in c").number, 26.85, within: 1e-9))
+        #expect(try converted("212 °f in °c").number == 100)
+    }
+
+    @Test func massVolumeSpeedAndDataSizeConvert() throws {
+        #expect(close(try converted("1 kg in lb").number, 2.2046226218487757, within: 1e-12))
+        #expect(close(try converted("16 oz in lb").number, 1, within: 1e-12))
+        #expect(close(try converted("1 gal in l").number, 3.785411784, within: 1e-12))
+        #expect(try converted("1 l in ml").number == 1000)
+        let speed = try converted("60 mph to kph")
+        #expect(close(speed.number, 96.56064, within: 1e-9))
+        #expect(speed.symbol == "km/h")
+        #expect(close(try converted("10 m/s in km/h").number, 36, within: 1e-12))
+        let data = try converted("2 gb in mb")
+        #expect(data.number == 2000)
+        #expect(data.symbol == "MB")
+        #expect(try converted("1 gib in mib").number == 1024)
+        #expect(try converted("8 bits in bytes").number == 1)
+    }
+
+    @Test func mismatchedOrUnknownUnitsAreClearErrors() throws {
+        #expect(failure("5 km in kg") == .incompatibleUnits(from: "km", to: "kg"))
+        #expect(CalculatorError.incompatibleUnits(from: "km", to: "kg").message == "Cannot convert km to kg")
+        #expect(failure("5 km in parsecs") == .unknownUnit("parsecs"))
+        #expect(failure("1/0 km in m") == .divisionByZero)
+        #expect(try CalculatorEngine.evaluate("2 + 2").get().unit == nil, "plain arithmetic has no unit")
+    }
+}
