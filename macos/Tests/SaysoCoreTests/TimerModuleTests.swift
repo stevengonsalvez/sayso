@@ -14,6 +14,7 @@ private final class FakeScheduler: SaysoScheduling, @unchecked Sendable {
     }
 
     /// Fires every job due at `now`, earliest first, like a real timer firing late.
+    /// A module that keeps re-arming jobs already due would spin forever, so hitting the cap fails the test.
     func runDue(_ now: Date) {
         for _ in 0..<10_000 {
             let job = lock.withLock { () -> (id: Int, at: Date, action: @Sendable () -> Void)? in
@@ -24,6 +25,7 @@ private final class FakeScheduler: SaysoScheduling, @unchecked Sendable {
             guard let job else { return }
             job.action()
         }
+        Issue.record("ticks kept re-arming at or before now: a runaway tick loop")
     }
 }
 
@@ -120,14 +122,14 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(paused.remaining == 500)
         let pausedActivity = try #require(rig.running.first)
         #expect(pausedActivity.title == "Timer 8:20 (paused)")
-        #expect(pausedActivity.actions.map(\.id) == ["resume", "cancel"])
+        #expect(pausedActivity.actions.map(\.id) == ["resume", "cancel", "dismiss"])
         #expect(!rig.module.pause(id), "pausing twice is refused")
 
         #expect(rig.host.perform(actionID: "resume", stackID: pausedActivity.stackID, moduleID: "timer"))
         rig.advance(50)
         #expect(rig.module.timers.first { $0.id == id }?.remaining == 450)
         #expect(rig.running.first?.title == "Timer 7:30")
-        #expect(rig.running.first?.actions.map(\.id) == ["pause", "cancel"])
+        #expect(rig.running.first?.actions.map(\.id) == ["pause", "cancel", "dismiss"])
         #expect(!rig.module.resume(id), "resuming a running timer is refused")
     }
 
@@ -142,6 +144,30 @@ private func rig(maxTimers: Int = TimerModule.defaultMaxTimers) -> Rig {
         #expect(rig.scheduler.jobs.isEmpty)
         #expect(rig.sink.pings.isEmpty)
         #expect(!rig.module.cancel(id), "cancelling twice is refused")
+    }
+
+    @Test func dismissingATimerFromTheNotchCancelsItInsteadOfHidingIt() throws {
+        let rig = rig()
+        try #require(rig.module.startPomodoro() != nil)
+        let shown = try #require(rig.running.first)
+
+        #expect(rig.host.perform(actionID: "dismiss", stackID: shown.stackID, moduleID: "timer"))
+        rig.advance(5)
+
+        #expect(rig.module.timers.isEmpty, "a dismissed timer must not keep running unseen")
+        #expect(rig.activities.isEmpty, "and must not reappear on the next tick")
+        #expect(rig.scheduler.jobs.isEmpty)
+        #expect(rig.sink.pings.isEmpty)
+    }
+
+    @Test func countdownDurationsAreBoundedSoLabelsAndTicksStaySane() {
+        let rig = rig()
+        #expect(rig.module.startCountdown(1e16) == nil, "a near-infinite duration would tick with no delay")
+        #expect(rig.module.startCountdown(TimerModule.maxCountdownSeconds + 1) == nil)
+        #expect(rig.module.startCountdown(TimerModule.maxCountdownSeconds) != nil)
+        rig.advance(1)
+        #expect(rig.running.map(\.title) == ["Timer 99:59:59"])
+        #expect(!TimerModule.clockLabel(1e19).isEmpty, "a huge value must not trap converting to Int")
     }
 
     @Test func aCountdownNeedsAPositiveDuration() {
