@@ -80,6 +80,18 @@ private struct Probe: SaysoModule {
     }
 }
 
+/// Every change to this module's notch lines, as titles in stack order.
+private final class Painted: @unchecked Sendable {
+    var changes: [[String]] = []
+}
+
+/// What the module reports through a bare context, so "reported once" can be counted exactly.
+private final class Reports: @unchecked Sendable {
+    var failures = 0
+    var published: [SaysoActivity] = []
+    var dismissed: [String] = []
+}
+
 private struct Rig {
     let host: SaysoModuleHost
     let module: SystemStatsModule
@@ -87,6 +99,21 @@ private struct Rig {
     let scheduler: FakeScheduler
     let clock: Clock
     let captured: Captured
+    let painted: Painted
+
+    var lines: [SaysoActivity] { host.engine.stack.filter { $0.moduleID == "system-stats" } }
+    var titles: [String] { lines.map(\.title) }
+
+    @discardableResult
+    func tap(_ actionID: String, on stackID: String) -> Bool {
+        host.perform(actionID: actionID, stackID: stackID, moduleID: "system-stats")
+    }
+
+    /// Sets the machine and lets the next sample run.
+    func sample(_ change: (inout SystemStatsReading) -> Void) {
+        machine.set(change)
+        advance(SystemStatsModule.idleIntervalSeconds)
+    }
 
     func advance(_ seconds: TimeInterval) {
         clock.now += seconds
@@ -98,12 +125,17 @@ private struct Rig {
 
 /// Enables the module and lets the first sample run.
 private func rig(_ reading: SystemStatsReading = .calm) -> Rig {
-    let clock = Clock(), scheduler = FakeScheduler(), captured = Captured()
+    let clock = Clock(), scheduler = FakeScheduler(), captured = Captured(), painted = Painted()
     let machine = FakeMachine(reading)
     let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
     let host = SaysoModuleHost(modules: [Probe(inner: module, captured: captured)], now: { clock.now })
+    host.onActivitiesChanged = { [weak host] in
+        painted.changes.append(host?.engine.stack.filter { $0.moduleID == "system-stats" }.map(\.title) ?? [])
+    }
     host.enable("system-stats")
-    let rig = Rig(host: host, module: module, machine: machine, scheduler: scheduler, clock: clock, captured: captured)
+    let rig = Rig(
+        host: host, module: module, machine: machine, scheduler: scheduler, clock: clock, captured: captured, painted: painted
+    )
     rig.advance(0)
     return rig
 }
@@ -255,6 +287,172 @@ private func close(_ value: Double?, _ expected: Double) -> Bool {
         rig.advance(0)
         #expect(rig.module.snapshot?.cpuLoad == nil, "a fresh start has no earlier sample to compare with")
         #expect(rig.scheduler.jobs == [rig.clock.now + SystemStatsModule.observedIntervalSeconds], "still observed")
+    }
+
+    @Test func nothingNotableShowsNoLine() {
+        let rig = rig()
+        #expect(rig.lines.isEmpty, "a calm machine never puts a permanent line in the notch")
+        rig.module.setObserved(.notch, true)
+        rig.advance(SystemStatsModule.observedIntervalSeconds)
+        #expect(rig.lines.isEmpty)
+    }
+
+    @Test func aLowBatteryOnBatteryShowsALowPriorityLineAndPluggingInClearsIt() throws {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let line = try #require(rig.lines.first)
+        #expect(rig.lines.count == 1)
+        #expect(line.stackID == "system-stats-battery")
+        #expect(line.title == "Battery 18%, not plugged in")
+        #expect(line.kind == .ambient, "below every task, completion, failure and confirmation")
+        #expect(line.interruption == .normal)
+        #expect(line.progress == nil)
+        #expect(line.expiresAfter == nil)
+        #expect(line.actions.map(\.id) == ["dismiss"])
+
+        rig.sample { $0.isPluggedIn = true }
+        #expect(rig.lines.isEmpty, "plugged in: nothing to warn about")
+    }
+
+    @Test func batteryEntersAtTwentyAndClearsOnlyAtTwentyFiveSoItNeverFlaps() {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.21 })
+        #expect(rig.lines.isEmpty)
+        rig.sample { $0.batteryFraction = 0.20 }
+        #expect(rig.titles == ["Battery 20%, not plugged in"])
+        rig.sample { $0.batteryFraction = 0.22 }
+        #expect(rig.titles == ["Battery 22%, not plugged in"], "a small recovery does not clear it")
+        rig.sample { $0.batteryFraction = 0.24 }
+        #expect(rig.lines.count == 1)
+        rig.sample { $0.batteryFraction = 0.25 }
+        #expect(rig.lines.isEmpty)
+        rig.sample { $0.batteryFraction = 0.22 }
+        #expect(rig.lines.isEmpty, "below 25 but above 20 again: still clear")
+        rig.sample { $0.batteryFraction = 0.19 }
+        #expect(rig.titles == ["Battery 19%, not plugged in"])
+    }
+
+    @Test func aMachineWithNoBatteryNeverShowsABatteryLine() {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = nil; $0.isPluggedIn = false })
+        #expect(rig.lines.isEmpty)
+        rig.sample { $0.batteryFraction = .nan }
+        #expect(rig.lines.isEmpty, "an unreadable battery is no battery")
+        rig.sample { $0.batteryFraction = 0.1; $0.isPluggedIn = nil }
+        #expect(rig.lines.isEmpty, "a level without a power state cannot say it is not charging")
+    }
+
+    @Test func criticalMemoryPressureShowsALineUntilPressureIsNormalAgain() {
+        let rig = rig(SystemStatsReading.calm.with { $0.memoryPressure = .warning; $0.memoryUsedFraction = 0.9 })
+        #expect(rig.lines.isEmpty, "warning alone is not notable")
+        rig.sample { $0.memoryPressure = .critical; $0.memoryUsedFraction = 0.94 }
+        #expect(rig.lines.map(\.stackID) == ["system-stats-memory"])
+        #expect(rig.titles == ["Memory pressure critical, 94% used"])
+        rig.sample { $0.memoryPressure = .warning }
+        #expect(rig.titles == ["Memory pressure warning, 94% used"], "easing to warning does not clear it")
+        rig.sample { $0.memoryPressure = .normal }
+        #expect(rig.lines.isEmpty)
+    }
+
+    @Test func lessThanFiveGigabytesFreeShowsALineUntilSixAreFree() {
+        let rig = rig(SystemStatsReading.calm.with { $0.diskFreeBytes = 5_000_000_000 })
+        #expect(rig.lines.isEmpty)
+        rig.sample { $0.diskFreeBytes = 4_960_000_000 }
+        #expect(rig.lines.map(\.stackID) == ["system-stats-disk"])
+        #expect(rig.titles == ["Disk almost full, 5.0 GB free"])
+        rig.sample { $0.diskFreeBytes = 5_900_000_000 }
+        #expect(rig.lines.count == 1)
+        rig.sample { $0.diskFreeBytes = 6_000_000_000 }
+        #expect(rig.lines.isEmpty)
+    }
+
+    @Test func dismissKeepsALineHiddenUntilItsConditionClearsAndReturns() {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18; $0.diskFreeBytes = 1_000_000_000 })
+        #expect(rig.lines.count == 2)
+        #expect(rig.tap("dismiss", on: "system-stats-battery"))
+        #expect(rig.lines.map(\.stackID) == ["system-stats-disk"], "only the dismissed line goes")
+        rig.sample { $0.batteryFraction = 0.17 }
+        #expect(rig.lines.map(\.stackID) == ["system-stats-disk"], "still low: stays hidden")
+        rig.sample { $0.batteryFraction = 0.26 }
+        rig.sample { $0.batteryFraction = 0.19 }
+        #expect(rig.titles.contains("Battery 19%, not plugged in"), "cleared, then low again: it returns")
+    }
+
+    @Test func aLineIsRepublishedOnlyWhenItsTextChanges() {
+        let rig = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let before = rig.painted.changes.count
+        rig.module.setObserved(.notch, true)
+        for _ in 0..<6 { rig.advance(SystemStatsModule.observedIntervalSeconds) }
+        #expect(rig.painted.changes.count == before, "same text, same line: no repaint")
+        rig.sample { $0.batteryFraction = 0.17 }
+        #expect(rig.painted.changes.count == before + 1)
+    }
+
+    @Test func aFailingMachineReadIsReportedOnceAndBacksOff() {
+        let clock = Clock(), scheduler = FakeScheduler(), reports = Reports()
+        let machine = FakeMachine(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        let module = SystemStatsModule(port: machine, scheduler: scheduler, now: { clock.now })
+        let runtime = module.makeRuntime(context: SaysoModuleContext(
+            moduleID: "system-stats",
+            publish: { reports.published.append($0) },
+            reportFailure: { reports.failures += 1 },
+            dismiss: { reports.dismissed.append($0) }
+        ))
+        func advance(_ seconds: TimeInterval) {
+            clock.now += seconds
+            scheduler.runDue(clock.now)
+        }
+        module.setObserved(.studio, true)
+        runtime.start()
+        advance(0)
+        #expect(reports.published.map(\.title) == ["Battery 18%, not plugged in"])
+
+        machine.fail(.unavailable)
+        advance(SystemStatsModule.observedIntervalSeconds)
+        #expect(reports.failures == 1)
+        #expect(module.snapshot == nil, "a failed read cannot vouch for the old figures")
+        #expect(reports.dismissed == ["system-stats-battery"], "nor for the old line")
+        #expect(scheduler.jobs == [clock.now + SystemStatsModule.failureBackoffSeconds], "backs off even while observed")
+        for _ in 0..<5 { advance(SystemStatsModule.failureBackoffSeconds) }
+        #expect(machine.reads == 7)
+        #expect(reports.failures == 1, "a lasting failure is reported once, not on every sample")
+
+        machine.fail(nil)
+        advance(SystemStatsModule.failureBackoffSeconds)
+        #expect(module.snapshot != nil)
+        #expect(reports.published.last?.title == "Battery 18%, not plugged in", "still low after the outage")
+        #expect(scheduler.jobs == [clock.now + SystemStatsModule.observedIntervalSeconds])
+    }
+
+    @Test func aLastingFailureLeavesTheModuleDegradedNeverQuarantined() {
+        let rig = rig()
+        rig.machine.fail(.unavailable)
+        rig.advance(SystemStatsModule.idleIntervalSeconds)
+        #expect(rig.host.health(of: "system-stats") == .degraded)
+        for _ in 0..<20 { rig.advance(SystemStatsModule.failureBackoffSeconds) }
+        #expect(rig.host.health(of: "system-stats") != .quarantined)
+        rig.machine.fail(nil)
+        for _ in 0..<3 {
+            rig.advance(SystemStatsModule.idleIntervalSeconds)
+            rig.machine.fail(.unavailable)
+            rig.advance(SystemStatsModule.failureBackoffSeconds)
+            rig.machine.fail(nil)
+        }
+        #expect(rig.host.health(of: "system-stats") != .quarantined, "flaky reads within five minutes report at most once")
+    }
+
+    @Test func aFailedReadKeepsDismissAndTheEnteredState() {
+        let dismissed = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        dismissed.tap("dismiss", on: "system-stats-battery")
+        dismissed.machine.fail(.unavailable)
+        dismissed.advance(SystemStatsModule.idleIntervalSeconds)
+        dismissed.machine.fail(nil)
+        dismissed.sample { $0.batteryFraction = 0.17 }
+        #expect(dismissed.lines.isEmpty, "dismissed and still low: an outage in between does not bring it back")
+
+        let entered = rig(SystemStatsReading.calm.with { $0.batteryFraction = 0.18 })
+        entered.machine.fail(.unavailable)
+        entered.advance(SystemStatsModule.idleIntervalSeconds)
+        entered.machine.fail(nil)
+        entered.sample { $0.batteryFraction = 0.22 }
+        #expect(entered.titles == ["Battery 22%, not plugged in"], "entered before the outage and not yet recovered")
     }
 
     @Test func passesTheModuleAcceptanceContract() {
