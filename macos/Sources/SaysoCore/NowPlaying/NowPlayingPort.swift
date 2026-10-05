@@ -50,15 +50,21 @@ public enum NowPlayingCommand: String, CaseIterable, Sendable {
 public enum NowPlayingPortError: Error, Equatable, Sendable {
     /// The user refused, or has not yet allowed, Automation for this player.
     case automationDenied
-    /// The player did not answer, answered with an error, or quit.
+    /// The player did not answer in time or answered with an error.
     case unavailable
+    /// The player quit or has nothing loaded: not a fault, there is just nothing to talk to.
+    case playerGone
 }
 
 /// Boundary to the music players; the adapter owns AppleScript.
 public protocol NowPlayingPort: Sendable {
-    /// The track of a player that is already running, preferring one that is playing; nil when no supported player
-    /// is running or none has a track. Must never launch a player.
-    func current() throws(NowPlayingPortError) -> NowPlayingSnapshot?
+    /// The track of a player that is already running, preferring one that is playing, then `preferring` when two are
+    /// paused; nil when no supported player is running or none has a track. Must never launch a player.
+    func current(preferring: NowPlayingApp?) throws(NowPlayingPortError) -> NowPlayingSnapshot?
     /// Must never launch the player.
     func send(_ command: NowPlayingCommand, to app: NowPlayingApp) throws(NowPlayingPortError)
+}
+
+public extension NowPlayingPort {
+    func current() throws(NowPlayingPortError) -> NowPlayingSnapshot? { try current(preferring: nil) }
 }
