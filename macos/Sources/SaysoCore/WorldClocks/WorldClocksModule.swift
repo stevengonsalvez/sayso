@@ -43,6 +43,9 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
     /// The chosen zones in display order; empty while the module is disabled.
     public var zones: [WorldClockZone] { current?.zones ?? [] }
 
+    /// The time in each chosen zone now, in display order; empty while the module is disabled.
+    public var readings: [WorldClockReading] { current?.readings ?? [] }
+
     /// Appends a zone. A blank city falls back to the identifier's last part, for example "New York".
     @discardableResult
     public func add(_ identifier: String, city: String? = nil) throws(WorldClocksError) -> WorldClockZone {
@@ -106,6 +109,10 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         return entries
     }
 
+    fileprivate func reading(of entry: Entry, at now: Date, local: TimeZone) -> WorldClockReading {
+        WorldClockTime.reading(for: entry.zone, in: entry.timeZone, local: local, at: now, hourCycle: hourCycle)
+    }
+
     static func label(_ city: String?, for identifier: String) -> String {
         let trimmed = (city ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let fallback = (identifier.split(separator: "/").last.map(String.init) ?? identifier)
@@ -133,6 +140,11 @@ public final class WorldClocksModule: SaysoModule, @unchecked Sendable {
         var retainedResources: Int { 0 }
 
         var zones: [WorldClockZone] { lock.withLock { entries.map(\.zone) } }
+
+        var readings: [WorldClockReading] {
+            let (now, local) = (module.now(), module.localTimeZone())
+            return lock.withLock { entries.map { module.reading(of: $0, at: now, local: local) } }
+        }
 
         func start() {
             lock.withLock {
