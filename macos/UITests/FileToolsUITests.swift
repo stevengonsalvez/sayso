@@ -15,7 +15,8 @@ final class FileToolsUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         folder = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("sayso-file-tools-\(UUID().uuidString)", isDirectory: true)
+            // Short, because every path is typed into the app one character at a time.
+            .appendingPathComponent("sft-\(UUID().uuidString.prefix(8))", isDirectory: true)
         // A sandboxed runner would put this inside its container, and the app reaching into it can make macOS ask
         // the user for access to another app's data. Stop before launching anything.
         XCTAssertFalse(folder.path.contains("/Library/Containers/"), "the runner must not be sandboxed: \(folder.path)")
@@ -185,15 +186,17 @@ final class FileToolsUITests: XCTestCase {
         tab.click()
     }
 
-    /// Scrolls the Notch & HUD pane straight down until `element` can be clicked. The pane is long and the file tools
-    /// sit near its end; XCUITest's own scroll-to-visible also scrolls sideways and has left rows unclickable.
+    /// Scrolls the Notch & HUD pane straight down until `element` lies wholly inside it, then requires it clickable.
+    /// The pane is long and the file tools sit near its end; XCUITest's own scroll-to-visible also scrolls sideways
+    /// and has left rows unclickable. Frames, not `isHittable`, decide when to stop: asking `isHittable` of the half
+    /// visible text field at the pane's edge took about 50 s, once in each test.
     private func reveal(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 5), "\(element) exists")
         let pane = app.scrollViews["studio-pane-notch"]
-        for _ in 0..<40 where !element.isHittable {
+        for _ in 0..<40 where !pane.frame.contains(element.frame) {
             pane.scroll(byDeltaX: 0, deltaY: -100)
         }
-        XCTAssertTrue(element.isHittable, "can be clicked, frame \(element.frame)")
+        XCTAssertTrue(element.isHittable, "can be clicked, frame \(element.frame) in pane \(pane.frame)")
     }
 
     /// Replaces the field's text with the paths, comma separated.
