@@ -336,3 +336,7 @@ Four real bugs found and fixed, each with a regression test written first and ob
 - The UI test `SnippetsUITests` was edited to match (clipboard copy reads "Copied Sign off (includes clipboard text)", a `{date}` copy shows its text) but NOT run: no GUI launch in this pass. The packaged-app proof above predates this change.
 - Not selectable any more: the notice line is plain text for every copy, since `textSelection` cannot switch per copy.
 - NOT OBSERVED: the real clipboard history recording a concealed copy (only the marker on a private board and `ClipboardPrivacy.isSensitive` on its types are tested), CI on the new head at the time of writing.
+
+## CI note: main after PR #69 (2026-10-07)
+
+- Main's post-merge macOS run for PR #69 (run `37576747930`, head `f7fd08f`) hung on attempt 1: the job started 05:31:52Z, sat in `Run native tests with test keychain` and was cancelled at 06:01:52Z, about 29 minutes later (the job's `timeout-minutes` is 25). No log was kept for that attempt (the job log API answers 404 `BlobNotFound`). Attempt 2 passed (06:02:14Z to 06:13:28Z). Cause unconfirmed: without a log, a hung test, a stalled runner and a keychain wait cannot be told apart; a repeat with a log would narrow it.
