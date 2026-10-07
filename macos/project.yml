@@ -10,3 +10,4 @@ targets:
     settings:
       GENERATE_INFOPLIST_FILE: YES
       PRODUCT_BUNDLE_IDENTIFIER: ai.sayso.notch.uitests
+      CODE_SIGN_ENTITLEMENTS: UITests/SaysoUITests.entitlements
