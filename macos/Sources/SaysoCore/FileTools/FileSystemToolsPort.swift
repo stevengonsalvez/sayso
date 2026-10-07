@@ -73,7 +73,7 @@ public struct FileSystemToolsPort: FileToolsPort {
                 // A link whose target cannot be found is treated as pointing outside: it cannot be shown to stay in.
                 guard let target = Self.canonical(item.path), Self.isInside(target, root) else { return (bytes, true) }
             } else if values?.isRegularFile == true {
-                bytes += Int64(values?.fileSize ?? 0)
+                bytes = FileToolsModule.saturatingSum(bytes, Int64(values?.fileSize ?? 0))
             }
         }
         if failed.error != nil { throw FileToolsError.unreadable(name) }
