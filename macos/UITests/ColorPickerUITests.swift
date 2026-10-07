@@ -45,7 +45,7 @@ final class ColorPickerUITests: XCTestCase {
     /// The pane's off notice and empty rows come from the module's state, not the setting, so this fails if the
     /// setting stops reaching the module. The pane cannot see whether the stopped module emptied its memory (a new
     /// session starts empty either way); that purge is proven by `ColorPickerModuleTests` (`retainedResources == 0`).
-    func testTheToggleIsOnByDefaultAndTurningItOffClearsThePicks() {
+    func testTheToggleIsOnByDefaultAndOffThenOnAgainShowsNoEarlierPick() {
         openNotchPane()
         pick()
         XCTAssertEqual(readRow("color-picker-hex"), "#336699")
