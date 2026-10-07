@@ -356,6 +356,8 @@ struct FileToolsRefusal: CustomTestStringConvertible, Sendable {
               message: "Photos is a folder. Image conversion and PDF merge take files.", checkedBeforeWork: false),
         .init(name: "folder for pdf", tool: .mergePDFs, paths: "/in/one.pdf\n/in/Photos", error: .isFolder("Photos"),
               message: "Photos is a folder. Image conversion and PDF merge take files.", checkedBeforeWork: false),
+        .init(name: "folder with an escaping link for image", tool: jpeg, paths: "/in/Linked", error: .isFolder("Linked"),
+              message: "Linked is a folder. Image conversion and PDF merge take files.", checkedBeforeWork: false),
         .init(name: "text as image", tool: jpeg, paths: "/in/a.txt", error: .wrongType("a.txt", expected: "a PNG, JPEG or HEIC image"),
               message: "a.txt is not a PNG, JPEG or HEIC image.", checkedBeforeWork: false),
         .init(name: "image as pdf", tool: .mergePDFs, paths: "/in/one.pdf\n/in/photo.png", error: .wrongType("photo.png", expected: "a PDF"),
