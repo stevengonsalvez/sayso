@@ -425,7 +425,8 @@ private func zipEntries(_ archive: URL) throws -> [String] {
     }
     return lines[(dashes[0] + 1)..<dashes[1]].map { line in
         let columns = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-        return columns.count == 4 ? String(columns[3]) : line
+        // The last split keeps the spaces before the name.
+        return columns.count == 4 ? String(columns[3].drop { $0 == " " }) : line
     }.sorted()
 }
 
