@@ -39,6 +39,7 @@ final class CaffeineUITests: XCTestCase {
         }
         let start = app.descendants(matching: .any)["caffeine-start-15"]
         XCTAssertTrue(start.waitForExistence(timeout: 5), "Keep awake 15 min button")
+        XCTAssertTrue(start.isHittable, "15 min can be clicked, frame \(start.frame)")
         start.click()
 
         let status = app.descendants(matching: .any)["caffeine-status"]
