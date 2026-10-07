@@ -383,6 +383,13 @@ struct FileToolsRefusal: CustomTestStringConvertible, Sendable {
     ]
 }
 
+@Test func sizesAddUpWithoutTrappingAndSaturateAtTheTop() {
+    #expect(FileToolsModule.saturatingSum(1_500_000_000, 600_000_000) == 2_100_000_000)
+    #expect(FileToolsModule.saturatingSum(Int64.max, 1) == Int64.max)
+    #expect(FileToolsModule.saturatingSum(Int64.max, Int64.max) == Int64.max)
+    #expect(FileToolsModule.saturatingSum(0, 0) == 0)
+}
+
 // MARK: Fakes
 
 private func file(
