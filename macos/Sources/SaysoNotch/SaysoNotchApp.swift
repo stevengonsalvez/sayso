@@ -265,6 +265,16 @@ final class SaysoAppModel: ObservableObject {
     private let calculator = CalculatorModule(pasteboard: PasteboardCalculatorPort(), scheduler: SaysoDispatchScheduler())
     /// The pane's last evaluation; cleared when the calculator starts or stops so a stale result never shows.
     @Published private(set) var calculatorOutcome: Result<CalculatorResult, CalculatorError>?
+    /// Shows the system sampler only when the user presses Pick, and reads only the clicked pixel. A UI test launch
+    /// with fresh settings may swap in a fake sampler, so tests never need a human click. Copy writes one format;
+    /// nothing reads the pasteboard.
+    private let colorPicker = ColorPickerModule(
+        sampler: ColorPickerUITestHook.sampler(arguments: CommandLine.arguments) ?? SystemColorSamplingPort(),
+        pasteboard: PasteboardCalculatorPort(),
+        scheduler: SaysoDispatchScheduler()
+    )
+    /// True from Pick until the sampler answers, so the button cannot ask twice.
+    @Published private(set) var isPickingColor = false
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
     private var systemStatsPaneShown = false
@@ -274,7 +284,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats, calculator,
+            systemStats, calculator, colorPicker,
         ],
         events: moduleEvents
     )
@@ -526,6 +536,11 @@ final class SaysoAppModel: ObservableObject {
             calculatorOutcome = nil
             objectWillChange.send()
         }
+        // On by default: it samples only the pixel the user clicks after pressing Pick; turning it off clears picks.
+        let colorPickerWasRunning = colorPickerRunning
+        modules.setEnabled(colorPicker.descriptor.id, settings.colorPickerEnabled)
+        // Turning it on publishes nothing, so nothing else would redraw the pane that reads this.
+        if colorPickerRunning != colorPickerWasRunning { objectWillChange.send() }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -583,6 +598,31 @@ final class SaysoAppModel: ObservableObject {
     func copyCalculatorResult(_ id: CalculatorResult.ID) {
         objectWillChange.send()
         if !calculator.copy(id) { notice = "Could not copy the result." }
+    }
+
+    /// From the module, not the setting, so the pane says off only once the picker has really stopped.
+    var colorPickerRunning: Bool {
+        switch modules.health(of: colorPicker.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    /// Newest first, at most `ColorPickerModule.historyLimit`; empty while the picker is off.
+    var colorPicks: [ColorPick] { colorPicker.history }
+
+    func pickColor() {
+        guard !isPickingColor else { return }
+        isPickingColor = true
+        Task { [weak self, colorPicker] in
+            _ = await colorPicker.pick()
+            self?.isPickingColor = false
+        }
+    }
+
+    func copyColor(_ format: ColorPickerFormat, of id: ColorPick.ID) {
+        objectWillChange.send()
+        if !colorPicker.copy(format, of: id) { notice = "Could not copy the colour." }
     }
 
     static let worldClockQuickAdds = [
@@ -2390,7 +2430,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
-        "calculator": 7,
+        "calculator": 7, "color-picker": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3230,6 +3270,8 @@ private struct NotchWorkspace: View {
 
                 CalculatorSection(model: model)
 
+                ColorPickerSection(model: model)
+
                 timersSection
 
                 caffeineSection
@@ -3486,6 +3528,84 @@ private struct CalculatorSection: View {
         case let .failure(error): error.message
         case nil: "No result yet"
         }
+    }
+}
+
+/// Samples only on a press of Pick, and only the one pixel the user then clicks.
+private struct ColorPickerSection: View {
+    @ObservedObject var model: SaysoAppModel
+
+    var body: some View {
+        let running = model.colorPickerRunning
+        let picks = model.colorPicks
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Colour").font(.headline)
+                if running {
+                    Text("Press Pick, then click anywhere on screen: only that one pixel is read. Press Escape to cancel. The colour shows here as hex, rgb and hsl and for \(Int(ColorPickerModule.noticeSeconds)) seconds in the open notch. The last \(ColorPickerModule.historyLimit) picks stay in memory until Sayso quits or the picker is turned off. Copy puts only the chosen format on the clipboard; the clipboard is never read.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("The colour picker is off: nothing is sampled and no picks are kept. Turn it on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("color-picker-off")
+                }
+            }
+            Button(model.isPickingColor ? "Picking..." : "Pick") { model.pickColor() }
+                .disabled(!running || model.isPickingColor)
+                .accessibilityIdentifier("color-picker-pick")
+            if let latest = picks.first {
+                HStack(alignment: .top, spacing: 16) {
+                    swatch(latest.color, size: 56)
+                        .accessibilityElement()
+                        .accessibilityLabel("Swatch of \(latest.color.hex)")
+                        .accessibilityIdentifier("color-picker-swatch")
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(ColorPickerFormat.allCases, id: \.self) { format in
+                            HStack(spacing: 12) {
+                                Text(latest.color.text(format))
+                                    .font(.body.monospaced())
+                                    .accessibilityIdentifier("color-picker-\(format.rawValue)")
+                                Spacer()
+                                Button("Copy") { model.copyColor(format, of: latest.id) }
+                                    .accessibilityLabel("Copy \(format.rawValue)")
+                                    .accessibilityIdentifier("color-picker-copy-\(format.rawValue)")
+                            }
+                        }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Recent picks").font(.caption).foregroundStyle(.secondary)
+                    ForEach(picks) { pick in
+                        HStack(spacing: 12) {
+                            swatch(pick.color, size: 14)
+                            Text(pick.color.hex).font(.callout.monospaced())
+                            Spacer()
+                            Button("Copy hex") { model.copyColor(.hex, of: pick.id) }
+                                .accessibilityLabel("Copy \(pick.color.hex)")
+                                .accessibilityIdentifier("color-picker-history-copy-\(pick.id)")
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("color-picker-history")
+            } else if running {
+                Text("No colour picked yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("color-picker-empty")
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func swatch(_ color: ColorPickerColor, size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(Color(.sRGB, red: Double(color.red) / 255, green: Double(color.green) / 255, blue: Double(color.blue) / 255))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.5)))
+            .frame(width: size, height: size)
     }
 }
 
@@ -8828,6 +8948,15 @@ private struct SaysoSettingsView: View {
                     Toggle("Calculator", isOn: $model.settings.calculatorEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-calculator-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "Colour picker (on by default)",
+                    description: "When on, the Notch & HUD pane has a Pick button. Only after you press it does macOS show its colour sampler, and Sayso reads only the one pixel you click; nothing else on screen is read. The colour shows as hex, rgb and hsl in the pane and for \(Int(ColorPickerModule.noticeSeconds)) seconds in the open notch. The clipboard is never read, Copy writes only the format you choose, and nothing is sent anywhere. The last \(ColorPickerModule.historyLimit) picks are kept in memory only; turning this off clears them, and a click made after that is ignored.",
+                    example: "Press Pick, click any pixel on screen and copy its colour as hex."
+                ) {
+                    Toggle("Colour picker", isOn: $model.settings.colorPickerEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-color-picker-toggle")
                 }
 
                 // Section 5: Reset & Maintenance

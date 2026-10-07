@@ -30,6 +30,16 @@ final class CaffeineUITests: XCTestCase {
         XCTAssertTrue(minimize.waitForExistence(timeout: 10), "expanded notch")
     }
 
+    /// Scrolls the Notch & HUD pane straight down until `element` can be clicked. XCUITest's own scroll-to-visible
+    /// also scrolls sideways to centre the element, and for this row, sitting at the pane's bottom edge, it left the
+    /// button where it was on 4 of 5 attempts; a vertical scroll moved the pane every time.
+    private func reveal(_ element: XCUIElement) {
+        let pane = app.scrollViews["studio-pane-notch"]
+        for _ in 0..<10 where !element.isHittable {
+            pane.scroll(byDeltaX: 0, deltaY: -100)
+        }
+    }
+
     func testFifteenMinutesShowsARunningLabelAndStopClearsIt() {
         let tab = app.descendants(matching: .any)["studio-tab-notch"]
         XCTAssertTrue(tab.waitForExistence(timeout: 10), "sidebar tab for Notch & HUD")
@@ -39,6 +49,8 @@ final class CaffeineUITests: XCTestCase {
         }
         let start = app.descendants(matching: .any)["caffeine-start-15"]
         XCTAssertTrue(start.waitForExistence(timeout: 5), "Keep awake 15 min button")
+        reveal(start)
+        XCTAssertTrue(start.isHittable, "15 min can be clicked, frame \(start.frame)")
         start.click()
 
         let status = app.descendants(matching: .any)["caffeine-status"]
