@@ -368,10 +368,10 @@ private func rig(_ list: [PrivacyDevice] = [builtInMic, builtInCamera]) -> Rig {
 
     @Test func dismissWithNoLineShownChangesNothing() {
         let rig = rig([builtInMic])
+        let jobs = rig.scheduler.jobs
         #expect(rig.tap("dismiss") == false, "no line, no declared action")
-        rig.module.makeRuntime(context: SaysoModuleContext(moduleID: "privacy-guard", publish: { _ in }))
-            .handle(stackID: PrivacyGuardModule.stackID, actionID: "dismiss")
-        #expect(rig.scheduler.jobs.count == 1)
+        rig.captured.runtimes.last?.handle(stackID: PrivacyGuardModule.stackID, actionID: "dismiss")
+        #expect(rig.scheduler.jobs == jobs, "nothing to hide, so nothing is armed early")
     }
 
     @Test func aDismissLandingWhileALineIsPublishingNeverLeavesAGhostLine() {
