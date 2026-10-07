@@ -278,6 +278,18 @@ final class SaysoAppModel: ObservableObject {
     /// Reads only the files the user names, and only when a tool is pressed; writes one new file beside them and
     /// never changes an input. Jobs run one at a time on the module's own serial queue, never on the main thread.
     private let fileTools = FileToolsModule(port: FileSystemToolsPort(), scheduler: SaysoDispatchScheduler())
+    /// True while Sayso itself listens (dictation or Control), so the privacy line can say Sayso may be the one.
+    private let saysoListening = SaysoListeningFlag()
+    /// Reads only whether a microphone or camera is switched on by any app, from device properties; it never opens a
+    /// device, so it needs no permission and is on by default. Its own serial queue keeps the reads off the main
+    /// thread. A UI test launch with fresh settings may swap in fake devices, so no real device is ever needed.
+    private lazy var privacyGuard = PrivacyGuardModule(
+        port: PrivacyGuardUITestHook.port(arguments: CommandLine.arguments) ?? CoreAudioMediaPrivacyPort(),
+        scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.privacy-guard", qos: .utility)),
+        isSaysoCapturing: { [saysoListening] in saysoListening.isSet }
+    )
+    private var privacyPaneShown = false
+    private var saysoListeningObserver: AnyCancellable?
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
     private var systemStatsPaneShown = false
@@ -287,7 +299,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats, calculator, colorPicker, fileTools,
+            systemStats, calculator, colorPicker, fileTools, privacyGuard,
         ],
         events: moduleEvents
     )
@@ -403,10 +415,11 @@ final class SaysoAppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
-            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying, systemStats] _ in
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying, systemStats, privacyGuard] _ in
                 worldClocks.clockChanged()
                 nowPlaying.clockChanged()
                 systemStats.clockChanged()
+                privacyGuard.clockChanged()
             },
             NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
@@ -549,6 +562,11 @@ final class SaysoAppModel: ObservableObject {
         let fileToolsWereRunning = fileToolsRunning
         modules.setEnabled(fileTools.descriptor.id, settings.fileToolsEnabled)
         if fileToolsRunning != fileToolsWereRunning { objectWillChange.send() }
+        // On by default: it reads only whether a microphone or camera is on, never the device itself; turning it off
+        // stops the checks and clears the line.
+        let privacyGuardWasRunning = privacyGuardRunning
+        modules.setEnabled(privacyGuard.descriptor.id, settings.privacyGuardEnabled)
+        if privacyGuardRunning != privacyGuardWasRunning { objectWillChange.send() }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -1928,6 +1946,7 @@ final class SaysoAppModel: ObservableObject {
             MainActor.assumeIsolated {
                 self?.studioWindowVisible = window?.occlusionState.contains(.visible) ?? false
                 self?.updateSystemStatsObservation()
+                self?.updatePrivacyObservation()
             }
         }
         window.makeKeyAndOrderFront(nil)
@@ -1954,6 +1973,26 @@ final class SaysoAppModel: ObservableObject {
 
     private func updateSystemStatsObservation() {
         systemStats.setObserved(.studio, systemStatsPaneShown && studioWindowVisible)
+    }
+
+    /// Latest read for the Studio pane; nil before the first read or after a failed one.
+    var privacyGuardSnapshot: PrivacyGuardSnapshot? { privacyGuard.snapshot }
+
+    /// Whether the guard really reads, so the pane never says Off while it still checks.
+    var privacyGuardRunning: Bool {
+        switch modules.health(of: privacyGuard.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    func setPrivacyPaneShown(_ shown: Bool) {
+        privacyPaneShown = shown
+        updatePrivacyObservation()
+    }
+
+    private func updatePrivacyObservation() {
+        privacyGuard.setObserved(privacyPaneShown && studioWindowVisible)
     }
 
     func minimizeMainWindow() {
@@ -2464,7 +2503,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
-        "calculator": 7, "color-picker": 7, "file-tools": 7,
+        "calculator": 7, "color-picker": 7, "file-tools": 7, "privacy-guard": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -2918,6 +2957,8 @@ final class SaysoAppModel: ObservableObject {
     private func startDictationModule() {
         modules.enable("dictation")
         dictationPhaseBridge = DictationPhaseBridge(phases: transcriber.$phase.eraseToAnyPublisher(), bus: moduleEvents)
+        // Dictation and Control both listen through this transcriber.
+        saysoListeningObserver = transcriber.$phase.sink { [saysoListening] in saysoListening.set($0 == .listening) }
         dictationStopSubscription = moduleEvents.subscribe(DictationStopRequested.self) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.transcriber.canStop || self.isStartingDictation else { return }
@@ -3313,6 +3354,8 @@ private struct NotchWorkspace: View {
                 worldClocksSection
 
                 systemStatsSection
+
+                privacyGuardSection
 
                 FileToolsSection(model: model)
 
@@ -3789,6 +3832,49 @@ private extension NotchWorkspace {
                 .font(.body.monospacedDigit())
                 .accessibilityIdentifier(id)
         }
+    }
+
+    /// Redraws only this section, at the cadence the module reads at while watched, and tells the module the pane is
+    /// shown so it checks every 2 s instead of every 5 s.
+    var privacyGuardSection: some View {
+        TimelineView(.periodic(from: .now, by: PrivacyGuardModule.watchedIntervalSeconds)) { _ in privacyGuardContent }
+            .onAppear { model.setPrivacyPaneShown(true) }
+            .onDisappear { model.setPrivacyPaneShown(false) }
+    }
+
+    @ViewBuilder
+    var privacyGuardContent: some View {
+        // From the module, not the setting: the pane says Off only once the checks have really stopped.
+        let enabled = model.privacyGuardRunning
+        let snapshot = enabled ? model.privacyGuardSnapshot : nil
+        // Stopped while the setting is on means the host paused it after repeated failed reads.
+        let off = enabled ? nil : model.settings.privacyGuardEnabled ? "Paused" : "Off"
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Privacy").font(.headline)
+                if enabled {
+                    Text("Every 5 seconds, and every 2 while this pane is open or a line shows, Sayso checks whether any app has a microphone or camera switched on, from the on or off state macOS gives for each device. Sayso never opens a microphone or camera for this and records nothing, and macOS does not say which app is using one, so no app is named. A device must read on twice in a row before the notch shows it and off twice before the line clears; Dismiss notification in the notch menu hides the line until the device is off. Sayso's own dictation shows here too. A headset with both a speaker and a microphone can read as in use while it only plays sound. Nothing is saved or sent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if model.settings.privacyGuardEnabled {
+                    Text("The privacy guard is paused after repeated failed reads. Relaunch Sayso to try again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("privacy-guard-paused")
+                } else {
+                    Text("The privacy guard is off. Nothing is checked and the notch shows no microphone or camera line. Turn it on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("privacy-guard-off")
+                }
+            }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                systemStatsRow("Microphone", off ?? snapshot?.microphone.text, id: "privacy-guard-mic")
+                systemStatsRow("Camera", off ?? snapshot?.camera.text, id: "privacy-guard-camera")
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -9068,6 +9154,15 @@ private struct SaysoSettingsView: View {
                         .accessibilityIdentifier("settings-system-stats-toggle")
                 }
                 SaysoSettingItemCard(
+                    title: "Privacy guard (on by default)",
+                    description: "When on, Sayso checks whether any app has a microphone or camera switched on, every 5 seconds (every 2 while the Notch & HUD pane is open or a line shows), and the notch shows Microphone in use, Camera in use or Camera and microphone in use, with the device's name when only one is on. Sayso reads only the on or off state macOS gives for each device: it never opens a microphone or camera for this, records nothing and needs no permission. macOS does not say which app is using a device, so no app is named; Sayso's own dictation shows too, with a note that Sayso may be the one using it. A headset with both a speaker and a microphone can read as in use while it only plays sound. Nothing is saved or sent anywhere. Turning this off stops the checks and clears the line.",
+                    example: "Join a video call and the notch shows Camera and microphone in use."
+                ) {
+                    Toggle("Privacy guard", isOn: $model.settings.privacyGuardEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-privacy-guard-toggle")
+                }
+                SaysoSettingItemCard(
                     title: "Calculator (on by default)",
                     description: "When on, the Notch & HUD pane has a calculator. Type arithmetic, percentages, sqrt, sin, cos and tan (in degrees), ln, log, abs or round, or convert length, weight, temperature, volume, speed or data size, and press Return. The result shows in the pane and for \(Int(CalculatorModule.resultNoticeSeconds)) seconds in the open notch. Only what you type is used: the clipboard is never read, Copy writes only the result, and nothing is sent anywhere. The last \(CalculatorModule.historyLimit) results are kept in memory only; turning this off clears them.",
                     example: "Type 5 km in miles and press Return to see the distance in miles."
@@ -10692,4 +10787,14 @@ private final class AppShortcutIntents: ShortcutIntentHandling, @unchecked Senda
     func controlShortcutPressed() { run(.controlDown) }
     func controlShortcutReleased() { run(.controlUp) }
     func toggleNotchShortcutPressed() { run(.toggleNotch) }
+}
+
+/// A flag the main actor sets and the privacy guard's queue reads.
+private final class SaysoListeningFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var isSet: Bool { lock.withLock { value } }
+
+    func set(_ on: Bool) { lock.withLock { value = on } }
 }
