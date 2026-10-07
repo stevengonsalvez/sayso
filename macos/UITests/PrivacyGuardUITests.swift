@@ -109,7 +109,8 @@ final class PrivacyGuardUITests: XCTestCase {
     }
 
     private func dismissFromNotchMenu() {
-        let menu = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "More Sayso controls")).firstMatch
+        // A SwiftUI Menu with an icon only label reaches XCUITest as a menu button with that text as its title.
+        let menu = app.menuButtons.matching(NSPredicate(format: "title == %@", "More Sayso controls")).firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 5), "the notch's More menu")
         menu.click()
         let dismiss = app.menuItems["Dismiss notification"].firstMatch
@@ -117,8 +118,9 @@ final class PrivacyGuardUITests: XCTestCase {
         dismiss.click()
     }
 
-    /// The toggle sits low in the long Settings pane: scroll straight down until it lies wholly inside the pane,
-    /// because XCUITest's own scroll-to-visible also scrolls sideways and has left rows unclickable.
+    /// The toggle sits low in the long Settings pane (about 1,300 pt below its bottom edge on a 732 pt window):
+    /// scroll straight down until it lies wholly inside the pane, because XCUITest's own scroll-to-visible also
+    /// scrolls sideways and has left rows unclickable. Steps of 300 pt, as each step costs a few seconds of queries.
     private func openSettingsToggle() -> XCUIElement {
         let tab = element("studio-tab-settings")
         XCTAssertTrue(tab.waitForExistence(timeout: 10), "sidebar tab for Settings")
@@ -126,8 +128,8 @@ final class PrivacyGuardUITests: XCTestCase {
         let toggle = element("settings-privacy-guard-toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Privacy guard toggle in Settings")
         let pane = app.scrollViews["studio-pane-settings"]
-        for _ in 0..<40 where pane.exists && !pane.frame.contains(toggle.frame) {
-            pane.scroll(byDeltaX: 0, deltaY: -100)
+        for _ in 0..<15 where pane.exists && !pane.frame.contains(toggle.frame) {
+            pane.scroll(byDeltaX: 0, deltaY: toggle.frame.minY < pane.frame.minY ? 300 : -300)
         }
         XCTAssertTrue(toggle.isHittable, "can be clicked, frame \(toggle.frame) in pane \(pane.frame)")
         return toggle
