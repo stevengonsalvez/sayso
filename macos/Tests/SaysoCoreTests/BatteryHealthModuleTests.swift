@@ -589,6 +589,32 @@ private let hotStack = BatteryHealthModule.hotStackID
         #expect(rig.host.health(of: "battery-health") != .quarantined, "flaky reads within five minutes report at most once")
     }
 
+    @Test func aFailureThatReturnsWithinFiveMinutesOfTheLastReportIsNotReportedAgain() {
+        let clock = Clock(), scheduler = FakeScheduler(), reports = Reports(), battery = FakeBattery(healthy)
+        let module = BatteryHealthModule(port: battery, scheduler: scheduler, now: { clock.now })
+        let runtime = module.makeRuntime(context: SaysoModuleContext(
+            moduleID: "battery-health", publish: { _ in }, reportFailure: { reports.failures += 1 }
+        ))
+        func advance(_ seconds: TimeInterval) {
+            clock.now += seconds
+            scheduler.runDue(clock.now)
+        }
+        runtime.start()
+        battery.fail(.unavailable)
+        advance(0)
+        #expect(reports.failures == 1)
+        battery.fail(nil)
+        advance(BatteryHealthModule.failureBackoffSeconds)
+        battery.fail(.unavailable)
+        advance(BatteryHealthModule.idleIntervalSeconds)
+        #expect(reports.failures == 1, "a new run of failures inside the window is not reported")
+        battery.fail(nil)
+        advance(BatteryHealthModule.failureBackoffSeconds)
+        battery.fail(.unavailable)
+        advance(BatteryHealthModule.failureReportWindowSeconds)
+        #expect(reports.failures == 2, "a new run a full window after the last report is reported")
+    }
+
     @Test func aFailedReadKeepsADismissal() {
         let rig = rig(healthy.health(55))
         rig.tap("dismiss", on: wornStack)
