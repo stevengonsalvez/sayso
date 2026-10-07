@@ -477,6 +477,12 @@ private struct ColorPickerRig {
         #expect(SystemColorSamplingPort.color(from: p3Mid) == color(128, 128, 128), "a neutral grey is the same in both")
     }
 
+    /// Red and grey above clamp or match with or without conversion; an in-gamut colour handed over in P3 does not.
+    @Test func anInGamutColourGivenInDisplayP3ReadsAsItsSRGBValue() throws {
+        let p3 = try #require(NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1).usingColorSpace(.displayP3))
+        #expect(SystemColorSamplingPort.color(from: p3) == color(51, 102, 153))
+    }
+
     @Test func aColourWithNoSRGBFormIsNoPick() {
         let pattern = NSColor(patternImage: NSImage(size: NSSize(width: 1, height: 1)))
         #expect(SystemColorSamplingPort.color(from: pattern) == nil)
