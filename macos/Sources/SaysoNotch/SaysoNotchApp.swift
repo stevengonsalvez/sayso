@@ -289,6 +289,14 @@ final class SaysoAppModel: ObservableObject {
         isSaysoCapturing: { [saysoListening] in saysoListening.isSet }
     )
     private var privacyPaneShown = false
+    /// Reads only the battery registry and power sources, never a Bluetooth device, so it needs no permission and is
+    /// on by default. Its own serial queue keeps the reads off the main thread. A UI test launch with fresh settings
+    /// may swap in a fake battery, so no test depends on this Mac having one.
+    private let batteryHealth = BatteryHealthModule(
+        port: BatteryHealthUITestHook.port(arguments: CommandLine.arguments) ?? IOKitBatteryHealthPort(),
+        scheduler: SaysoDispatchScheduler(queue: DispatchQueue(label: "ai.sayso.notch.battery-health", qos: .utility))
+    )
+    private var batteryPaneShown = false
     private var saysoListeningObserver: AnyCancellable?
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
@@ -299,7 +307,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats, calculator, colorPicker, fileTools, privacyGuard,
+            systemStats, calculator, colorPicker, fileTools, privacyGuard, batteryHealth,
         ],
         events: moduleEvents
     )
@@ -415,11 +423,12 @@ final class SaysoAppModel: ObservableObject {
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
             },
-            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying, systemStats, privacyGuard] _ in
+            NotificationCenter.default.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [worldClocks, nowPlaying, systemStats, privacyGuard, batteryHealth] _ in
                 worldClocks.clockChanged()
                 nowPlaying.clockChanged()
                 systemStats.clockChanged()
                 privacyGuard.clockChanged()
+                batteryHealth.clockChanged()
             },
             NotificationCenter.default.addObserver(forName: .NSSystemTimeZoneDidChange, object: nil, queue: .main) { [worldClocks] _ in
                 worldClocks.clockChanged()
@@ -567,6 +576,10 @@ final class SaysoAppModel: ObservableObject {
         let privacyGuardWasRunning = privacyGuardRunning
         modules.setEnabled(privacyGuard.descriptor.id, settings.privacyGuardEnabled)
         if privacyGuardRunning != privacyGuardWasRunning { objectWillChange.send() }
+        // On by default: it reads only the battery registry; turning it off stops the reads and clears its lines.
+        let batteryHealthWasRunning = batteryHealthRunning
+        modules.setEnabled(batteryHealth.descriptor.id, settings.batteryHealthEnabled)
+        if batteryHealthRunning != batteryHealthWasRunning { objectWillChange.send() }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -1947,6 +1960,7 @@ final class SaysoAppModel: ObservableObject {
                 self?.studioWindowVisible = window?.occlusionState.contains(.visible) ?? false
                 self?.updateSystemStatsObservation()
                 self?.updatePrivacyObservation()
+                self?.updateBatteryObservation()
             }
         }
         window.makeKeyAndOrderFront(nil)
@@ -1993,6 +2007,26 @@ final class SaysoAppModel: ObservableObject {
 
     private func updatePrivacyObservation() {
         privacyGuard.setObserved(privacyPaneShown && studioWindowVisible)
+    }
+
+    /// Latest read for the Studio pane; nil before the first read or after a failed one.
+    var batteryHealthSnapshot: BatteryHealthSnapshot? { batteryHealth.snapshot }
+
+    /// Whether the module really reads, so the pane never says Off while it still reads.
+    var batteryHealthRunning: Bool {
+        switch modules.health(of: batteryHealth.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    func setBatteryPaneShown(_ shown: Bool) {
+        batteryPaneShown = shown
+        updateBatteryObservation()
+    }
+
+    private func updateBatteryObservation() {
+        batteryHealth.setObserved(batteryPaneShown && studioWindowVisible)
     }
 
     func minimizeMainWindow() {
@@ -2503,7 +2537,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
-        "calculator": 7, "color-picker": 7, "file-tools": 7, "privacy-guard": 7,
+        "calculator": 7, "color-picker": 7, "file-tools": 7, "privacy-guard": 7, "battery-health": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3357,6 +3391,8 @@ private struct NotchWorkspace: View {
 
                 privacyGuardSection
 
+                batteryHealthSection
+
                 FileToolsSection(model: model)
 
                 VStack(alignment: .leading, spacing: 16) {
@@ -3871,6 +3907,54 @@ private extension NotchWorkspace {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
                 systemStatsRow("Microphone", off ?? snapshot?.microphone.text, id: "privacy-guard-mic")
                 systemStatsRow("Camera", off ?? snapshot?.camera.text, id: "privacy-guard-camera")
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Redraws only this section, at the cadence the module reads at while watched, and tells the module the pane is
+    /// shown so it reads every 10 s instead of once a minute.
+    var batteryHealthSection: some View {
+        TimelineView(.periodic(from: .now, by: BatteryHealthModule.observedIntervalSeconds)) { _ in batteryHealthContent }
+            .onAppear { model.setBatteryPaneShown(true) }
+            .onDisappear { model.setBatteryPaneShown(false) }
+    }
+
+    @ViewBuilder
+    var batteryHealthContent: some View {
+        // From the module, not the setting: the pane says Off only once the reads have really stopped.
+        let enabled = model.batteryHealthRunning
+        let snapshot = enabled ? model.batteryHealthSnapshot : nil
+        // Stopped while the setting is on means the host paused it after repeated failed reads.
+        let off = enabled ? nil : model.settings.batteryHealthEnabled ? "Paused" : "Off"
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Battery").font(.headline)
+                if enabled {
+                    Text("Once a minute, and every 10 seconds while this pane is open, Sayso reads this Mac's battery from the system's battery registry. Health is the charge the battery holds when full as a share of what it held when new: Normal from 80%, Service soon from 60%, Replace soon below 60%. macOS works out the Maximum Capacity in System Settings differently, so it can read a few points higher. Cycles and temperature come from the battery itself. Devices lists a UPS and the keyboards, mice and trackpads macOS reports a level for; AirPods and most other Bluetooth devices are not listed, because Sayso does not use Bluetooth for this and needs no permission. The notch shows a line when health is below 60% (until it is back to 62%; Dismiss notification hides it until health falls further) or the battery is at 45 °C or more (until it is back to 42 °C; Dismiss notification hides it until then). Nothing is saved or sent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if model.settings.batteryHealthEnabled {
+                    Text("Battery health is paused after repeated failed reads. Relaunch Sayso to try again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("battery-health-paused")
+                } else {
+                    Text("Battery health is off. Nothing is read and the notch shows no battery line. Turn it on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("battery-health-off")
+                }
+            }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                systemStatsRow("Health", off ?? snapshot?.healthText, id: "battery-health-health")
+                systemStatsRow("Cycles", off ?? snapshot?.cyclesText, id: "battery-health-cycles")
+                systemStatsRow("Temperature", off ?? snapshot?.temperatureText, id: "battery-health-temperature")
+                systemStatsRow("Power", off ?? snapshot?.powerText, id: "battery-health-power")
+                ForEach(Array((snapshot?.devices ?? []).enumerated()), id: \.element.id) { index, device in
+                    systemStatsRow(index == 0 ? "Devices" : "", device.text, id: "battery-health-device-\(index)")
+                }
             }
         }
         .padding(20)
@@ -9161,6 +9245,15 @@ private struct SaysoSettingsView: View {
                     Toggle("Privacy guard", isOn: $model.settings.privacyGuardEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-privacy-guard-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "Battery health (on by default)",
+                    description: "When on, Sayso reads this Mac's battery from the system's battery registry once a minute (every 10 seconds while the Notch & HUD pane is open): health, the charge it holds when full as a share of what it held when new, rated Normal from 80%, Service soon from 60% and Replace soon below 60%; cycle count; temperature; and whether it is charging. macOS works out the Maximum Capacity in System Settings differently, so it can read a few points higher. A UPS and the keyboards, mice and trackpads macOS reports a level for are listed too; AirPods and most other Bluetooth devices are not, because Sayso does not use Bluetooth for this and needs no permission. The notch shows a line when health is below 60% or the battery is at 45 °C or more. Nothing is saved or sent anywhere. Turning this off stops the reads and clears any battery line.",
+                    example: "A battery holding 55% of its design capacity shows Battery health 55% · Replace soon."
+                ) {
+                    Toggle("Battery health", isOn: $model.settings.batteryHealthEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-battery-health-toggle")
                 }
                 SaysoSettingItemCard(
                     title: "Calculator (on by default)",
