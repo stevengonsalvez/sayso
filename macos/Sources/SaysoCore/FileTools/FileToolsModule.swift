@@ -112,8 +112,9 @@ public final class FileToolsModule: SaysoModule, @unchecked Sendable {
             case .other: throw FileToolsError.notAFile(input.name)
             case .file, .directory: break
             }
-            if input.escapesFolder { throw FileToolsError.escapesFolder(input.name) }
+            // A folder is the wrong kind of input for images and PDFs whatever it holds, so that is said first.
             if input.kind == .directory, tool != .zip { throw FileToolsError.isFolder(input.name) }
+            if input.escapesFolder { throw FileToolsError.escapesFolder(input.name) }
             if input.kind == .file, input.byteCount == 0 { throw FileToolsError.empty(input.name) }
             switch tool {
             case .zip:
