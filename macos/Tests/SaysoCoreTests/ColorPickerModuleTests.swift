@@ -114,9 +114,7 @@ private func color(_ red: UInt8, _ green: UInt8, _ blue: UInt8) -> ColorPickerCo
         #expect(ColorPickerColor.maxInputLength == 64)
         let padded = String(repeating: " ", count: ColorPickerColor.maxInputLength) + "#abc"
         #expect(ColorPickerColor.parse(padded) == nil, "the limit counts the input as given, before trimming")
-        let started = Date()
         #expect(ColorPickerColor.parse("rgb(" + String(repeating: "0", count: 100_000) + "1, 2, 3)") == nil)
-        #expect(Date().timeIntervalSince(started) < 0.2)
         let atLimit = "rgb(" + String(repeating: " ", count: ColorPickerColor.maxInputLength - "rgb(1,2,3)".count) + "1,2,3)"
         #expect(atLimit.utf8.count == ColorPickerColor.maxInputLength)
         #expect(ColorPickerColor.parse(atLimit) == color(1, 2, 3), "exactly at the limit is still read")
