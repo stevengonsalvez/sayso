@@ -167,7 +167,12 @@ import UniformTypeIdentifiers
         let port = FileSystemToolsPort()
         let cancellation = FileToolsCancellation()
         let job = try plan(port, .zip, [big], name: "noise.bin.zip")
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { cancellation.cancel() }
+        // A thread of its own: in the full parallel suite a block queued on a busy global queue arrived only after
+        // ditto had finished (7.7 s), so the cancel never happened.
+        Thread {
+            Thread.sleep(forTimeInterval: 0.1)
+            cancellation.cancel()
+        }.start()
 
         let started = Date()
         #expect(throws: FileToolsError.cancelled) { try port.perform(job, cancellation: cancellation) { _ in } }
