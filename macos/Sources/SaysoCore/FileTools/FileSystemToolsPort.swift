@@ -129,27 +129,29 @@ public struct FileSystemToolsPort: FileToolsPort {
     }
 
     /// Moves the finished draft beside the inputs under the first free name. The exclusive rename fails rather than
-    /// replace a file, even one created a moment ago by someone else.
-    static func move(_ draft: URL, into folder: URL, as name: String) throws -> URL {
+    /// replace a file, even one created a moment ago by someone else. Where the volume cannot do that, a hard link
+    /// is the same atomic no-replace step; if it cannot either, nothing is published and the draft is kept, so a
+    /// crash never leaves an empty or partial file in the user's folder.
+    static func move(
+        _ draft: URL,
+        into folder: URL,
+        as name: String,
+        rename: (String, String) -> Int32 = { renamex_np($0, $1, UInt32(RENAME_EXCL)) == 0 ? 0 : errno },
+        link: (String, String) -> Int32 = { Darwin.link($0, $1) == 0 ? 0 : errno }
+    ) throws -> URL {
         for candidate in FileToolsPaths.outputNames(for: name) {
             let target = folder.appendingPathComponent(candidate)
-            if renamex_np(draft.path, target.path, UInt32(RENAME_EXCL)) == 0 { return target }
-            let failure = errno
+            let failure = rename(draft.path, target.path)
+            if failure == 0 { return target }
             switch failure {
             case EEXIST:
                 continue
             case ENOTSUP, EINVAL:
-                // Volumes without exclusive rename (some USB and network drives): claim the name, then replace
-                // only that empty claim.
-                let claim = open(target.path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-                if claim < 0, errno == EEXIST { continue }
-                guard claim >= 0 else { throw error(errno, folder) }
-                close(claim)
-                guard rename(draft.path, target.path) == 0 else {
-                    let renameFailure = errno
-                    unlink(target.path)
-                    throw error(renameFailure, folder)
-                }
+                let linked = link(draft.path, target.path)
+                if linked == EEXIST { continue }
+                guard linked == 0 else { throw FileToolsError.toolFailed("this drive cannot save the file safely") }
+                // The new name now holds the whole file; the draft is only a second name for it.
+                unlink(draft.path)
                 return target
             default:
                 throw error(failure, folder)
