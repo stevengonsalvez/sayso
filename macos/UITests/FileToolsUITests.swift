@@ -166,9 +166,10 @@ final class FileToolsUITests: XCTestCase {
         let dashes = lines.indices.filter { lines[$0].hasPrefix("---------") }
         guard dashes.count >= 2 else { XCTFail("unexpected unzip output: \(output)"); return [] }
         return lines[(dashes[0] + 1)..<dashes[1]].map { line in
-            // "   Length      Date    Time    Name": the name is everything after the third column.
+            // "   Length      Date    Time    Name": the name is everything after the third column, and the last
+            // split keeps the spaces before it.
             let columns = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-            return columns.count == 4 ? String(columns[3]) : line
+            return columns.count == 4 ? String(columns[3].drop { $0 == " " }) : line
         }.sorted()
     }
 
