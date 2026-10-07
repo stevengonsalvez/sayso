@@ -287,6 +287,39 @@ import UniformTypeIdentifiers
             try FileSystemToolsPort(maxFolderEntries: 3).inspect(root.appendingPathComponent("Many"), cancellation: FileToolsCancellation())
         }
     }
+
+    // MARK: Moving the finished draft into place
+
+    @Test func onADriveWithoutExclusiveRenameAHardLinkPublishesTheWholeFileAtOnce() throws {
+        let root = try makeRoot()
+        defer { remove(root) }
+        let draft = try write(root, "draft/out.tmp", "finished bytes")
+        let folder = root.appendingPathComponent("in")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        _ = try write(root, "in/Archive.zip", "someone else's")
+
+        let target = try FileSystemToolsPort.move(draft, into: folder, as: "Archive.zip", rename: { _, _ in ENOTSUP })
+
+        #expect(target.lastPathComponent == "Archive 2.zip", "an existing file is never replaced")
+        #expect(try String(contentsOf: target, encoding: .utf8) == "finished bytes")
+        #expect(try String(contentsOf: folder.appendingPathComponent("Archive.zip"), encoding: .utf8) == "someone else's")
+        #expect(!FileManager.default.fileExists(atPath: draft.path), "the draft is gone once published")
+    }
+
+    @Test func onADriveThatCannotMakeLinksEitherNothingIsPublishedAndTheDraftSurvives() throws {
+        let root = try makeRoot()
+        defer { remove(root) }
+        let draft = try write(root, "draft/out.tmp", "finished bytes")
+        let folder = root.appendingPathComponent("in")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        #expect(throws: FileToolsError.self) {
+            try FileSystemToolsPort.move(draft, into: folder, as: "Archive.zip", rename: { _, _ in ENOTSUP }, link: { _, _ in ENOTSUP })
+        }
+
+        #expect(try listing(folder).isEmpty, "no empty claim or partial file is left in the user's folder")
+        #expect(try String(contentsOf: draft, encoding: .utf8) == "finished bytes")
+    }
 }
 
 // MARK: Helpers
