@@ -102,6 +102,12 @@ public final class FileToolsModule: SaysoModule, @unchecked Sendable {
         }
     }
 
+    /// Adds sizes without trapping: a sum past Int64.max reads as the top value, which is always over the limit.
+    static func saturatingSum(_ a: Int64, _ b: Int64) -> Int64 {
+        let (sum, overflowed) = a.addingReportingOverflow(b)
+        return overflowed ? Int64.max : sum
+    }
+
     /// Refusals that need the inputs' facts, checked in the order named.
     static func validate(_ tool: FileToolsTool, _ inputs: [FileToolsInput]) throws {
         var total: Int64 = 0
@@ -129,8 +135,7 @@ public final class FileToolsModule: SaysoModule, @unchecked Sendable {
                 guard input.contentType == .pdf else { throw FileToolsError.wrongType(input.name, expected: "a PDF") }
             }
             // Saturate rather than trap: crafted sparse sizes must read as too large, not crash the app.
-            let (sum, overflowed) = total.addingReportingOverflow(input.byteCount)
-            total = overflowed ? Int64.max : sum
+            total = Self.saturatingSum(total, input.byteCount)
         }
         guard total <= maxTotalBytes else { throw FileToolsError.tooLarge(total) }
     }
