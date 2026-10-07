@@ -420,6 +420,18 @@ private struct ColorPickerRig {
         #expect(rig.pasteboard.written.isEmpty)
     }
 
+    /// A Copy button still drawn for a pick from before off and on must not copy a different colour.
+    @Test func anIdFromBeforeOffAndOnNeverNamesAPickOfTheNewSession() async throws {
+        let rig = ColorPickerRig()
+        let before = try #require(await rig.pick(color(0x33, 0x66, 0x99)))
+        rig.host.disable("color-picker")
+        rig.host.enable("color-picker")
+        let after = try #require(await rig.pick(color(0, 0, 0)))
+        #expect(after.id != before.id)
+        #expect(!rig.module.copy(.hex, of: before.id), "the old id copies nothing")
+        #expect(rig.pasteboard.written.isEmpty)
+    }
+
     @Test func disablingIgnoresAPendingPickAndPurgesHistoryAndTheNotice() async throws {
         let rig = ColorPickerRig()
         _ = await rig.pick(color(0x33, 0x66, 0x99))
