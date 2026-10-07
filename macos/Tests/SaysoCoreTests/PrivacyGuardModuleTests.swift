@@ -174,6 +174,9 @@ private func rig(_ list: [PrivacyDevice] = [builtInMic, builtInCamera]) -> Rig {
     return rig
 }
 
+/// A camera on and the microphone off; for test bodies whose own `rig` hides the free function.
+private func cameraRig() -> Rig { rig([builtInMic, builtInCamera.on]) }
+
 @Suite struct PrivacyGuardModuleTests {
     // MARK: Lines
 
@@ -192,7 +195,8 @@ private func rig(_ list: [PrivacyDevice] = [builtInMic, builtInCamera]) -> Rig {
         for _ in 0..<5 { rig.advance(PrivacyGuardModule.idleIntervalSeconds) }
         #expect(rig.devices.reads == 6)
         #expect(rig.lines.isEmpty)
-        #expect(rig.painted.changes.allSatisfy(\.isEmpty), "never painted a privacy line")
+        let neverPainted = rig.painted.changes.allSatisfy(\.isEmpty)
+        #expect(neverPainted, "never painted a privacy line")
         let snapshot = try #require(rig.module.snapshot)
         #expect(snapshot.microphone == .notInUse)
         #expect(snapshot.camera == .notInUse)
@@ -251,7 +255,8 @@ private func rig(_ list: [PrivacyDevice] = [builtInMic, builtInCamera]) -> Rig {
         rig.sample([builtInMic, builtInCamera.on])
         rig.sample([builtInMic, builtInCamera])
         #expect(rig.lines.isEmpty)
-        #expect(rig.painted.changes.allSatisfy(\.isEmpty), "never painted a privacy line")
+        let neverPainted = rig.painted.changes.allSatisfy(\.isEmpty)
+        #expect(neverPainted, "never painted a privacy line")
         #expect(rig.module.snapshot?.microphone == .notInUse)
     }
 
@@ -280,7 +285,7 @@ private func rig(_ list: [PrivacyDevice] = [builtInMic, builtInCamera]) -> Rig {
         rig.sample([builtInMic.on, builtInCamera])
         #expect(rig.titles == ["Microphone in use · MacBook Pro Microphone"], "the note follows the host")
 
-        let camera = rig([builtInMic, builtInCamera.on])
+        let camera = cameraRig()
         camera.capture.capturing = true
         camera.advance(PrivacyGuardModule.idleIntervalSeconds)
         #expect(camera.titles == ["Camera in use · FaceTime HD Camera"], "Sayso never uses a camera")
