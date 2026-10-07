@@ -275,6 +275,9 @@ final class SaysoAppModel: ObservableObject {
     )
     /// True from Pick until the sampler answers, so the button cannot ask twice.
     @Published private(set) var isPickingColor = false
+    /// Reads only the files the user names, and only when a tool is pressed; writes one new file beside them and
+    /// never changes an input. Jobs run one at a time on the module's own serial queue, never on the main thread.
+    private let fileTools = FileToolsModule(port: FileSystemToolsPort(), scheduler: SaysoDispatchScheduler())
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
     private var systemStatsPaneShown = false
@@ -284,7 +287,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats, calculator, colorPicker,
+            systemStats, calculator, colorPicker, fileTools,
         ],
         events: moduleEvents
     )
@@ -541,6 +544,11 @@ final class SaysoAppModel: ObservableObject {
         modules.setEnabled(colorPicker.descriptor.id, settings.colorPickerEnabled)
         // Turning it on publishes nothing, so nothing else would redraw the pane that reads this.
         if colorPickerRunning != colorPickerWasRunning { objectWillChange.send() }
+        // On by default: it reads only the files the user names when a tool is pressed; turning it off cancels a
+        // running job, removes what it half wrote and clears the result.
+        let fileToolsWereRunning = fileToolsRunning
+        modules.setEnabled(fileTools.descriptor.id, settings.fileToolsEnabled)
+        if fileToolsRunning != fileToolsWereRunning { objectWillChange.send() }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -623,6 +631,32 @@ final class SaysoAppModel: ObservableObject {
     func copyColor(_ format: ColorPickerFormat, of id: ColorPick.ID) {
         objectWillChange.send()
         if !colorPicker.copy(format, of: id) { notice = "Could not copy the colour." }
+    }
+
+    /// From the module, not the setting, so the pane says off only once file tools have really stopped.
+    var fileToolsRunning: Bool {
+        switch modules.health(of: fileTools.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    /// The running job or the last outcome; the pane redraws whenever the module publishes.
+    var fileToolsStatus: FileToolsStatus { fileTools.status }
+
+    func runFileTool(_ tool: FileToolsTool, paths: String) {
+        objectWillChange.send()
+        // Other refusals show as the status; these two leave the status to the job or the off notice.
+        if let refused = fileTools.run(tool, paths: paths), refused == .off || refused == .busy { notice = refused.message }
+    }
+
+    func cancelFileTool() {
+        objectWillChange.send()
+        fileTools.cancel()
+    }
+
+    func revealFileToolsOutput(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     static let worldClockQuickAdds = [
@@ -2430,7 +2464,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
-        "calculator": 7, "color-picker": 7,
+        "calculator": 7, "color-picker": 7, "file-tools": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3280,6 +3314,8 @@ private struct NotchWorkspace: View {
 
                 systemStatsSection
 
+                FileToolsSection(model: model)
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3606,6 +3642,97 @@ private struct ColorPickerSection: View {
             .fill(Color(.sRGB, red: Double(color.red) / 255, green: Double(color.green) / 255, blue: Double(color.blue) / 255))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(.secondary.opacity(0.5)))
             .frame(width: size, height: size)
+    }
+}
+
+/// Zips, converts or merges only the files the user names, and only on a press of a tool.
+private struct FileToolsSection: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var paths = ""
+
+    var body: some View {
+        let running = model.fileToolsRunning
+        let status = model.fileToolsStatus
+        let busy = if case .running = status { true } else { status == .cancelling }
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("File tools").font(.headline)
+                if running {
+                    Text("Name files or folders by full path, one per line or separated by commas, or use Add files. Zip makes one archive of them all. PNG, JPEG and HEIC convert one image (quality \(Int(FileToolsModule.defaultQuality * 100))%, orientation kept; transparency becomes white in a JPEG). Merge PDFs joins two or more PDFs in the order named. Only the files you name are read, and only when you press a tool. One new file is written in the first file's folder; nothing you named is changed, replaced or deleted, and a name already taken gets a number, such as Archive 2.zip. Up to \(FileToolsModule.maxInputs) items and 2 GB at a time. Nothing is sent anywhere.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("File tools are off: nothing is read or written. Turn them on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("file-tools-off")
+                }
+            }
+            HStack(alignment: .top, spacing: 12) {
+                TextField("One full path per line, or separated by commas", text: $paths, axis: .vertical)
+                    .lineLimit(2...6)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("file-tools-paths")
+                Button("Add files\u{2026}") { chooseFiles() }
+                    .accessibilityIdentifier("file-tools-add")
+            }
+            HStack(spacing: 8) {
+                Button("Zip") { model.runFileTool(.zip, paths: paths) }
+                    .accessibilityIdentifier("file-tools-zip")
+                ForEach(FileToolsImageFormat.allCases, id: \.self) { format in
+                    Button(format.displayName) {
+                        model.runFileTool(.convertImage(format, quality: FileToolsModule.defaultQuality), paths: paths)
+                    }
+                    .accessibilityLabel("Convert to \(format.displayName)")
+                    .accessibilityIdentifier("file-tools-image-\(format.rawValue)")
+                }
+                Button("Merge PDFs") { model.runFileTool(.mergePDFs, paths: paths) }
+                    .accessibilityIdentifier("file-tools-pdf-merge")
+                Spacer()
+                if busy {
+                    Button("Cancel") { model.cancelFileTool() }
+                        .disabled(status == .cancelling)
+                        .accessibilityIdentifier("file-tools-cancel")
+                }
+            }
+            .disabled(!running)
+            HStack(spacing: 12) {
+                Text(statusText(status))
+                    .font(.callout)
+                    .accessibilityIdentifier("file-tools-status")
+                Spacer()
+                if case let .done(output) = status {
+                    Button("Show in Finder") { model.revealFileToolsOutput(output) }
+                        .accessibilityLabel("Show \(output.lastPathComponent) in Finder")
+                        .accessibilityIdentifier("file-tools-reveal")
+                }
+            }
+        }
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func statusText(_ status: FileToolsStatus) -> String {
+        switch status {
+        case .idle: "Name files above, then choose a tool."
+        case let .running(title, progress): progress.map { "\(title)... \(Int($0 * 100))%" } ?? "\(title)..."
+        case .cancelling: "Cancelling..."
+        case let .done(output): "Done: \(output.lastPathComponent)"
+        case let .failed(error): "Failed: \(error.message)"
+        case .cancelled: "Cancelled. Nothing was written."
+        }
+    }
+
+    /// Adds the chosen files to the list, one per line; nothing is read until a tool is pressed.
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose files for file tools"
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let chosen = panel.urls.map(\.path).joined(separator: "\n")
+        paths = paths.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? chosen : paths + "\n" + chosen
     }
 }
 
@@ -8957,6 +9084,15 @@ private struct SaysoSettingsView: View {
                     Toggle("Colour picker", isOn: $model.settings.colorPickerEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-color-picker-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "File tools (on by default)",
+                    description: "When on, the Notch & HUD pane can zip files and folders, convert one image between PNG, JPEG and HEIC, and merge PDFs. Sayso reads only the files you name, and only when you press a tool. It writes one new file beside them and never changes, replaces or deletes the files you named; zips leave out Finder extras such as tags. Progress shows in the open notch and the result for \(Int(FileToolsModule.noticeSeconds)) seconds. Nothing is sent anywhere. Turning this off cancels a running job, removes anything it half wrote and clears the result.",
+                    example: "Name two PDFs and press Merge PDFs to get Merged.pdf beside the first."
+                ) {
+                    Toggle("File tools", isOn: $model.settings.fileToolsEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-file-tools-toggle")
                 }
 
                 // Section 5: Reset & Maintenance
