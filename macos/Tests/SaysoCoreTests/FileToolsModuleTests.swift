@@ -117,6 +117,7 @@ import Testing
             file("/in/two.pdf", type: .pdf), file("/in/empty.txt", bytes: 0), folder("/in/Photos", bytes: 10),
             file("/in/link.png", type: .png, escapes: true), folder("/in/Linked", bytes: 10, escapes: true),
             file("/in/big1.bin", bytes: 1_500_000_000), file("/in/big2.bin", bytes: 600_000_000),
+            file("/in/huge1.bin", bytes: Int64.max), file("/in/huge2.bin", bytes: Int64.max),
             file("/other/a.txt"), file("/in/A.TXT"), FileToolsInput(url: URL(fileURLWithPath: "/in/pipe"), kind: .other)
         )
         let returned = rig.module.run(refusal.tool, paths: refusal.paths)
@@ -372,6 +373,9 @@ struct FileToolsRefusal: CustomTestStringConvertible, Sendable {
               message: "Linked links outside its folder, so it was not read.", checkedBeforeWork: false),
         .init(name: "over 2 GB", tool: .zip, paths: "/in/big1.bin, /in/big2.bin", error: .tooLarge(2_100_000_000),
               message: "The items add up to 2.1 GB; file tools take up to 2 GB at a time.", checkedBeforeWork: false),
+        .init(name: "sizes that would overflow the total", tool: .zip, paths: "/in/huge1.bin, /in/huge2.bin",
+              error: .tooLarge(Int64.max), message: "The items add up to 9223372036.9 GB; file tools take up to 2 GB at a time.",
+              checkedBeforeWork: false),
         .init(name: "same name twice", tool: .zip, paths: "/in/a.txt\n/other/a.txt", error: .duplicateName("a.txt"),
               message: "Two items are named a.txt, and a zip cannot hold both.", checkedBeforeWork: false),
         .init(name: "same name in another case", tool: .zip, paths: "/in/a.txt\n/in/A.TXT", error: .duplicateName("A.TXT"),
