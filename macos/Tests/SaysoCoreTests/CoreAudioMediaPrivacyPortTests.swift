@@ -7,14 +7,14 @@ import Testing
 /// The real adapter against this Mac's CoreAudio and CoreMediaIO. Only device properties are read, here and in the
 /// adapter: nothing is opened, recorded or sampled, and no permission is asked for.
 @Suite struct CoreAudioMediaPrivacyPortTests {
-    @Test func itListsThisMacsBuiltInMicrophonesAndCamerasWithoutThrowing() throws {
+    @Test func itListsEveryBuiltInMicrophoneAndCameraTheSystemReportsWithoutThrowing() throws {
         let devices = try CoreAudioMediaPrivacyPort().devices()
         let microphones = Set(devices.filter { $0.kind == .microphone }.map(\.id))
         let cameras = Set(devices.filter { $0.kind == .camera }.map(\.id))
         let builtInMicrophones = Probe.builtInAudioInputUIDs()
         let builtInCameras = Probe.builtInCameraUIDs()
-        #expect(!builtInMicrophones.isEmpty, "this Mac has a built-in microphone")
-        #expect(!builtInCameras.isEmpty, "this Mac has a built-in camera")
+        // A CI virtual machine has no camera and may have no microphone: a built-in device is required to be listed
+        // only where the system reports one, so the test holds on any hardware.
         #expect(builtInMicrophones.isSubset(of: microphones), "every built-in microphone is listed: \(devices)")
         #expect(builtInCameras.isSubset(of: cameras), "every built-in camera is listed: \(devices)")
         for device in devices {
@@ -42,8 +42,6 @@ import Testing
         _ = try port.devices()
         let audio = Probe.audioDeviceIDs()
         let video = Probe.cameraDeviceIDs()
-        #expect(!audio.isEmpty)
-        #expect(!video.isEmpty)
         for id in audio { #expect(Probe.audioIsRunningHere(id) == false, "audio device \(id)") }
         for id in video { #expect(Probe.cameraIsRunningHere(id) == false, "camera \(id)") }
     }
