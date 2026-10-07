@@ -26,6 +26,8 @@ public final class ColorPickerModule: SaysoModule, @unchecked Sendable {
     /// Set while the sampler is on screen, across off and on: it cannot be closed from code, so a second one must
     /// never open until it returns.
     private var sampling = false
+    /// Kept across sessions, so an id from before off and on never names a pick of the new session.
+    private var nextID = 1
 
     public init(
         sampler: ColorSamplingPort,
@@ -73,6 +75,14 @@ public final class ColorPickerModule: SaysoModule, @unchecked Sendable {
 
     private var current: Runtime? { lock.withLock { runtime } }
 
+    /// Called under the runtime's lock; the module lock is never held while taking a runtime's lock.
+    fileprivate func takeID() -> Int {
+        lock.withLock {
+            defer { nextID += 1 }
+            return nextID
+        }
+    }
+
     /// Forgets a stopped runtime so later calls are refused instead of reaching a dead runtime.
     fileprivate func detach(_ stopped: Runtime) {
         lock.withLock { if runtime === stopped { runtime = nil } }
@@ -83,7 +93,6 @@ public final class ColorPickerModule: SaysoModule, @unchecked Sendable {
         let context: SaysoModuleContext
         private let lock = NSLock()
         private var picks: [ColorPick] = []
-        private var nextID = 1
         private var pending = false
         private var job: SaysoSubscription?
         /// Bumped for every new notice, so a timer callback already under way for an older one changes nothing.
@@ -144,8 +153,7 @@ public final class ColorPickerModule: SaysoModule, @unchecked Sendable {
                 if let last = picks.first, last.color == color {
                     pick = last
                 } else {
-                    pick = ColorPick(id: nextID, color: color)
-                    nextID += 1
+                    pick = ColorPick(id: module.takeID(), color: color)
                     picks = Array(([pick] + picks).prefix(ColorPickerModule.historyLimit))
                 }
                 job?.cancel()
