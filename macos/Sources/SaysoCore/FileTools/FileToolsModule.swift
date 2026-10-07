@@ -128,7 +128,9 @@ public final class FileToolsModule: SaysoModule, @unchecked Sendable {
             case .mergePDFs:
                 guard input.contentType == .pdf else { throw FileToolsError.wrongType(input.name, expected: "a PDF") }
             }
-            total += input.byteCount
+            // Saturate rather than trap: crafted sparse sizes must read as too large, not crash the app.
+            let (sum, overflowed) = total.addingReportingOverflow(input.byteCount)
+            total = overflowed ? Int64.max : sum
         }
         guard total <= maxTotalBytes else { throw FileToolsError.tooLarge(total) }
     }
