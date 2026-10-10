@@ -132,8 +132,12 @@ final class SnippetsUITests: XCTestCase {
     private func reveal(_ element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 10), "\(element) exists")
         let pane = app.scrollViews["studio-pane-notch"]
-        for _ in 0..<15 where pane.exists && !pane.frame.contains(element.frame) {
+        XCTAssertTrue(pane.exists, "the Notch & HUD pane")
+        // A `while`, not `for ... where`: the filter would still query the frames on every remaining step.
+        var steps = 0
+        while steps < 15, !pane.frame.contains(element.frame) {
             pane.scroll(byDeltaX: 0, deltaY: element.frame.minY < pane.frame.minY ? 300 : -300)
+            steps += 1
         }
         XCTAssertTrue(element.isHittable, "can be clicked, frame \(element.frame) in pane \(pane.frame)")
     }
@@ -146,8 +150,11 @@ final class SnippetsUITests: XCTestCase {
         let toggle = element("settings-snippets-toggle")
         XCTAssertTrue(toggle.waitForExistence(timeout: 5), "Snippets toggle in Settings")
         let pane = app.scrollViews["studio-pane-settings"]
-        for _ in 0..<15 where pane.exists && !pane.frame.contains(toggle.frame) {
+        XCTAssertTrue(pane.exists, "the Settings pane")
+        var steps = 0
+        while steps < 15, !pane.frame.contains(toggle.frame) {
             pane.scroll(byDeltaX: 0, deltaY: toggle.frame.minY < pane.frame.minY ? 300 : -300)
+            steps += 1
         }
         XCTAssertTrue(toggle.isHittable, "can be clicked, frame \(toggle.frame) in pane \(pane.frame)")
         return toggle
