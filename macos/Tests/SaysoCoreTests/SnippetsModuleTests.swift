@@ -453,3 +453,100 @@ private func snippetsRig(
         #expect(rig.host.health(of: "snippets") == .disabled, "turning off twice is harmless")
     }
 }
+
+/// A throwaway defaults suite, removed when the test ends.
+private func withSuite(_ body: (UserDefaults) throws -> Void) throws {
+    let suite = "SnippetsStoreTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    try body(defaults)
+}
+
+@Suite struct UserDefaultsSnippetsStoreTests {
+    @Test func savedSnippetsReadBackInOrder() throws {
+        try withSuite { defaults in
+            let snippets = [Snippet(name: "Sign off", body: "Thanks, {clipboard}"), Snippet(name: "Address", body: "1 Main St")]
+            UserDefaultsSnippetsStore(defaults: defaults).save(snippets)
+            #expect(UserDefaultsSnippetsStore(defaults: defaults).load() == snippets)
+        }
+    }
+
+    @Test func missingWrongTypeOrCorruptDataReadsAsEmptyAndAnUnreadableEntryIsSkipped() throws {
+        try withSuite { defaults in
+            let store = UserDefaultsSnippetsStore(defaults: defaults)
+            #expect(store.load().isEmpty, "nothing stored yet")
+            defaults.set("not data", forKey: UserDefaultsSnippetsStore.key)
+            #expect(store.load().isEmpty)
+            defaults.set(Data([0xFF, 0x00, 0x7B]), forKey: UserDefaultsSnippetsStore.key)
+            #expect(store.load().isEmpty)
+            defaults.set(Data(#"{"name":"not a list"}"#.utf8), forKey: UserDefaultsSnippetsStore.key)
+            #expect(store.load().isEmpty)
+            defaults.set(Data(#"[{"name":"Kept","body":"text"},{"name":5},7,{"body":"no name"}]"#.utf8), forKey: UserDefaultsSnippetsStore.key)
+            #expect(store.load() == [Snippet(name: "Kept", body: "text")])
+        }
+    }
+
+    /// Corrupt data might still be recovered by hand, so turning snippets on, listing them, off and on again must
+    /// leave the bytes alone; only the user's next edit replaces them.
+    @Test func corruptDataIsNotOverwrittenUntilTheUserEdits() throws {
+        try withSuite { defaults in
+            let corrupt = Data("{ half written".utf8)
+            defaults.set(corrupt, forKey: UserDefaultsSnippetsStore.key)
+            let module = SnippetsModule(
+                store: UserDefaultsSnippetsStore(defaults: defaults), clipboard: FakeClipboardReader(nil),
+                pasteboard: FakeSnippetsBoard(), scheduler: SnippetsScheduler()
+            )
+            let host = SaysoModuleHost(modules: [module])
+            host.enable("snippets")
+            #expect(module.snippets.isEmpty)
+            #expect(module.add(name: "", body: "refused") == .failure(.emptyName))
+            host.disable("snippets")
+            host.enable("snippets")
+            #expect(defaults.data(forKey: UserDefaultsSnippetsStore.key) == corrupt)
+
+            _ = try module.add(name: "Sign off", body: "Thanks").get()
+            #expect(UserDefaultsSnippetsStore(defaults: defaults).load() == [Snippet(name: "Sign off", body: "Thanks")])
+        }
+    }
+}
+
+@Suite struct PasteboardSnippetsClipboardReaderTests {
+    /// A uniquely named board, never the general one, so the test cannot read or change the user's clipboard.
+    @Test func readsPlainTextOnlyAndNeverChangesTheBoard() throws {
+        let board = NSPasteboard(name: NSPasteboard.Name("SnippetsReaderTests.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        let reader = PasteboardSnippetsClipboardReader(pasteboard: board)
+
+        board.clearContents()
+        #expect(reader.readText() == nil, "an empty board has no text")
+        board.setData(Data([1, 2, 3]), forType: .png)
+        #expect(reader.readText() == nil, "an image is not text")
+
+        board.clearContents()
+        board.setString("from the board", forType: .string)
+        let count = board.changeCount
+        #expect(reader.readText() == "from the board")
+        #expect(board.changeCount == count, "reading leaves the board as it was")
+        #expect(board.string(forType: .string) == "from the board")
+    }
+}
+
+@Suite struct SnippetsUITestHookTests {
+    @Test func theFakeBoardIsUsedOnlyWithFreshSettingsAndNeverFallsBackToTheRealOne() throws {
+        #expect(SnippetsUITestHook.board(arguments: ["app"]) == nil)
+        #expect(SnippetsUITestHook.board(arguments: ["app", "--ui-test-clipboard", "x"]) == nil, "a real launch uses the real clipboard")
+        #expect(SnippetsUITestHook.board(arguments: ["app", "--ui-test-fresh-settings"]) == nil)
+
+        let board = try #require(
+            SnippetsUITestHook.board(arguments: ["app", "--ui-test-fresh-settings", "--ui-test-clipboard", "from the test"])
+        )
+        #expect(board.readText() == "from the test")
+        #expect(board.write("Thanks, from the test"))
+        #expect(board.written == ["Thanks, from the test"])
+        #expect(board.readText() == "Thanks, from the test", "like a real board, a write replaces the text")
+
+        let missing = try #require(SnippetsUITestHook.board(arguments: ["app", "--ui-test-fresh-settings", "--ui-test-clipboard"]))
+        #expect(missing.readText() == nil, "no value gives an empty fake board, never the real one")
+    }
+}
+
