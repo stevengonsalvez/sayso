@@ -5,7 +5,7 @@ import Testing
 /// The real adapter. Hardware tests assert only what holds on any Mac: a CI virtual machine has no battery and no
 /// peripherals, so every check about a battery or device applies only where the system reports one, and an empty
 /// reading must pass. The parsing tests feed registry dictionaries shaped like this Mac's and need no hardware.
-@Suite struct IOKitBatteryHealthPortTests {
+@Suite(.timeLimit(.minutes(2))) struct IOKitBatteryHealthPortTests {
     // MARK: This Mac
 
     @Test func readingThisMacNeverThrowsAndAnyReportedBatteryIsPlausible() throws {
