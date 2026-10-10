@@ -550,3 +550,23 @@ private func withSuite(_ body: (UserDefaults) throws -> Void) throws {
     }
 }
 
+@Suite struct SnippetsSettingTests {
+    /// Snippets read the clipboard only when the user copies one that asks for it, so they are on unless turned off:
+    /// a missing or malformed stored value means on, like the calculator.
+    @Test func snippetsAreOnForNewAndUpgradingUsers() throws {
+        #expect(SaysoSettings().snippetsEnabled)
+        let olderSettings = Data("{\"mode\":\"dictation\",\"calculatorEnabled\":false}".utf8)
+        #expect(try JSONDecoder().decode(SaysoSettings.self, from: olderSettings).snippetsEnabled)
+        let malformed = Data("{\"snippetsEnabled\":\"no\"}".utf8)
+        #expect(try JSONDecoder().decode(SaysoSettings.self, from: malformed).snippetsEnabled)
+    }
+
+    @Test func turningSnippetsOffSurvivesARelaunch() throws {
+        try withSuite { defaults in
+            var settings = SaysoSettings()
+            settings.snippetsEnabled = false
+            UserDefaultsSettingsStore(defaults: defaults).save(settings)
+            #expect(!UserDefaultsSettingsStore(defaults: defaults).load().snippetsEnabled)
+        }
+    }
+}
