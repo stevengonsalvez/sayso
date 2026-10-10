@@ -6,7 +6,7 @@ import Testing
 
 /// The real adapter against this Mac's CoreAudio and CoreMediaIO. Only device properties are read, here and in the
 /// adapter: nothing is opened, recorded or sampled, and no permission is asked for.
-@Suite struct CoreAudioMediaPrivacyPortTests {
+@Suite(.timeLimit(.minutes(2))) struct CoreAudioMediaPrivacyPortTests {
     @Test func itListsEveryBuiltInMicrophoneAndCameraTheSystemReportsWithoutThrowing() throws {
         let devices = try CoreAudioMediaPrivacyPort().devices()
         let microphones = Set(devices.filter { $0.kind == .microphone }.map(\.id))
