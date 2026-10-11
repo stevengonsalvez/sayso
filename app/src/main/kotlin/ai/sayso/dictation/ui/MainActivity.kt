@@ -63,6 +63,7 @@ enum class Screen(@StringRes val titleRes: Int) {
     Vocabulary(R.string.screen_vocabulary),
     History(R.string.screen_history),
     Insights(R.string.screen_insights),
+    VoiceNotes(R.string.screen_voice_notes),
     About(R.string.screen_about),
 }
 
@@ -70,8 +71,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        val initialNoteId = intent?.getStringExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_NOTE_ID)
+        val openVoiceNotes = intent?.getBooleanExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_OPEN_VOICE_NOTES, false) == true || initialNoteId != null
         setContent {
-            SaysoTheme { SaysoApp() }
+            SaysoTheme {
+                SaysoApp(
+                    initialOpenVoiceNotes = openVoiceNotes,
+                    initialNoteId = initialNoteId,
+                )
+            }
         }
     }
 }
@@ -82,13 +90,17 @@ class MainActivity : ComponentActivity() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SaysoApp() {
+fun SaysoApp(
+    initialOpenVoiceNotes: Boolean = false,
+    initialNoteId: String? = null,
+) {
     val context = LocalContext.current
     val settings = AppGraph.settings
     val downloads = AppGraph.downloads
     val modelsDir = AppGraph.localModelsDir
 
-    var screen by rememberSaveable { mutableStateOf(Screen.Home) }
+    var screen by rememberSaveable { mutableStateOf(if (initialOpenVoiceNotes) Screen.VoiceNotes else Screen.Home) }
+    var selectedNoteId by rememberSaveable { mutableStateOf(initialNoteId) }
     var showOnboarding by rememberSaveable { mutableStateOf(!settings.hasCompletedOnboarding) }
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
@@ -108,9 +120,21 @@ fun SaysoApp() {
 
     val isReady = micGranted && serviceOn && isSttReady
 
-    BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
+    BackHandler(enabled = selectedNoteId != null || screen != Screen.Home) {
+        if (selectedNoteId != null) {
+            selectedNoteId = null
+        } else {
+            screen = Screen.Home
+        }
+    }
 
-    Scaffold(
+    if (selectedNoteId != null) {
+        VoiceNoteDetailScreen(
+            noteId = selectedNoteId!!,
+            onBack = { selectedNoteId = null },
+        )
+    } else {
+        Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -166,10 +190,11 @@ fun SaysoApp() {
                 },
                 actions = {
                     if (screen == Screen.Home) {
+                        val permissionsMissing = !micGranted || !serviceOn
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = if (isReady) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
-                            border = BorderStroke(1.dp, if (isReady) Color(0xFF86EFAC) else Color(0xFFFCD34D)),
+                            color = if (isReady) Color(0xFFDCFCE7) else if (permissionsMissing) Color(0xFFFEE2E2) else Color(0xFFFEF3C7),
+                            border = BorderStroke(1.dp, if (isReady) Color(0xFF86EFAC) else if (permissionsMissing) Color(0xFFFCA5A5) else Color(0xFFFCD34D)),
                             modifier = Modifier
                                 .padding(end = 12.dp)
                                 .clickable { if (!isReady) showOnboarding = true },
@@ -183,13 +208,13 @@ fun SaysoApp() {
                                     modifier = Modifier
                                         .size(7.dp)
                                         .clip(CircleShape)
-                                        .background(if (isReady) Color(0xFF16A34A) else Color(0xFFD97706)),
+                                        .background(if (isReady) Color(0xFF16A34A) else if (permissionsMissing) Color(0xFFDC2626) else Color(0xFFD97706)),
                                 )
                                 Text(
-                                    text = if (isReady) "READY" else "SETUP",
+                                    text = if (isReady) "READY" else if (permissionsMissing) "PERMISSIONS" else "SETUP",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isReady) Color(0xFF15803D) else Color(0xFFB45309),
+                                    color = if (isReady) Color(0xFF15803D) else if (permissionsMissing) Color(0xFFDC2626) else Color(0xFFB45309),
                                     letterSpacing = 0.5.sp,
                                 )
                             }
@@ -221,9 +246,11 @@ fun SaysoApp() {
                 Screen.Vocabulary -> VocabularyScreen()
                 Screen.History -> HistoryScreen()
                 Screen.Insights -> InsightsScreen()
+                Screen.VoiceNotes -> VoiceNotesStudioScreen(onOpenNote = { selectedNoteId = it })
                 Screen.About -> AboutScreen()
             }
         }
+    }
     }
 
     if (showOnboarding) {
