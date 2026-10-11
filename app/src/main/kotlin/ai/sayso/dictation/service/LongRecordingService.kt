@@ -222,7 +222,9 @@ class LongRecordingService : Service() {
             }
 
             val installedModels = AppGraph.local.models
-            val modelId = installedModels.firstOrNull()?.id
+            val preferredModelId = AppGraph.settings.sttModelId
+            val chosenModel = installedModels.firstOrNull { it.id == preferredModelId } ?: installedModels.firstOrNull()
+            val modelId = chosenModel?.id
             val modelName = modelId?.substringAfter('/')
 
             if (modelName.isNullOrBlank()) {

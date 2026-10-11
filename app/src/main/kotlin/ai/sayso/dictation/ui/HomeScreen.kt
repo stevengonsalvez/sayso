@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,9 +28,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.AccessibilityNew
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -42,6 +45,7 @@ import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Spellcheck
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,6 +87,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -141,6 +146,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var isSttReady by remember { mutableStateOf(false) }
     var showOnboarding by remember { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+    var showPermissionsCtaDialog by rememberSaveable { mutableStateOf(!micGranted || !serviceOn) }
     var resumeTick by remember { mutableIntStateOf(0) }
     val longRecordingState by ai.sayso.dictation.service.LongRecordingService.state.collectAsState()
 
@@ -315,6 +321,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                     showAccessibilityDisclosure = true
                 }
             },
+            onOpenPermissionsCta = { showPermissionsCtaDialog = true },
             onDownloadModel = {
                 downloads.start(defaultLocalModel, modelsDir, context.cacheDir) {
                     settings.sttModelId = "local/${defaultLocalModel.dirName}"
@@ -568,6 +575,22 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
         OnboardingDialog(
             onDismiss = { showOnboarding = false },
             onNavigateToScreen = onNavigate,
+        )
+    }
+
+    if (showPermissionsCtaDialog && (!micGranted || !serviceOn)) {
+        PermissionsCtaDialog(
+            micGranted = micGranted,
+            serviceOn = serviceOn,
+            onRequestMic = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
+            onOpenAccessibility = {
+                if (serviceOn) {
+                    context.openAccessibilitySettings()
+                } else {
+                    showAccessibilityDisclosure = true
+                }
+            },
+            onDismiss = { showPermissionsCtaDialog = false },
         )
     }
 }
@@ -971,6 +994,7 @@ private fun EngineStatusCard(
     isDownloading: Boolean,
     onRequestMic: () -> Unit,
     onOpenAccessibility: () -> Unit,
+    onOpenPermissionsCta: () -> Unit = {},
     onDownloadModel: () -> Unit,
     onOpenTranscription: () -> Unit,
 ) {
@@ -1014,16 +1038,18 @@ private fun EngineStatusCard(
                     )
                 }
                 Spacer(Modifier.weight(1f))
+                val permissionsMissing = !micGranted || !serviceOn
                 Surface(
                     shape = RoundedCornerShape(20.dp),
-                    color = if (ready) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
-                    border = BorderStroke(1.dp, if (ready) Color(0xFF86EFAC) else Color(0xFFFCD34D)),
+                    color = if (ready) Color(0xFFDCFCE7) else if (permissionsMissing) Color(0xFFFEE2E2) else Color(0xFFFEF3C7),
+                    border = BorderStroke(1.dp, if (ready) Color(0xFF86EFAC) else if (permissionsMissing) Color(0xFFFCA5A5) else Color(0xFFFCD34D)),
+                    modifier = Modifier.clickable { if (permissionsMissing) onOpenPermissionsCta() },
                 ) {
                     Text(
-                        text = if (ready) "READY" else "ACTION NEEDED",
+                        text = if (ready) "READY" else if (permissionsMissing) "PERMISSIONS NEEDED" else "ACTION NEEDED",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = if (ready) Color(0xFF15803D) else Color(0xFFB45309),
+                        color = if (ready) Color(0xFF15803D) else if (permissionsMissing) Color(0xFFDC2626) else Color(0xFFB45309),
                         letterSpacing = 0.5.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                     )
@@ -1033,6 +1059,54 @@ private fun EngineStatusCard(
             Spacer(Modifier.height(14.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(Modifier.height(10.dp))
+
+            if (!micGranted || !serviceOn) {
+                Surface(
+                    onClick = onOpenPermissionsCta,
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFEF2F2),
+                    border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFDC2626),
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Setup Incomplete: Permissions Missing",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF991B1B),
+                            )
+                            Text(
+                                text = "Microphone and Accessibility are required to dictate text over other apps.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFB91C1C),
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFDC2626),
+                        ) {
+                            Text(
+                                text = "Fix Now",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
 
             StatusActionRow(
                 title = "Microphone Permission",
@@ -1194,39 +1268,54 @@ private fun StatusActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
+            .background(if (done) Color.Transparent else Color(0xFFFEF2F2))
+            .border(
+                width = if (done) 0.dp else 1.dp,
+                color = if (done) Color.Transparent else Color(0xFFFCA5A5),
+                shape = RoundedCornerShape(10.dp),
+            )
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 4.dp),
+            .padding(vertical = 8.dp, horizontal = 10.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(24.dp)
+                .size(26.dp)
                 .clip(CircleShape)
-                .background(if (done) Color(0xFFDCFCE7) else Color(0xFFF1F5F9)),
+                .background(if (done) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (done) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                imageVector = if (done) Icons.Default.CheckCircle else Icons.Default.Warning,
                 contentDescription = null,
-                tint = if (done) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (done) Color(0xFF16A34A) else Color(0xFFDC2626),
                 modifier = Modifier.size(16.dp),
             )
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (done) MaterialTheme.colorScheme.onSurface else Color(0xFF991B1B),
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFFB91C1C),
+            )
         }
         if (!done) {
             Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
+                color = Color(0xFFDC2626),
             ) {
                 Text(
                     text = "Grant",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    color = Color.White,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                 )
             }
         }
@@ -2900,6 +2989,144 @@ private fun SettingsSearchResults(
             }
         }
     }
+}
+
+@Composable
+private fun PermissionsCtaDialog(
+    micGranted: Boolean,
+    serviceOn: Boolean,
+    onRequestMic: () -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFEE2E2)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = Color(0xFFDC2626),
+                    modifier = Modifier.size(26.dp),
+                )
+            }
+        },
+        title = {
+            Text(
+                text = "Permissions Required",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Sayso processes all speech 100% on-device. To capture audio and type directly into WhatsApp, Gmail, and other apps, two permissions are needed:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Mic permission row
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (micGranted) Color(0xFFDCFCE7) else Color(0xFFFEF2F2),
+                    border = BorderStroke(1.dp, if (micGranted) Color(0xFF86EFAC) else Color(0xFFFCA5A5)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (micGranted) Icons.Default.CheckCircle else Icons.Default.Mic,
+                            contentDescription = null,
+                            tint = if (micGranted) Color(0xFF16A34A) else Color(0xFFDC2626),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Microphone",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (micGranted) Color(0xFF15803D) else Color(0xFF991B1B),
+                            )
+                            Text(
+                                text = if (micGranted) "Granted" else "Required for voice dictation",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (micGranted) Color(0xFF16A34A) else Color(0xFFB91C1C),
+                            )
+                        }
+                        if (!micGranted) {
+                            Button(
+                                onClick = onRequestMic,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text("Grant", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+                // Accessibility service row
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (serviceOn) Color(0xFFDCFCE7) else Color(0xFFFEF2F2),
+                    border = BorderStroke(1.dp, if (serviceOn) Color(0xFF86EFAC) else Color(0xFFFCA5A5)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (serviceOn) Icons.Default.CheckCircle else Icons.Default.AccessibilityNew,
+                            contentDescription = null,
+                            tint = if (serviceOn) Color(0xFF16A34A) else Color(0xFFDC2626),
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Accessibility Service",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (serviceOn) Color(0xFF15803D) else Color(0xFF991B1B),
+                            )
+                            Text(
+                                text = if (serviceOn) "Enabled" else "Required to type over other apps",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (serviceOn) Color(0xFF16A34A) else Color(0xFFB91C1C),
+                            )
+                        }
+                        if (!serviceOn) {
+                            Button(
+                                onClick = onOpenAccessibility,
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text("Enable", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(if (micGranted && serviceOn) "Done" else "Dismiss")
+            }
+        },
+        shape = RoundedCornerShape(18.dp),
+    )
 }
 
 
