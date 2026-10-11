@@ -161,6 +161,12 @@ fun VoiceNoteDetailScreen(
         if (!audioFile.exists()) return@LaunchedEffect
 
         try {
+            mediaPlayer?.runCatching {
+                if (isPlaying) stop()
+                release()
+            }
+            mediaPlayer = null
+
             val player = MediaPlayer().apply {
                 setDataSource(audioFile.absolutePath)
                 prepare()

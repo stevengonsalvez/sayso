@@ -100,6 +100,18 @@ class LongRecordingService : Service() {
             return
         }
 
+        // Start foreground notification immediately before background dispatch
+        startForegroundWithNotification(0L, isPaused = false)
+
+        _state.update {
+            it.copy(
+                isRecording = true,
+                isPaused = false,
+                durationMs = 0L,
+                amplitude = 0f,
+            )
+        }
+
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val noteId = UUID.randomUUID().toString()
@@ -119,17 +131,10 @@ class LongRecordingService : Service() {
 
                 _state.update {
                     it.copy(
-                        isRecording = true,
-                        isPaused = false,
-                        durationMs = 0L,
-                        amplitude = 0f,
                         activeNoteId = noteId,
                         activeAudioFile = audioFile,
                     )
                 }
-
-                // Start foreground notification
-                startForegroundWithNotification(0L, isPaused = false)
 
                 val recorder = DiskAudioRecorder(
                     outputFile = audioFile,
@@ -234,48 +239,51 @@ class LongRecordingService : Service() {
                 )
             }
 
-            val transcriber = AppGraph.local.asChunkTranscriber(
-                modelName = modelName,
-                language = AppGraph.settings.language,
-            )
-
-            val chunkerResult = AppGraph.chunker.transcribeFile(
-                wavFile = audioFile,
-                transcriber = transcriber,
-                onProgress = { progress, _, _, segments ->
-                    _state.update {
-                        it.copy(transcriptionProgress = progress)
-                    }
-                    serviceScope.launch(Dispatchers.IO) {
-                        val inProgressNote = note.copy(
-                            fullText = segments.joinToString(" ") { it.text },
-                            segments = segments,
-                            transcriptionProgress = progress,
-                            modelUsed = modelId,
-                        )
-                        AppGraph.voiceNotes.update(inProgressNote)
-                    }
-                },
-            )
-
-            val finishedNote = note.copy(
-                fullText = chunkerResult.fullText,
-                segments = chunkerResult.segments,
-                isTranscribed = true,
-                transcriptionProgress = 1.0f,
-                modelUsed = modelId,
-            )
-            AppGraph.voiceNotes.update(finishedNote)
-
-            _state.update {
-                it.copy(
-                    isTranscribing = false,
-                    transcriptionProgress = 1.0f,
-                    transcribingNoteId = null,
+            try {
+                val transcriber = AppGraph.local.asChunkTranscriber(
+                    modelName = modelName,
+                    language = AppGraph.settings.language,
                 )
-            }
 
-            stopSelf()
+                val chunkerResult = AppGraph.chunker.transcribeFile(
+                    wavFile = audioFile,
+                    transcriber = transcriber,
+                    onProgress = { progress, _, _, segments ->
+                        _state.update {
+                            it.copy(transcriptionProgress = progress)
+                        }
+                        serviceScope.launch(Dispatchers.IO) {
+                            val inProgressNote = note.copy(
+                                fullText = segments.joinToString(" ") { it.text },
+                                segments = segments,
+                                transcriptionProgress = progress,
+                                modelUsed = modelId,
+                            )
+                            AppGraph.voiceNotes.update(inProgressNote)
+                        }
+                    },
+                )
+
+                val finishedNote = note.copy(
+                    fullText = chunkerResult.fullText,
+                    segments = chunkerResult.segments,
+                    isTranscribed = true,
+                    transcriptionProgress = 1.0f,
+                    modelUsed = modelId,
+                )
+                AppGraph.voiceNotes.update(finishedNote)
+            } catch (t: Throwable) {
+                Log.e(TAG, "Chunked transcription failed", t)
+            } finally {
+                _state.update {
+                    it.copy(
+                        isTranscribing = false,
+                        transcriptionProgress = 1.0f,
+                        transcribingNoteId = null,
+                    )
+                }
+                stopSelf()
+            }
         }
     }
 

@@ -95,8 +95,8 @@ class SherpaAudioChunker(
                 val sampleCount = readBytes / bytesPerSample
                 // In-place conversion from 16-bit PCM bytes to normalized float samples [-1.0, 1.0]
                 for (i in 0 until sampleCount) {
-                    val low = rawBuffer[i * 2].toInt() and 0xFF
-                    val high = rawBuffer[i * 2 + 1].toInt()
+                    val low = rawBuffer[i * bytesPerSample].toInt() and 0xFF
+                    val high = rawBuffer[i * bytesPerSample + 1].toInt()
                     floatBuffer[i] = ((high shl 8) or low).toShort() / 32768.0f
                 }
 

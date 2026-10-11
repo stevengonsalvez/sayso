@@ -104,7 +104,7 @@ class DictationService : AccessibilityService() {
                 this,
                 screenReceiver,
                 filter,
-                ContextCompat.RECEIVER_NOT_EXPORTED,
+                ContextCompat.RECEIVER_EXPORTED,
             )
             screenReceiverRegistered = true
         }
