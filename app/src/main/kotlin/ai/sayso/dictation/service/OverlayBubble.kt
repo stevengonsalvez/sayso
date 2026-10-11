@@ -153,6 +153,11 @@ class OverlayBubble(
     }
 
     fun show() {
+        val keyguardManager = context.getSystemService(android.app.KeyguardManager::class.java)
+        if (keyguardManager?.isKeyguardLocked == true) {
+            hide()
+            return
+        }
         if (shown) return
         placeInitially()
         // The window manager refuses an overlay while the service is being torn down or the
@@ -197,6 +202,8 @@ class OverlayBubble(
 
     /** Shows [text] beside the bubble for two seconds. */
     fun showFeedback(text: String) {
+        val keyguardManager = context.getSystemService(android.app.KeyguardManager::class.java)
+        if (keyguardManager?.isKeyguardLocked == true) return
         pill.text = text
         handler.removeCallbacksAndMessages(null)
         pill.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
