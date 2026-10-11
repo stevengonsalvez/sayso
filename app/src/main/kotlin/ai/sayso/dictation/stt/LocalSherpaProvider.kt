@@ -70,6 +70,58 @@ class LocalSherpaProvider(private val modelsDir: File) : TranscriptionProvider {
             }
         }
 
+    /**
+     * Transcribes pre-converted float samples directly, avoiding intermediate AudioClip allocations.
+     */
+    suspend fun transcribeSamples(
+        samples: FloatArray,
+        sampleRate: Int = AudioClip.DEFAULT_SAMPLE_RATE,
+        modelName: String,
+        language: String? = null,
+    ): TranscriptionResult = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            try {
+                if (samples.isEmpty()) return@withLock TranscriptionResult.Failure("No audio recorded")
+                if (modelName.isBlank() || modelName.any { it in PATH_SEPARATORS } || modelName.contains("..")) {
+                    return@withLock TranscriptionResult.Failure("\"$modelName\" is not a valid model name")
+                }
+                val active = recognizerFor(modelName, language)
+                    ?: return@withLock TranscriptionResult.Failure("Model \"$modelName\" is not installed")
+
+                val stream = active.createStream()
+                try {
+                    stream.acceptWaveform(samples, sampleRate)
+                    active.decode(stream)
+                    val text = active.getResult(stream).text.trim()
+                    if (text.isEmpty()) TranscriptionResult.Failure("No speech detected")
+                    else TranscriptionResult.Success(text)
+                } finally {
+                    stream.release()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                release()
+                TranscriptionResult.Failure(t.message ?: "On-device model failed to run")
+            }
+        }
+    }
+
+    /**
+     * Adapts LocalSherpaProvider to SherpaAudioChunker's ChunkTranscriber interface.
+     */
+    fun asChunkTranscriber(
+        modelName: String,
+        language: String? = null,
+    ): ai.sayso.dictation.voicenotes.ChunkTranscriber =
+        ai.sayso.dictation.voicenotes.ChunkTranscriber { samples, count, sampleRate ->
+            val slice = if (count == samples.size) samples else samples.copyOf(count)
+            when (val res = transcribeSamples(slice, sampleRate, modelName, language)) {
+                is TranscriptionResult.Success -> res.text
+                is TranscriptionResult.Failure -> null
+            }
+        }
+
     /** Frees the native recogniser, for example when the user picks a cloud provider. */
     suspend fun unload() = mutex.withLock {
         release()
