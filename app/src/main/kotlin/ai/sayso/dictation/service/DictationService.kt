@@ -3,14 +3,19 @@ package ai.sayso.dictation.service
 import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import androidx.core.content.ContextCompat
 import ai.sayso.dictation.AppGraph
 import ai.sayso.dictation.R
 import ai.sayso.dictation.core.AudioClip
@@ -45,6 +50,35 @@ class DictationService : AccessibilityService() {
     private var state = State.IDLE
     private var lastInjectedText: String? = null
     private var lastInjectedTime: Long = 0L
+    private var screenReceiverRegistered = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    if (state == State.RECORDING) {
+                        capture?.stop()
+                    }
+                    bubble?.hide()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    if (isKeyguardLocked()) {
+                        bubble?.hide()
+                    } else {
+                        updateBubbleVisibility()
+                    }
+                }
+                Intent.ACTION_USER_PRESENT -> {
+                    updateBubbleVisibility()
+                }
+            }
+        }
+    }
+
+    private fun isKeyguardLocked(): Boolean {
+        val km = getSystemService(KeyguardManager::class.java) ?: return false
+        return km.isKeyguardLocked
+    }
 
     /**
      * Called again every time the system rebinds the service, so whatever the previous
@@ -59,6 +93,21 @@ class DictationService : AccessibilityService() {
         scope.coroutineContext.cancelChildren()
         sounds?.release()
         bubble?.hide()
+
+        if (!screenReceiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            ContextCompat.registerReceiver(
+                this,
+                screenReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+            screenReceiverRegistered = true
+        }
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPE_VIEW_FOCUSED or
@@ -87,6 +136,10 @@ class DictationService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (isKeyguardLocked()) {
+            bubble?.hide()
+            return
+        }
         val settings = AppGraph.settings
         if (settings.bubbleAlwaysVisible || state != State.IDLE) {
             bubble?.show()
@@ -120,6 +173,10 @@ class DictationService : AccessibilityService() {
     }
 
     fun updateBubbleVisibility() {
+        if (isKeyguardLocked()) {
+            bubble?.hide()
+            return
+        }
         if (AppGraph.settings.bubbleAlwaysVisible || state != State.IDLE) {
             bubble?.show()
         } else {
@@ -136,6 +193,10 @@ class DictationService : AccessibilityService() {
     }
 
     private fun checkActiveWindowFocus() {
+        if (isKeyguardLocked()) {
+            bubble?.hide()
+            return
+        }
         if (AppGraph.settings.bubbleAlwaysVisible || state != State.IDLE) {
             bubble?.show()
             return
@@ -172,6 +233,14 @@ class DictationService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        if (screenReceiverRegistered) {
+            try {
+                unregisterReceiver(screenReceiver)
+            } catch (e: Exception) {
+                // Ignore if already unregistered
+            }
+            screenReceiverRegistered = false
+        }
         capture?.stop()
         capture = null
         bubble?.hide()
@@ -229,6 +298,10 @@ class DictationService : AccessibilityService() {
 
     fun startRecordingFromWakeWord() {
         if (state != State.IDLE) return
+        if (isKeyguardLocked()) {
+            Log.i(TAG, "Suppressed wake word recording: device is locked")
+            return
+        }
         if (CallStateDetector.isCallActive(this)) {
             Log.i(TAG, "Suppressed wake word recording: active call in progress")
             return

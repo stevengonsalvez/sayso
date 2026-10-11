@@ -35,6 +35,8 @@ object AppGraph {
     lateinit var stt: SttRegistry private set
     lateinit var polish: PolishRegistry private set
     lateinit var history: HistoryStore private set
+    lateinit var voiceNotes: ai.sayso.dictation.voicenotes.VoiceNotesStore private set
+    lateinit var chunker: ai.sayso.dictation.voicenotes.SherpaAudioChunker private set
     lateinit var pipeline: DictationPipeline private set
     lateinit var corrections: ai.sayso.dictation.correction.AutoCorrectionEngine private set
 
@@ -56,6 +58,8 @@ object AppGraph {
         ai.sayso.dictation.polish.LocalSlmPolisher.init(app.filesDir)
         polish = PolishRegistry()
         history = HistoryStore(File(app.filesDir, "history"))
+        voiceNotes = ai.sayso.dictation.voicenotes.VoiceNotesStore(File(app.filesDir, "voicenotes"))
+        chunker = ai.sayso.dictation.voicenotes.SherpaAudioChunker()
         pipeline = DefaultDictationPipeline(
             settings = settings,
             secrets = secrets,

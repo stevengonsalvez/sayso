@@ -2004,12 +2004,12 @@ private fun PermissionRowCard(
             containerColor = if (granted) {
                 Color(0xFFF0FDF4)
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                Color(0xFFFEF2F2)
             },
         ),
         border = BorderStroke(
             1.dp,
-            if (granted) Color(0xFF86EFAC) else MaterialTheme.colorScheme.outlineVariant,
+            if (granted) Color(0xFF86EFAC) else Color(0xFFFECACA),
         ),
         modifier = Modifier.fillMaxWidth(),
     ) {
@@ -2022,13 +2022,13 @@ private fun PermissionRowCard(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
-                        .background(if (granted) Color(0xFFDCFCE7) else Color(0xFFE2E8F0)),
+                        .background(if (granted) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         imageVector = if (granted) Icons.Default.CheckCircle else icon,
                         contentDescription = null,
-                        tint = if (granted) Color(0xFF16A34A) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (granted) Color(0xFF16A34A) else Color(0xFFDC2626),
                         modifier = Modifier.size(18.dp),
                     )
                 }
@@ -2038,11 +2038,12 @@ private fun PermissionRowCard(
                         text = title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
+                        color = if (granted) MaterialTheme.colorScheme.onSurface else Color(0xFF991B1B),
                     )
                     Text(
-                        text = if (granted) stringResource(R.string.onboarding_perm_granted) else "Action required",
+                        text = if (granted) stringResource(R.string.onboarding_perm_granted) else "Action required (tap to grant)",
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (granted) Color(0xFF16A34A) else Color(0xFFB45309),
+                        color = if (granted) Color(0xFF16A34A) else Color(0xFFDC2626),
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
@@ -2051,7 +2052,7 @@ private fun PermissionRowCard(
                         onClick = onAction,
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
+                            containerColor = Color(0xFFDC2626),
                         ),
                     ) {
                         Text(actionLabel, fontWeight = FontWeight.Bold)

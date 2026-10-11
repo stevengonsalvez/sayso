@@ -24,6 +24,8 @@
     <string name="screen_vocabulary">Vocabulary</string>
     <string name="screen_history">History</string>
     <string name="screen_insights">Insights</string>
+    <string name="screen_voice_notes">Voice Notes</string>
+    <string name="screen_voice_note_detail">Voice Note</string>
     <string name="screen_about">About</string>
     <string name="action_back">Back</string>
     <string name="action_save">Save</string>

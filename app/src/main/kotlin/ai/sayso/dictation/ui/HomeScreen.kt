@@ -78,6 +78,7 @@ import ai.sayso.dictation.models.DownloadState
 import ai.sayso.dictation.models.LocalModelCatalog
 import java.io.File
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -141,6 +142,7 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     var showOnboarding by remember { mutableStateOf(false) }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
     var resumeTick by remember { mutableIntStateOf(0) }
+    val longRecordingState by ai.sayso.dictation.service.LongRecordingService.state.collectAsState()
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -245,6 +247,49 @@ fun HomeScreen(onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
                 },
                 onOpenWizard = { showOnboarding = true },
             )
+        }
+
+        // Active Voice Note Recording Banner
+        if (longRecordingState.isRecording) {
+            Surface(
+                onClick = { onNavigate(Screen.VoiceNotes) },
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFFFEF2F2),
+                border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (longRecordingState.isPaused) SaysoBrandAmber else Color(0xFFDC2626)),
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (longRecordingState.isPaused) "Voice Note Paused" else "Voice Note Recording Live",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF991B1B),
+                        )
+                        Text(
+                            text = "Duration: " + ai.sayso.dictation.service.LongRecordingService.formatDuration(longRecordingState.durationMs) + " • Tap to open Studio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFB91C1C),
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = Color(0xFFDC2626),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
 
         // 1. Hero Speech Insights Widget
@@ -2206,6 +2251,18 @@ private fun CapabilitiesCard(
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
                 PremiumSettingRow(
+                    title = stringResource(R.string.screen_voice_notes),
+                    subtitle = "Long audio recording studio, scrubber & AI summaries",
+                    icon = Icons.Default.Mic,
+                    iconBg = Color(0xFFF3E8FF),
+                    iconTint = Color(0xFF7E22CE),
+                    onClick = { onNavigate(Screen.VoiceNotes) },
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+                PremiumSettingRow(
                     title = stringResource(R.string.screen_local_models),
                     subtitle = "On-device Sherpa-ONNX neural models",
                     icon = Icons.Default.Download,
@@ -2699,6 +2756,13 @@ private val SETTINGS_INDEX = listOf(
         keywords = "insights statistics wpm speaking pace time saved analytics metrics charts",
         screen = Screen.Insights,
         badge = "Insights",
+    ),
+    SettingSearchItem(
+        title = "Voice Notes Studio",
+        description = "Continuous disk recording, streaming chunked transcription, audio scrubber & AI summaries",
+        keywords = "voice notes long recording player audio timestamps sherpa meeting lecture summarization",
+        screen = Screen.VoiceNotes,
+        badge = "Studio",
     ),
     SettingSearchItem(
         title = "Setup Wizard & Onboarding",
