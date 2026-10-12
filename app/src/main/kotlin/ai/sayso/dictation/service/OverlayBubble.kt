@@ -42,6 +42,40 @@ fun clampToScreen(value: Int, size: Int, extent: Int, margin: Int): Int {
 }
 
 /**
+ * Calculates the X position of the companion discard button relative to the bubble.
+ * When the bubble is on the right half of the screen, the discard button is placed
+ * to the left of the bubble. When on the left half, it is placed to the right.
+ */
+fun calculateDiscardPositionX(
+    bubbleX: Int,
+    bubbleWidth: Int,
+    discardWidth: Int,
+    screenWidth: Int,
+    companionMargin: Int,
+    edgeMargin: Int,
+): Int {
+    val onRightHalf = bubbleX + bubbleWidth / 2 > screenWidth / 2
+    return if (onRightHalf) {
+        (bubbleX - discardWidth - companionMargin).coerceAtLeast(edgeMargin)
+    } else {
+        (bubbleX + bubbleWidth + companionMargin).coerceAtMost(screenWidth - discardWidth - edgeMargin)
+    }
+}
+
+/**
+ * Returns true if the user's touch movement constitutes a slide-to-cancel gesture.
+ * When docked on the right side, sliding left past [threshold] cancels.
+ * When docked on the left side, sliding right past [threshold] cancels.
+ */
+fun isSlideToCancelGesture(
+    dx: Float,
+    onRightHalf: Boolean,
+    threshold: Float,
+): Boolean {
+    return if (onRightHalf) dx <= -threshold else dx >= threshold
+}
+
+/**
  * The floating microphone button, drawn by the accessibility service through
  * [WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY] so that no
  * SYSTEM_ALERT_WINDOW permission is needed.
@@ -61,6 +95,7 @@ class OverlayBubble(
     private val onTap: () -> Unit,
     private val onHoldStart: () -> Unit = {},
     private val onHoldEnd: () -> Unit = {},
+    private val onDiscard: () -> Unit = {},
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
@@ -125,6 +160,30 @@ class OverlayBubble(
         }
     }
 
+    private val discardSizePx = dp(46)
+    private val discardMarginPx = dp(10)
+    private val slideCancelThresholdPx = dp(45).toFloat()
+
+    private val discardBackground = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(COLOUR_DISCARD.toInt())
+        setStroke(dp(2f), STROKE_DISCARD.toInt())
+    }
+
+    private val discardIcon = ImageView(context).apply {
+        setImageResource(R.drawable.ic_discard)
+        setColorFilter(Color.WHITE)
+        layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)
+    }
+
+    private val discardView = FrameLayout(context).apply {
+        contentDescription = context.getString(R.string.bubble_discard_content_description)
+        background = discardBackground
+        elevation = dp(6).toFloat()
+        addView(discardIcon)
+        setOnClickListener { onDiscard() }
+    }
+
     private val params = WindowManager.LayoutParams(
         sizePx,
         sizePx,
@@ -141,9 +200,20 @@ class OverlayBubble(
         PixelFormat.TRANSLUCENT,
     ).apply { gravity = Gravity.TOP or Gravity.START }
 
+    private val discardParams = WindowManager.LayoutParams(
+        discardSizePx,
+        discardSizePx,
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.TRANSLUCENT,
+    ).apply { gravity = Gravity.TOP or Gravity.START }
+
     private var pulse: ValueAnimator? = null
     private var shown = false
     private var pillShown = false
+    private var discardShown = false
+    private var isSlideToCancelActive = false
+    private var currentState = BubbleState.Idle
 
     init {
         setState(BubbleState.Idle)
@@ -163,7 +233,12 @@ class OverlayBubble(
         // The window manager refuses an overlay while the service is being torn down or the
         // display is going away. A refused add must not leave the bubble thinking it is up.
         runCatching { windowManager.addView(root, params) }
-            .onSuccess { shown = true }
+            .onSuccess {
+                shown = true
+                if (currentState == BubbleState.Recording) {
+                    showDiscardView()
+                }
+            }
             .onFailure { Log.w(TAG, "The window manager refused the bubble overlay") }
     }
 
@@ -172,12 +247,14 @@ class OverlayBubble(
         pulse?.cancel()
         pulse = null
         hidePill()
+        hideDiscardView()
         if (!shown) return
         runCatching { windowManager.removeView(root) }
         shown = false
     }
 
     fun setState(state: BubbleState) {
+        currentState = state
         val (bgColour, strokeColour, glowColour) = when (state) {
             BubbleState.Idle -> Triple(COLOUR_IDLE, STROKE_IDLE, GLOW_IDLE)
             BubbleState.Recording -> Triple(COLOUR_RECORDING, STROKE_RECORDING, GLOW_RECORDING)
@@ -197,7 +274,13 @@ class OverlayBubble(
             runCatching { windowManager.updateViewLayout(root, params) }
         }
 
-        if (state == BubbleState.Recording) startPulse() else stopPulse()
+        if (state == BubbleState.Recording) {
+            startPulse()
+            if (shown) showDiscardView()
+        } else {
+            stopPulse()
+            hideDiscardView()
+        }
     }
 
     /** Shows [text] beside the bubble for two seconds. */
@@ -276,6 +359,53 @@ class OverlayBubble(
 
     private fun dp(value: Float): Int = (value * density).roundToInt()
 
+    private fun updateDiscardPosition() {
+        val bounds = screenBounds()
+        discardParams.x = calculateDiscardPositionX(
+            bubbleX = params.x,
+            bubbleWidth = sizePx,
+            discardWidth = discardSizePx,
+            screenWidth = bounds.width(),
+            companionMargin = discardMarginPx,
+            edgeMargin = marginPx,
+        )
+        discardParams.y = params.y + (sizePx - discardSizePx) / 2
+    }
+
+    private fun showDiscardView() {
+        val keyguardManager = context.getSystemService(android.app.KeyguardManager::class.java)
+        if (keyguardManager?.isKeyguardLocked == true) return
+        if (discardShown) return
+        updateDiscardPosition()
+        runCatching { windowManager.addView(discardView, discardParams) }
+            .onSuccess { discardShown = true }
+            .onFailure { Log.w(TAG, "The window manager refused the discard overlay") }
+    }
+
+    private fun hideDiscardView() {
+        if (!discardShown) return
+        setSlideToCancelActive(false)
+        runCatching { windowManager.removeView(discardView) }
+        discardShown = false
+    }
+
+    private fun setSlideToCancelActive(active: Boolean) {
+        if (isSlideToCancelActive == active) return
+        isSlideToCancelActive = active
+        if (active) {
+            discardBackground.setColor(COLOUR_DISCARD_ACTIVE.toInt())
+            discardBackground.setStroke(dp(2.5f), STROKE_DISCARD_ACTIVE.toInt())
+            discardView.scaleX = 1.2f
+            discardView.scaleY = 1.2f
+        } else {
+            discardBackground.setColor(COLOUR_DISCARD.toInt())
+            discardBackground.setStroke(dp(2f), STROKE_DISCARD.toInt())
+            discardView.scaleX = 1.0f
+            discardView.scaleY = 1.0f
+        }
+        discardView.invalidate()
+    }
+
     /** Live drag, with a release that either taps, holds, or snaps to the nearest side. */
     private inner class DragListener : View.OnTouchListener {
         private var downX = 0f
@@ -303,6 +433,7 @@ class OverlayBubble(
                     travelled = 0f
                     isHolding = false
                     isDrag = false
+                    setSlideToCancelActive(false)
                     handler.postDelayed(holdRunnable, HOLD_THRESHOLD_MS)
                 }
 
@@ -310,14 +441,21 @@ class OverlayBubble(
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
                     travelled = maxOf(travelled, hypot(dx, dy))
-                    if (travelled >= tapSlopPx) {
+                    if (isHolding) {
+                        val bounds = screenBounds()
+                        val onRightHalf = params.x + sizePx / 2 > bounds.width() / 2
+                        val slid = isSlideToCancelGesture(dx, onRightHalf, slideCancelThresholdPx)
+                        setSlideToCancelActive(slid)
+                    } else if (travelled >= tapSlopPx) {
                         handler.removeCallbacks(holdRunnable)
-                        if (!isHolding) {
-                            isDrag = true
-                            val bounds = screenBounds()
-                            params.x = clampToScreen((startX + dx).roundToInt(), sizePx, bounds.width(), 0)
-                            params.y = clampToScreen((startY + dy).roundToInt(), sizePx, bounds.height(), 0)
-                            if (shown) windowManager.updateViewLayout(root, params)
+                        isDrag = true
+                        val bounds = screenBounds()
+                        params.x = clampToScreen((startX + dx).roundToInt(), sizePx, bounds.width(), 0)
+                        params.y = clampToScreen((startY + dy).roundToInt(), sizePx, bounds.height(), 0)
+                        if (shown) windowManager.updateViewLayout(root, params)
+                        if (discardShown) {
+                            updateDiscardPosition()
+                            windowManager.updateViewLayout(discardView, discardParams)
                         }
                     }
                 }
@@ -325,8 +463,14 @@ class OverlayBubble(
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(holdRunnable)
                     if (isHolding) {
+                        val cancelled = isSlideToCancelActive
                         isHolding = false
-                        onHoldEnd()
+                        setSlideToCancelActive(false)
+                        if (cancelled) {
+                            onDiscard()
+                        } else {
+                            onHoldEnd()
+                        }
                     } else if (isDrag) {
                         settle()
                     } else if (travelled < tapSlopPx) {
@@ -339,8 +483,14 @@ class OverlayBubble(
                 MotionEvent.ACTION_CANCEL -> {
                     handler.removeCallbacks(holdRunnable)
                     if (isHolding) {
+                        val cancelled = isSlideToCancelActive
                         isHolding = false
-                        onHoldEnd()
+                        setSlideToCancelActive(false)
+                        if (cancelled) {
+                            onDiscard()
+                        } else {
+                            onHoldEnd()
+                        }
                     } else if (isDrag) {
                         settle()
                     }
@@ -356,6 +506,10 @@ class OverlayBubble(
             params.x = snapToEdge(params.x, sizePx, bounds.width(), marginPx)
             params.y = clampToScreen(params.y, sizePx, bounds.height(), marginPx)
             if (shown) windowManager.updateViewLayout(root, params)
+            if (discardShown) {
+                updateDiscardPosition()
+                windowManager.updateViewLayout(discardView, discardParams)
+            }
             settings.bubbleX = params.x
             settings.bubbleY = params.y
         }
@@ -374,6 +528,11 @@ class OverlayBubble(
         const val COLOUR_BUSY = 0xFFFF9100L
         const val STROKE_BUSY = 0xFFFFF59DL
         const val GLOW_BUSY = 0x55FFB300L
+
+        const val COLOUR_DISCARD = 0xFFDC2626L
+        const val STROKE_DISCARD = 0xFFFECACAL
+        const val COLOUR_DISCARD_ACTIVE = 0xFF991B1BL
+        const val STROKE_DISCARD_ACTIVE = 0xFFFFFFFFL
 
         const val HOLD_THRESHOLD_MS = 280L
         const val PULSE_MS = 500L
