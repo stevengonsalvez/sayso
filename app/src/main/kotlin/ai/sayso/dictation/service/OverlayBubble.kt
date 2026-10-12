@@ -160,8 +160,9 @@ class OverlayBubble(
         }
     }
 
-    private val discardSizePx = dp(46)
-    private val discardMarginPx = dp(10)
+    private val discardWindowSizePx = dp(56)
+    private val discardButtonSizePx = dp(48)
+    private val discardMarginPx = dp(8)
     private val slideCancelThresholdPx = dp(45).toFloat()
 
     private val discardBackground = GradientDrawable().apply {
@@ -173,14 +174,19 @@ class OverlayBubble(
     private val discardIcon = ImageView(context).apply {
         setImageResource(R.drawable.ic_discard)
         setColorFilter(Color.WHITE)
-        layoutParams = FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)
+        layoutParams = FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)
+    }
+
+    private val innerDiscard = FrameLayout(context).apply {
+        background = discardBackground
+        elevation = dp(6).toFloat()
+        addView(discardIcon)
+        layoutParams = FrameLayout.LayoutParams(discardButtonSizePx, discardButtonSizePx, Gravity.CENTER)
     }
 
     private val discardView = FrameLayout(context).apply {
         contentDescription = context.getString(R.string.bubble_discard_content_description)
-        background = discardBackground
-        elevation = dp(6).toFloat()
-        addView(discardIcon)
+        addView(innerDiscard)
         setOnClickListener { onDiscard() }
     }
 
@@ -201,8 +207,8 @@ class OverlayBubble(
     ).apply { gravity = Gravity.TOP or Gravity.START }
 
     private val discardParams = WindowManager.LayoutParams(
-        discardSizePx,
-        discardSizePx,
+        discardWindowSizePx,
+        discardWindowSizePx,
         WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
         PixelFormat.TRANSLUCENT,
@@ -364,12 +370,12 @@ class OverlayBubble(
         discardParams.x = calculateDiscardPositionX(
             bubbleX = params.x,
             bubbleWidth = sizePx,
-            discardWidth = discardSizePx,
+            discardWidth = discardWindowSizePx,
             screenWidth = bounds.width(),
             companionMargin = discardMarginPx,
             edgeMargin = marginPx,
         )
-        discardParams.y = params.y + (sizePx - discardSizePx) / 2
+        discardParams.y = params.y + (sizePx - discardWindowSizePx) / 2
     }
 
     private fun showDiscardView() {
@@ -395,15 +401,15 @@ class OverlayBubble(
         if (active) {
             discardBackground.setColor(COLOUR_DISCARD_ACTIVE.toInt())
             discardBackground.setStroke(dp(2.5f), STROKE_DISCARD_ACTIVE.toInt())
-            discardView.scaleX = 1.2f
-            discardView.scaleY = 1.2f
+            innerDiscard.scaleX = 1.15f
+            innerDiscard.scaleY = 1.15f
         } else {
             discardBackground.setColor(COLOUR_DISCARD.toInt())
             discardBackground.setStroke(dp(2f), STROKE_DISCARD.toInt())
-            discardView.scaleX = 1.0f
-            discardView.scaleY = 1.0f
+            innerDiscard.scaleX = 1.0f
+            innerDiscard.scaleY = 1.0f
         }
-        discardView.invalidate()
+        innerDiscard.invalidate()
     }
 
     /** Live drag, with a release that either taps, holds, or snaps to the nearest side. */
@@ -452,10 +458,10 @@ class OverlayBubble(
                         val bounds = screenBounds()
                         params.x = clampToScreen((startX + dx).roundToInt(), sizePx, bounds.width(), 0)
                         params.y = clampToScreen((startY + dy).roundToInt(), sizePx, bounds.height(), 0)
-                        if (shown) windowManager.updateViewLayout(root, params)
+                        if (shown) runCatching { windowManager.updateViewLayout(root, params) }
                         if (discardShown) {
                             updateDiscardPosition()
-                            windowManager.updateViewLayout(discardView, discardParams)
+                            runCatching { windowManager.updateViewLayout(discardView, discardParams) }
                         }
                     }
                 }
@@ -505,10 +511,10 @@ class OverlayBubble(
             val bounds = screenBounds()
             params.x = snapToEdge(params.x, sizePx, bounds.width(), marginPx)
             params.y = clampToScreen(params.y, sizePx, bounds.height(), marginPx)
-            if (shown) windowManager.updateViewLayout(root, params)
+            if (shown) runCatching { windowManager.updateViewLayout(root, params) }
             if (discardShown) {
                 updateDiscardPosition()
-                windowManager.updateViewLayout(discardView, discardParams)
+                runCatching { windowManager.updateViewLayout(discardView, discardParams) }
             }
             settings.bubbleX = params.x
             settings.bubbleY = params.y

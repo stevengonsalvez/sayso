@@ -87,6 +87,19 @@ class OverlayBubbleTest {
     }
 
     @Test
+    fun `clamps discard companion to right edge margin if pushed beyond right screen border`() {
+        val actual = calculateDiscardPositionX(
+            bubbleX = margin,
+            bubbleWidth = size,
+            discardWidth = 138,
+            screenWidth = 300, // Left half dock, placing discard to right exceeds screenWidth - discardWidth - margin
+            companionMargin = 30,
+            edgeMargin = margin,
+        )
+        assertEquals(300 - 138 - margin, actual)
+    }
+
+    @Test
     fun `slide to cancel triggers when sliding left from right half past threshold`() {
         val threshold = 135f // 45 dp at 3x
         assertTrue(isSlideToCancelGesture(dx = -150f, onRightHalf = true, threshold = threshold))
