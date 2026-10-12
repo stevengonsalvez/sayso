@@ -19,6 +19,8 @@ class SoundCues(private val settings: SettingsStore) {
 
     fun error() = play(ToneGenerator.TONE_PROP_NACK)
 
+    fun discard() = play(ToneGenerator.TONE_PROP_NACK)
+
     fun release() {
         generator?.release()
         generator = null
