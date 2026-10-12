@@ -1,0 +1,5 @@
+# Historical gitleaks hits present when this gate was added (2026-10-12).
+# Reviewed as test fixtures and placeholders. A new leak is not in this list and fails CI.
+# Remove a line once its value is rotated or the file is gone. Do not add a line to hide a new leak.
+05a2803cc73a57714481becab0183a76e98895bd:research/2026-09-23_13-12-24_sayso_parity.md:generic-api-key:67
+47b8851b311e18d09f430a67d53cf7d212d2e737:macos/Sources/SaysoCore/LocalModelCatalog.swift:generic-api-key:345
