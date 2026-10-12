@@ -22,6 +22,7 @@ import ai.sayso.dictation.core.AudioClip
 import ai.sayso.dictation.core.OutputMethod
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
@@ -47,6 +48,7 @@ class DictationService : AccessibilityService() {
     private var injector: TextInjector? = null
     private var sounds: SoundCues? = null
     private var capture: AudioCapture? = null
+    private var recordingJob: Job? = null
     private var state = State.IDLE
     private var lastInjectedText: String? = null
     private var lastInjectedTime: Long = 0L
@@ -88,6 +90,8 @@ class DictationService : AccessibilityService() {
         AppGraph.init(this)
         capture?.stop()
         capture = null
+        recordingJob?.cancel()
+        recordingJob = null
         // A dictation still in flight belongs to the previous connection: it would finish
         // against components that are about to be replaced, so it is cancelled outright.
         scope.coroutineContext.cancelChildren()
@@ -128,6 +132,7 @@ class DictationService : AccessibilityService() {
             onTap = ::onTap,
             onHoldStart = ::onHoldStart,
             onHoldEnd = ::onHoldEnd,
+            onDiscard = ::discardRecording,
         )
         instance = this
         enter(State.IDLE)
@@ -243,6 +248,8 @@ class DictationService : AccessibilityService() {
         }
         capture?.stop()
         capture = null
+        recordingJob?.cancel()
+        recordingJob = null
         bubble?.hide()
         bubble = null
         sounds?.release()
@@ -326,7 +333,7 @@ class DictationService : AccessibilityService() {
         enter(State.RECORDING)
         sounds?.start()
 
-        scope.launch {
+        recordingJob = scope.launch {
             val result = recorder.record(onAutoStop = { reason -> scope.launch { onAutoStop(reason) } })
             handle(result)
         }
@@ -335,6 +342,22 @@ class DictationService : AccessibilityService() {
     private fun stopRecording() {
         capture?.stop()
         enterBusy()
+    }
+
+    /**
+     * Cancels an ongoing recording immediately, suppresses transcription and insertion,
+     * plays a cancel tone, and resets the bubble to idle.
+     */
+    fun discardRecording() {
+        if (state != State.RECORDING) return
+        recordingJob?.cancel()
+        recordingJob = null
+        capture?.stop()
+        capture = null
+        sounds?.discard()
+        enter(State.IDLE)
+        feedback(getString(R.string.feedback_discarded))
+        updateBubbleVisibility()
     }
 
     private fun onAutoStop(reason: AutoStopReason) {

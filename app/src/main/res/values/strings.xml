@@ -4,12 +4,14 @@
     <string name="accessibility_service_description">Sayso shows a floating microphone button. When you tap it, Sayso records your voice, turns it into text, and types that text into the field you are editing. It only acts when you tap the button.</string>
 
     <string name="bubble_content_description">Sayso dictation button</string>
+    <string name="bubble_discard_content_description">Discard recording</string>
     <string name="feedback_busy">Still working</string>
     <string name="feedback_grant_microphone">Grant microphone access in Sayso</string>
     <string name="feedback_microphone_unavailable">Microphone unavailable</string>
     <string name="feedback_max_length">Maximum length reached</string>
     <string name="feedback_no_audio">No audio captured</string>
     <string name="feedback_no_speech">No speech detected</string>
+    <string name="feedback_discarded">Discarded</string>
     <string name="feedback_inserted">Inserted</string>
     <string name="feedback_clipboard">Copied to clipboard</string>
     <string name="feedback_not_delivered">Could not insert the text</string>
