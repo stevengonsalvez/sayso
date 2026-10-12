@@ -915,7 +915,9 @@ private suspend fun transcribeCurrentNote(note: VoiceNote) {
     if (!audioFile.exists()) return
 
     val installedModels = AppGraph.local.models
-    val modelId = installedModels.firstOrNull()?.id
+    val preferredModelId = AppGraph.settings.sttModelId
+    val chosenModel = installedModels.firstOrNull { it.id == preferredModelId } ?: installedModels.firstOrNull()
+    val modelId = chosenModel?.id
     val modelName = modelId?.substringAfter('/') ?: return
 
     val transcriber = AppGraph.local.asChunkTranscriber(
