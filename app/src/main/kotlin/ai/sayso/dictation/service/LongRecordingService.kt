@@ -376,6 +376,7 @@ class LongRecordingService : Service() {
     }
 
     private fun updateTranscriptionNotification(progress: Float, noteId: String?) {
+        if (_state.value.isRecording) return
         val notification = buildTranscriptionNotification(progress, noteId)
         val nm = getSystemService(NotificationManager::class.java) ?: return
         nm.notify(NOTIFICATION_ID, notification)

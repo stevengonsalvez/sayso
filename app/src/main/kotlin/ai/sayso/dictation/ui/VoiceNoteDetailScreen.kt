@@ -901,19 +901,21 @@ private suspend fun generateAiSummary(
     val activeModelId = settings.polishModelId
     val configuredPair = polishRegistry.find(activeModelId)
 
-    // Select active provider if it supports custom prompts, otherwise fallback to any supporting provider
-    val pair = if (configuredPair != null && configuredPair.first.supportsCustomPrompt) {
-        configuredPair
-    } else {
-        polishRegistry.providers
-            .filter { it.supportsCustomPrompt }
-            .firstNotNullOfOrNull { p ->
+    // Select active provider if it supports general LLM summarization, or fall back to a configured cloud LLM
+    val llmProviders = polishRegistry.providers.filter { it.supportsCustomPrompt && it.id != "local-slm" && it.id != "rules" }
+    val pair = configuredPair?.takeIf { it.first.supportsCustomPrompt && it.first.id != "local-slm" && it.first.id != "rules" }
+        ?: llmProviders.firstNotNullOfOrNull { p ->
+            val key = secrets.get(p.id)
+            if (!key.isNullOrBlank()) {
                 p.models.firstOrNull()?.let { m -> p to m }
-            }
-    }
+            } else null
+        }
+        ?: llmProviders.firstNotNullOfOrNull { p ->
+            p.models.firstOrNull()?.let { m -> p to m }
+        }
 
     if (pair == null) {
-        val msg = "No AI model available that supports custom prompts. Please configure Gemini, Anthropic, or OpenAI in Settings."
+        val msg = "No AI model available that supports summarization. Please configure Gemini, Anthropic, or OpenAI in Settings."
         android.util.Log.w("VoiceNoteDetail", msg)
         onError(msg)
         return
