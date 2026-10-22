@@ -901,27 +901,20 @@ private suspend fun generateAiSummary(
     val activeModelId = settings.polishModelId
     val configuredPair = polishRegistry.find(activeModelId)
 
-    // Select active provider if it supports general LLM summarization, or fall back to a configured cloud LLM
-    val llmProviders = polishRegistry.providers.filter { it.supportsCustomPrompt && it.id != "local-slm" && it.id != "rules" }
-    val pair = configuredPair?.takeIf { it.first.supportsCustomPrompt && it.first.id != "local-slm" && it.first.id != "rules" }
-        ?: llmProviders.firstNotNullOfOrNull { p ->
-            val key = secrets.get(p.id)
-            if (!key.isNullOrBlank()) {
-                p.models.firstOrNull()?.let { m -> p to m }
-            } else null
-        }
-        ?: llmProviders.firstNotNullOfOrNull { p ->
-            p.models.firstOrNull()?.let { m -> p to m }
-        }
+    // Verify user explicitly selected a model capable of freeform AI summarization
+    val isCapable = configuredPair != null &&
+        configuredPair.first.supportsCustomPrompt &&
+        configuredPair.first.id != "local-slm" &&
+        configuredPair.first.id != "rules"
 
-    if (pair == null) {
-        val msg = "No AI model available that supports summarization. Please configure Gemini, Anthropic, or OpenAI in Settings."
+    if (!isCapable) {
+        val msg = "AI summarization requires a cloud model. Please select Gemini, Anthropic, or OpenAI in Cleanup settings."
         android.util.Log.w("VoiceNoteDetail", msg)
         onError(msg)
         return
     }
 
-    val (provider, model) = pair
+    val (provider, model) = configuredPair
     val apiKey = secrets.get(provider.id)
     if (provider.needsApiKey && apiKey.isNullOrBlank()) {
         val msg = "API key required for ${provider.displayName}. Please configure it in Settings."
