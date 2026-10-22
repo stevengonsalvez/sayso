@@ -238,16 +238,6 @@ class LongRecordingService : Service() {
         activeNote = null
         activeRecorder = null
 
-        _state.update {
-            it.copy(
-                isRecording = false,
-                isPaused = false,
-                activeNoteId = null,
-                activeAudioFile = null,
-                amplitude = 0f,
-            )
-        }
-
         serviceScope.launch(Dispatchers.IO + NonCancellable) {
             try {
                 if (noteToDelete != null) {
@@ -259,6 +249,15 @@ class LongRecordingService : Service() {
             } catch (t: Throwable) {
                 Log.w(TAG, "Failed deleting discarded voice note", t)
             } finally {
+                _state.update {
+                    it.copy(
+                        isRecording = false,
+                        isPaused = false,
+                        activeNoteId = null,
+                        activeAudioFile = null,
+                        amplitude = 0f,
+                    )
+                }
                 if (!_state.value.isRecording && !_state.value.isTranscribing) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -312,10 +311,6 @@ class LongRecordingService : Service() {
                     wavFile = audioFile,
                     transcriber = transcriber,
                     onProgress = { progress, _, _, segments ->
-                        _state.update {
-                            it.copy(transcriptionProgress = progress)
-                        }
-                        updateTranscriptionNotification(progress, note.id)
                         lastProgressJob = serviceScope.launch(Dispatchers.IO) {
                             val inProgressNote = note.copy(
                                 fullText = segments.joinToString(" ") { it.text },
@@ -324,6 +319,10 @@ class LongRecordingService : Service() {
                                 modelUsed = modelId,
                             )
                             AppGraph.voiceNotes.update(inProgressNote)
+                            _state.update {
+                                it.copy(transcriptionProgress = progress)
+                            }
+                            updateTranscriptionNotification(progress, note.id)
                         }
                     },
                 )
