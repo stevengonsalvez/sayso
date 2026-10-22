@@ -33,6 +33,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -80,12 +81,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
         setContent {
             SaysoTheme {
                 SaysoApp(
                     navTarget = navTarget,
-                    onNavTargetConsumed = { navTarget = null },
+                    onNavTargetConsumed = {
+                        navTarget = null
+                        intent?.removeExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_OPEN_VOICE_NOTES)
+                        intent?.removeExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_NOTE_ID)
+                    },
                 )
             }
         }
@@ -171,10 +178,12 @@ fun SaysoApp(
     }
 
     if (selectedNoteId != null) {
-        VoiceNoteDetailScreen(
-            noteId = selectedNoteId!!,
-            onBack = { selectedNoteId = null },
-        )
+        key(selectedNoteId) {
+            VoiceNoteDetailScreen(
+                noteId = selectedNoteId!!,
+                onBack = { selectedNoteId = null },
+            )
+        }
     } else {
         Scaffold(
         topBar = {

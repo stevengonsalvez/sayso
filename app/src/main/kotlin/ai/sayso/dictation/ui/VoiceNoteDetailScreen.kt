@@ -203,14 +203,16 @@ fun VoiceNoteDetailScreen(
         }
     }
 
-    // Release MediaPlayer on dispose
-    DisposableEffect(Unit) {
+    // Release MediaPlayer on dispose or when note changes
+    DisposableEffect(noteId) {
         onDispose {
             runCatching {
                 mediaPlayer?.stop()
                 mediaPlayer?.release()
             }
             mediaPlayer = null
+            isPlaying = false
+            currentPositionMs = 0L
         }
     }
 
