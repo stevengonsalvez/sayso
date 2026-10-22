@@ -67,6 +67,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -125,6 +126,7 @@ fun VoiceNoteDetailScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val serviceState by LongRecordingService.state.collectAsState()
 
     var note by remember { mutableStateOf<VoiceNote?>(null) }
     var showEditTitleDialog by remember { mutableStateOf(false) }
@@ -144,7 +146,12 @@ fun VoiceNoteDetailScreen(
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
 
     // Load Note
-    LaunchedEffect(noteId, reloadTrigger) {
+    LaunchedEffect(
+        noteId,
+        reloadTrigger,
+        serviceState.isTranscribing,
+        serviceState.transcriptionProgress,
+    ) {
         val loaded = withContext(Dispatchers.IO) {
             AppGraph.voiceNotes.get(noteId)
         }
@@ -196,14 +203,16 @@ fun VoiceNoteDetailScreen(
         }
     }
 
-    // Release MediaPlayer on dispose
-    DisposableEffect(Unit) {
+    // Release MediaPlayer on dispose or when note changes
+    DisposableEffect(noteId) {
         onDispose {
             runCatching {
                 mediaPlayer?.stop()
                 mediaPlayer?.release()
             }
             mediaPlayer = null
+            isPlaying = false
+            currentPositionMs = 0L
         }
     }
 
@@ -327,7 +336,11 @@ fun VoiceNoteDetailScreen(
                         onGenerateSummary = {
                             scope.launch(Dispatchers.IO) {
                                 isSummarizing = true
-                                generateAiSummary(currentNote, selectedSummaryStyle)
+                                generateAiSummary(currentNote, selectedSummaryStyle) { errorMsg ->
+                                    scope.launch(Dispatchers.Main) {
+                                        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                                    }
+                                }
                                 isSummarizing = false
                                 reloadTrigger++
                             }
@@ -878,18 +891,39 @@ private fun applyPlaybackSpeed(player: MediaPlayer, speed: Float) {
     }
 }
 
-private suspend fun generateAiSummary(note: VoiceNote, style: SummaryStyle) {
+private suspend fun generateAiSummary(
+    note: VoiceNote,
+    style: SummaryStyle,
+    onError: (String) -> Unit = {},
+) {
     val polishRegistry = AppGraph.polish
     val settings = AppGraph.settings
     val secrets = AppGraph.secrets
 
     val activeModelId = settings.polishModelId
-    val pair = polishRegistry.find(activeModelId)
-        ?: (polishRegistry.providers.firstOrNull()?.let { p -> p.models.firstOrNull()?.let { m -> p to m } })
-        ?: return
+    val configuredPair = polishRegistry.find(activeModelId)
 
-    val (provider, model) = pair
+    // Verify user explicitly selected a model capable of freeform AI summarization
+    val isCapable = configuredPair != null &&
+        configuredPair.first.supportsCustomPrompt &&
+        configuredPair.first.id != "local-slm" &&
+        configuredPair.first.id != "rules"
+
+    if (!isCapable) {
+        val msg = "AI summarization requires a cloud model. Please select Gemini, Anthropic, or OpenAI in Cleanup settings."
+        android.util.Log.w("VoiceNoteDetail", msg)
+        onError(msg)
+        return
+    }
+
+    val (provider, model) = configuredPair
     val apiKey = secrets.get(provider.id)
+    if (provider.needsApiKey && apiKey.isNullOrBlank()) {
+        val msg = "API key required for ${provider.displayName}. Please configure it in Settings."
+        android.util.Log.w("VoiceNoteDetail", msg)
+        onError(msg)
+        return
+    }
 
     val prompt = style.prompt
     val result = provider.polish(
@@ -905,7 +939,9 @@ private suspend fun generateAiSummary(note: VoiceNote, style: SummaryStyle) {
             AppGraph.voiceNotes.update(updated)
         }
         is PolishResult.Failure -> {
-            android.util.Log.w("VoiceNoteDetail", "Summary failed: ${result.message}")
+            val msg = "Summary generation failed: ${result.message}"
+            android.util.Log.w("VoiceNoteDetail", msg)
+            onError(msg)
         }
     }
 }

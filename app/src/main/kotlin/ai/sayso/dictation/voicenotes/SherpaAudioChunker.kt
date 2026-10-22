@@ -221,7 +221,7 @@ class SherpaAudioChunker(
                 val prevSuffix = prevWords.takeLast(k).map { normalizeWord(it) }
                 val currPrefix = currWords.take(k).map { normalizeWord(it) }
 
-                if (prevSuffix == currPrefix) {
+                if (prevSuffix == currPrefix && prevSuffix.any { it.isNotEmpty() }) {
                     // Match found: drop the first k words from currentText
                     return currWords.drop(k).joinToString(separator = " ")
                 }
@@ -231,7 +231,7 @@ class SherpaAudioChunker(
         }
 
         private fun normalizeWord(word: String): String =
-            word.lowercase().replace(Regex("[^a-z0-9]"), "")
+            word.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
 
         private fun readAscii(bytes: ByteArray, at: Int): String =
             String(bytes, at, 4, Charsets.US_ASCII)

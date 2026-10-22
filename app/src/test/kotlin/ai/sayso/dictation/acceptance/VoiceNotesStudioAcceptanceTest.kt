@@ -341,4 +341,40 @@ class VoiceNotesStudioAcceptanceTest {
         val nonExistent = allNotes.filter { it.fullText.contains("submarine", ignoreCase = true) }
         assertTrue(nonExistent.isEmpty())
     }
+
+    @Test
+    fun discard_in_progress_recording_deletes_note_and_audio_cleanly() = runBlocking {
+        val noteId = "note-discard-1"
+        val audioFile = store.getAudioFile(noteId)
+        val initialNote = VoiceNote(
+            id = noteId,
+            title = "Discarded Recording",
+            createdAt = System.currentTimeMillis(),
+            durationMs = 0L,
+            audioPath = audioFile.absolutePath,
+        )
+        store.add(initialNote)
+
+        val fakeSource = ContinuousFakeAudioSource(totalSeconds = 2)
+        val recorder = DiskAudioRecorder(
+            outputFile = audioFile,
+            sampleSource = fakeSource,
+        )
+
+        val recordJob = launch(Dispatchers.IO) {
+            recorder.record()
+        }
+
+        delay(50)
+        recorder.stop()
+        recordJob.cancel()
+
+        store.delete(noteId)
+        if (audioFile.exists()) {
+            audioFile.delete()
+        }
+
+        assertFalse("Discarded note must not exist in store", store.all().any { it.id == noteId })
+        assertFalse("Discarded audio file must be deleted", audioFile.exists())
+    }
 }

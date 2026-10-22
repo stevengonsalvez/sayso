@@ -1,5 +1,6 @@
 package ai.sayso.dictation.ui
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -32,6 +33,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -67,19 +69,46 @@ enum class Screen(@StringRes val titleRes: Int) {
     About(R.string.screen_about),
 }
 
+data class NavTarget(
+    val openVoiceNotes: Boolean = false,
+    val noteId: String? = null,
+    val timestamp: Long = System.currentTimeMillis(),
+)
+
 class MainActivity : ComponentActivity() {
+    private var navTarget by mutableStateOf<NavTarget?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        val initialNoteId = intent?.getStringExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_NOTE_ID)
-        val openVoiceNotes = intent?.getBooleanExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_OPEN_VOICE_NOTES, false) == true || initialNoteId != null
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
         setContent {
             SaysoTheme {
                 SaysoApp(
-                    initialOpenVoiceNotes = openVoiceNotes,
-                    initialNoteId = initialNoteId,
+                    navTarget = navTarget,
+                    onNavTargetConsumed = {
+                        navTarget = null
+                        intent?.removeExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_OPEN_VOICE_NOTES)
+                        intent?.removeExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_NOTE_ID)
+                    },
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        val initialNoteId = intent?.getStringExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_NOTE_ID)
+        val openVoiceNotes = intent?.getBooleanExtra(ai.sayso.dictation.service.LongRecordingService.EXTRA_OPEN_VOICE_NOTES, false) == true || initialNoteId != null
+        if (openVoiceNotes) {
+            navTarget = NavTarget(openVoiceNotes = true, noteId = initialNoteId)
         }
     }
 }
@@ -93,18 +122,38 @@ class MainActivity : ComponentActivity() {
 fun SaysoApp(
     initialOpenVoiceNotes: Boolean = false,
     initialNoteId: String? = null,
+    navTarget: NavTarget? = null,
+    onNavTargetConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val settings = AppGraph.settings
     val downloads = AppGraph.downloads
     val modelsDir = AppGraph.localModelsDir
 
-    var screen by rememberSaveable { mutableStateOf(if (initialOpenVoiceNotes) Screen.VoiceNotes else Screen.Home) }
-    var selectedNoteId by rememberSaveable { mutableStateOf(initialNoteId) }
+    var screen by rememberSaveable {
+        mutableStateOf(
+            if (navTarget?.openVoiceNotes == true || navTarget?.noteId != null || initialOpenVoiceNotes) {
+                Screen.VoiceNotes
+            } else {
+                Screen.Home
+            }
+        )
+    }
+    var selectedNoteId by rememberSaveable { mutableStateOf(navTarget?.noteId ?: initialNoteId) }
     var showOnboarding by rememberSaveable { mutableStateOf(!settings.hasCompletedOnboarding) }
     var micGranted by remember { mutableStateOf(context.hasMicPermission()) }
     var serviceOn by remember { mutableStateOf(DictationService.isEnabled(context)) }
     var isSttReady by remember { mutableStateOf(false) }
+
+    LaunchedEffect(navTarget) {
+        if (navTarget != null) {
+            if (navTarget.openVoiceNotes || navTarget.noteId != null) {
+                screen = Screen.VoiceNotes
+                selectedNoteId = navTarget.noteId
+            }
+            onNavTargetConsumed()
+        }
+    }
 
     LifecycleResumeEffect(Unit) {
         micGranted = context.hasMicPermission()
@@ -129,10 +178,12 @@ fun SaysoApp(
     }
 
     if (selectedNoteId != null) {
-        VoiceNoteDetailScreen(
-            noteId = selectedNoteId!!,
-            onBack = { selectedNoteId = null },
-        )
+        key(selectedNoteId) {
+            VoiceNoteDetailScreen(
+                noteId = selectedNoteId!!,
+                onBack = { selectedNoteId = null },
+            )
+        }
     } else {
         Scaffold(
         topBar = {

@@ -52,6 +52,21 @@ class SherpaAudioChunkerTest {
     }
 
     @Test
+    fun deduplicateOverlap_preservesAndMatchesUnicodeLetters() {
+        // Cyrillic
+        val prevCyrillic = "Привет всем сегодня мы обсуждаем"
+        val currCyrillic = "сегодня мы обсуждаем квартальные результаты"
+        val dedupCyrillic = SherpaAudioChunker.deduplicateOverlap(prevCyrillic, currCyrillic)
+        assertEquals("квартальные результаты", dedupCyrillic)
+
+        // Accented Spanish
+        val prevSpanish = "Buenos días señor García"
+        val currSpanish = "señor García cómo está usted"
+        val dedupSpanish = SherpaAudioChunker.deduplicateOverlap(prevSpanish, currSpanish)
+        assertEquals("cómo está usted", dedupSpanish)
+    }
+
+    @Test
     fun deduplicateOverlap_returnsOriginalWhenNoMatch() {
         val prev = "The project launched yesterday."
         val curr = "Tomorrow we start phase two."

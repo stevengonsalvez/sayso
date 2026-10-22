@@ -94,6 +94,7 @@ class DiskAudioRecorder(
 
     @Volatile private var isRecording = false
     @Volatile private var isPaused = false
+    @Volatile private var stopRequested = false
 
     val recording: Boolean get() = isRecording
     val paused: Boolean get() = isPaused
@@ -107,6 +108,7 @@ class DiskAudioRecorder(
     }
 
     fun stop() {
+        stopRequested = true
         isRecording = false
     }
 
@@ -125,8 +127,12 @@ class DiskAudioRecorder(
             // Write 44-byte placeholder WAV header
             writePlaceholderWavHeader(fos)
 
-            sampleSource.start()
-            isRecording = true
+            if (!stopRequested) {
+                sampleSource.start()
+                if (!stopRequested) {
+                    isRecording = true
+                }
+            }
 
             val bufferSize = 3200 // 100ms at 16kHz 16-bit mono
             val buffer = ByteArray(bufferSize)
@@ -134,7 +140,14 @@ class DiskAudioRecorder(
             while (isRecording) {
                 if (isPaused) {
                     onAmplitude?.invoke(0f)
-                    Thread.sleep(50)
+                    val read = sampleSource.read(buffer, 0, buffer.size)
+                    if (read < 0) {
+                        Log.w(TAG, "AudioRecord read returned negative code while paused: $read")
+                        break
+                    }
+                    if (read == 0) {
+                        Thread.sleep(20)
+                    }
                     lastTickMs = clock()
                     continue
                 }

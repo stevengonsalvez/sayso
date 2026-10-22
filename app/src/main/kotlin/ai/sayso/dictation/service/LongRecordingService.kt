@@ -17,9 +17,11 @@ import ai.sayso.dictation.R
 import ai.sayso.dictation.ui.MainActivity
 import ai.sayso.dictation.voicenotes.DiskAudioRecorder
 import ai.sayso.dictation.voicenotes.VoiceNote
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +62,8 @@ class LongRecordingService : Service() {
     private var recordJob: Job? = null
     private var activeRecorder: DiskAudioRecorder? = null
     private var activeNote: VoiceNote? = null
+    @Volatile private var stopRequested = false
+    @Volatile private var isDiscarded = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -90,6 +94,8 @@ class LongRecordingService : Service() {
                 isPaused = false,
                 activeNoteId = null,
                 activeAudioFile = null,
+                isTranscribing = false,
+                transcribingNoteId = null,
             )
         }
     }
@@ -99,6 +105,9 @@ class LongRecordingService : Service() {
             Log.d(TAG, "Recording already in progress")
             return
         }
+
+        stopRequested = false
+        isDiscarded = false
 
         // Start foreground notification immediately before background dispatch
         startForegroundWithNotification(0L, isPaused = false)
@@ -112,7 +121,7 @@ class LongRecordingService : Service() {
             )
         }
 
-        serviceScope.launch(Dispatchers.IO) {
+        recordJob = serviceScope.launch(Dispatchers.IO) {
             try {
                 val noteId = UUID.randomUUID().toString()
                 val audioFile = AppGraph.voiceNotes.getAudioFile(noteId)
@@ -148,7 +157,16 @@ class LongRecordingService : Service() {
                 )
                 activeRecorder = recorder
 
+                if (stopRequested) {
+                    recorder.stop()
+                }
+
                 val result = recorder.record()
+
+                if (isDiscarded) {
+                    Log.d(TAG, "Recording discarded, skipping save and transcription")
+                    return@launch
+                }
 
                 // Finalize note duration
                 val updatedNote = note.copy(durationMs = result.durationMs)
@@ -166,10 +184,12 @@ class LongRecordingService : Service() {
                     )
                 }
 
-                // Stop foreground recording and initiate transcription in background
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                // Transition notification to transcription mode without removing foreground
+                updateTranscriptionNotification(0f, updatedNote.id)
                 triggerChunkedTranscription(updatedNote)
 
+            } catch (e: CancellationException) {
+                Log.d(TAG, "Recording job cancelled (discarded=$isDiscarded)")
             } catch (t: Throwable) {
                 Log.e(TAG, "Error in long recording session", t)
                 _state.update {
@@ -180,7 +200,10 @@ class LongRecordingService : Service() {
                         activeAudioFile = null,
                     )
                 }
-                stopSelf()
+                if (!_state.value.isTranscribing) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -198,26 +221,59 @@ class LongRecordingService : Service() {
     }
 
     private fun handleStop() {
+        stopRequested = true
         activeRecorder?.stop()
     }
 
     private fun handleCancel() {
+        isDiscarded = true
+        stopRequested = true
         activeRecorder?.stop()
-        val currentNote = activeNote
-        if (currentNote != null) {
-            serviceScope.launch(Dispatchers.IO) {
-                AppGraph.voiceNotes.delete(currentNote.id)
+        val jobToCancel = recordJob
+        recordJob = null
+        jobToCancel?.cancel()
+
+        val noteToDelete = activeNote
+        val audioToDelete = _state.value.activeAudioFile
+        activeNote = null
+        activeRecorder = null
+
+        serviceScope.launch(Dispatchers.IO + NonCancellable) {
+            try {
+                if (noteToDelete != null) {
+                    AppGraph.voiceNotes.delete(noteToDelete.id)
+                }
+                if (audioToDelete != null && audioToDelete.exists()) {
+                    audioToDelete.delete()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed deleting discarded voice note", t)
+            } finally {
+                _state.update {
+                    it.copy(
+                        isRecording = false,
+                        isPaused = false,
+                        activeNoteId = null,
+                        activeAudioFile = null,
+                        amplitude = 0f,
+                    )
+                }
+                if (!_state.value.isRecording && !_state.value.isTranscribing) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun triggerChunkedTranscription(note: VoiceNote) {
         serviceScope.launch(Dispatchers.IO) {
             val audioFile = File(note.audioPath)
             if (!audioFile.exists()) {
-                stopSelf()
+                if (!_state.value.isRecording) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 return@launch
             }
 
@@ -229,7 +285,10 @@ class LongRecordingService : Service() {
 
             if (modelName.isNullOrBlank()) {
                 Log.i(TAG, "No local model installed for automatic background transcription")
-                stopSelf()
+                if (!_state.value.isRecording) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
                 return@launch
             }
 
@@ -241,6 +300,7 @@ class LongRecordingService : Service() {
                 )
             }
 
+            var lastProgressJob: Job? = null
             try {
                 val transcriber = AppGraph.local.asChunkTranscriber(
                     modelName = modelName,
@@ -251,10 +311,7 @@ class LongRecordingService : Service() {
                     wavFile = audioFile,
                     transcriber = transcriber,
                     onProgress = { progress, _, _, segments ->
-                        _state.update {
-                            it.copy(transcriptionProgress = progress)
-                        }
-                        serviceScope.launch(Dispatchers.IO) {
+                        lastProgressJob = serviceScope.launch(Dispatchers.IO) {
                             val inProgressNote = note.copy(
                                 fullText = segments.joinToString(" ") { it.text },
                                 segments = segments,
@@ -262,9 +319,15 @@ class LongRecordingService : Service() {
                                 modelUsed = modelId,
                             )
                             AppGraph.voiceNotes.update(inProgressNote)
+                            _state.update {
+                                it.copy(transcriptionProgress = progress)
+                            }
+                            updateTranscriptionNotification(progress, note.id)
                         }
                     },
                 )
+
+                lastProgressJob?.join()
 
                 val finishedNote = note.copy(
                     fullText = chunkerResult.fullText,
@@ -284,7 +347,10 @@ class LongRecordingService : Service() {
                         transcribingNoteId = null,
                     )
                 }
-                stopSelf()
+                if (!_state.value.isRecording) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
     }
@@ -306,6 +372,41 @@ class LongRecordingService : Service() {
         val notification = buildNotification(durationMs, isPaused)
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun updateTranscriptionNotification(progress: Float, noteId: String?) {
+        if (_state.value.isRecording) return
+        val notification = buildTranscriptionNotification(progress, noteId)
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun buildTranscriptionNotification(progress: Float, noteId: String?): Notification {
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OPEN_VOICE_NOTES, true)
+            putExtra(EXTRA_NOTE_ID, noteId)
+        }
+        val contentPendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val percent = (progress.coerceIn(0f, 1f) * 100).toInt()
+        val text = if (percent > 0) "Transcribing... $percent%" else "Transcribing audio..."
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Sayso Voice Note")
+            .setContentText(text)
+            .setSmallIcon(R.drawable.ic_bubble_idle)
+            .setProgress(100, percent, percent == 0)
+            .setOngoing(true)
+            .setContentIntent(contentPendingIntent)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
     }
 
     private fun buildNotification(durationMs: Long, isPaused: Boolean): Notification {

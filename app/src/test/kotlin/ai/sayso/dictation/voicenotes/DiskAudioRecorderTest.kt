@@ -167,4 +167,67 @@ class DiskAudioRecorderTest {
             ((bytes[43].toInt() and 0xFF) shl 24)
         assertEquals(1000, dataSize)
     }
+
+    @Test
+    fun stopBeforeRecord_terminatesWithoutStarting() = runBlocking {
+        val targetFile = File(tempDir, "early_stop.wav")
+        val fakeSource = FakeSampleSource(totalPackets = 5, packetSize = 3200)
+
+        val recorder = DiskAudioRecorder(
+            outputFile = targetFile,
+            sampleSource = fakeSource,
+        )
+
+        // Stop invoked before record() starts
+        recorder.stop()
+        val result = recorder.record()
+
+        assertTrue(!fakeSource.isStarted)
+        assertEquals(0L, result.byteCount)
+        assertEquals(0L, result.durationMs)
+        assertTrue(targetFile.exists())
+        assertEquals(44L, targetFile.length())
+    }
+
+    @Test
+    fun pause_drainsAudioFromSampleSource_withoutWritingToDisk() = runBlocking {
+        val targetFile = File(tempDir, "drained.wav")
+        var readsPerformed = 0
+        val drainingSource = object : AudioSampleSource {
+            override val isAvailable: Boolean = true
+            override fun start() {}
+            override fun stop() {}
+            override fun release() {}
+            override fun read(buffer: ByteArray, offset: Int, size: Int): Int {
+                readsPerformed++
+                buffer.fill(1)
+                return minOf(size, 1600)
+            }
+        }
+
+        val recorder = DiskAudioRecorder(
+            outputFile = targetFile,
+            sampleSource = drainingSource,
+        )
+
+        val job = launch(Dispatchers.IO) {
+            recorder.record()
+        }
+
+        recorder.pause()
+        var attempts = 0
+        while (readsPerformed < 3 && attempts < 20) {
+            kotlinx.coroutines.delay(20)
+            attempts++
+        }
+        val drainedCount = readsPerformed
+        assertTrue(drainedCount >= 2)
+
+        recorder.stop()
+        job.join()
+
+        val fileBytes = targetFile.readBytes()
+        val pcmByteCount = fileBytes.size - 44
+        assertTrue(pcmByteCount < readsPerformed * 1600)
+    }
 }
