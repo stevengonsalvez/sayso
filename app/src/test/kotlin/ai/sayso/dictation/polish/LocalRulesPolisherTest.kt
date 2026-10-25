@@ -152,4 +152,21 @@ class LocalRulesPolisherTest {
         assertTrue(IndicTransliterator.hasIndicCharacters(text))
         assertEquals("வணக்கம்", text)
     }
+
+    @Test
+    fun `resolves spoken disfluencies in clean`() {
+        assertEquals("Meet on Saturday.", LocalRulesPolisher.clean("meet on Friday, actually Saturday"))
+        assertEquals("Call Alice", LocalRulesPolisher.clean("call Bob, scratch that, call Alice"))
+        assertEquals("Call Alice now.", LocalRulesPolisher.clean("call Bob now, scratch that, call Alice now"))
+        assertEquals("The meeting is ready.", LocalRulesPolisher.clean("the the meeting is ready"))
+        assertEquals("Let's meet tomorrow.", LocalRulesPolisher.clean("um, let's meet tomorrow"))
+    }
+
+    @Test
+    fun `applies voice directives and formatting in clean`() {
+        assertEquals("How are you?", LocalRulesPolisher.clean("how are you question mark"))
+        assertEquals("Watch out!", LocalRulesPolisher.clean("watch out exclamation point"))
+        val formatted = LocalRulesPolisher.clean("first line new line second line")
+        assertEquals("First line\nSecond line.", formatted)
+    }
 }

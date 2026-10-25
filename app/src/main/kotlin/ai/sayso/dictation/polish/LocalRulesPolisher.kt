@@ -51,18 +51,36 @@ object LocalRulesPolisher : PolishProvider {
         cleaned = WHITESPACE_RUN.replace(cleaned, " ").trim()
         if (cleaned.isEmpty()) return ""
 
+        cleaned = DisfluencyResolver.resolve(cleaned)
+        if (cleaned.isEmpty()) return ""
+
         cleaned = applyActionItems(cleaned)
         cleaned = applyBulletSummary(cleaned)
 
-        cleaned = when {
-            cleaned.startsWith("- [ ] ") -> "- [ ] " + cleaned.removePrefix("- [ ] ").replaceFirstChar { it.uppercaseChar() }
-            cleaned.startsWith("- ") -> "- " + cleaned.removePrefix("- ").replaceFirstChar { it.uppercaseChar() }
-            firstWordIsPlain(cleaned) -> cleaned.replaceFirstChar { it.uppercaseChar() }
-            else -> cleaned
-        }
+        cleaned = formatOutput(cleaned)
 
         if (needsTerminalPunctuation(cleaned)) cleaned += "."
         return cleaned
+    }
+
+    private fun formatOutput(text: String): String {
+        if (text.contains("\n")) {
+            return text.lines().joinToString("\n") { line ->
+                val trimmed = line.trim()
+                when {
+                    trimmed.startsWith("- [ ] ") -> "- [ ] " + trimmed.removePrefix("- [ ] ").replaceFirstChar { it.uppercaseChar() }
+                    trimmed.startsWith("- ") -> "- " + trimmed.removePrefix("- ").replaceFirstChar { it.uppercaseChar() }
+                    firstWordIsPlain(trimmed) -> trimmed.replaceFirstChar { it.uppercaseChar() }
+                    else -> trimmed
+                }
+            }
+        }
+        return when {
+            text.startsWith("- [ ] ") -> "- [ ] " + text.removePrefix("- [ ] ").replaceFirstChar { it.uppercaseChar() }
+            text.startsWith("- ") -> "- " + text.removePrefix("- ").replaceFirstChar { it.uppercaseChar() }
+            firstWordIsPlain(text) -> text.replaceFirstChar { it.uppercaseChar() }
+            else -> text
+        }
     }
 
     private fun applyActionItems(text: String): String {
@@ -85,11 +103,13 @@ object LocalRulesPolisher : PolishProvider {
     private fun firstWordIsPlain(text: String): Boolean =
         text.substringBefore(' ').drop(1).none { it.isUpperCase() }
 
-    private fun needsTerminalPunctuation(text: String): Boolean =
-        !text.startsWith("- [ ]") &&
-            !text.startsWith("- ") &&
+    private fun needsTerminalPunctuation(text: String): Boolean {
+        val lastLine = text.lines().lastOrNull()?.trim().orEmpty()
+        return !lastLine.startsWith("- [ ]") &&
+            !lastLine.startsWith("- ") &&
             text.last().isLetterOrDigit() &&
-            text.split(' ').count { it.isNotBlank() } >= MIN_WORDS_FOR_PERIOD
+            text.split(Regex("\\s+")).count { it.isNotBlank() } >= MIN_WORDS_FOR_PERIOD
+    }
 
     private const val MIN_WORDS_FOR_PERIOD = 3
 
