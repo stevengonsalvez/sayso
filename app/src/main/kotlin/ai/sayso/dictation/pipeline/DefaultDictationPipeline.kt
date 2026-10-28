@@ -16,7 +16,9 @@ import ai.sayso.dictation.core.TranscriptionProvider
 import ai.sayso.dictation.core.TranscriptionRequest
 import ai.sayso.dictation.core.TranscriptionResult
 import ai.sayso.dictation.polish.CleanupPolicy
+import ai.sayso.dictation.polish.DisfluencyResolver
 import ai.sayso.dictation.polish.Lexicon
+import ai.sayso.dictation.polish.StandaloneCommand
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -103,7 +105,38 @@ class DefaultDictationPipeline(
         }
 
         val raw = Lexicon.applyPronunciations(transcript, settings.pronunciations)
+
+        val standaloneCommand = DisfluencyResolver.parseStandaloneCommand(raw)
+        if (standaloneCommand != StandaloneCommand.NONE) {
+            return finish(
+                clip = clip,
+                previous = previous,
+                error = null,
+                sttModelId = model.model.id,
+                rawText = raw,
+                polishedText = raw,
+                polishModelId = null,
+                notice = notice,
+                overrideText = raw,
+            )
+        }
+
+        if (DisfluencyResolver.isCancelled(raw)) {
+            return finish(
+                clip = clip,
+                previous = previous,
+                error = null,
+                sttModelId = model.model.id,
+                rawText = raw,
+                polishedText = "",
+                polishModelId = null,
+                notice = notice,
+                overrideText = "",
+            )
+        }
+
         val cleanup = if (settings.polishEnabled) applyPolish(raw, targetPackage) else Cleanup.SKIPPED
+        val isCancelled = cleanup.text == ""
 
         return finish(
             clip = clip,
@@ -114,6 +147,7 @@ class DefaultDictationPipeline(
             polishedText = cleanup.text,
             polishModelId = cleanup.modelId,
             notice = listOfNotNull(notice, cleanup.notice).joinToString(". ").ifEmpty { null },
+            overrideText = if (isCancelled) "" else null,
         )
     }
 
@@ -254,7 +288,7 @@ class DefaultDictationPipeline(
         }
 
         return when (result) {
-            is PolishResult.Success -> Cleanup(result.text.takeIf { it.isNotBlank() }, model.id, null)
+            is PolishResult.Success -> Cleanup(result.text, model.id, null)
             is PolishResult.Failure -> Cleanup(null, model.id, result.message)
         }
     }
@@ -271,6 +305,7 @@ class DefaultDictationPipeline(
         polishedText: String? = previous?.polishedText,
         polishModelId: String? = previous?.polishModelId,
         notice: String? = null,
+        overrideText: String? = null,
     ): PipelineResult {
         var entry = HistoryEntry(
             id = previous?.id ?: UUID.randomUUID().toString(),
@@ -296,7 +331,8 @@ class DefaultDictationPipeline(
             }
         }
 
-        return PipelineResult(text = entry.finalText, entry = entry, error = error, notice = notice)
+        val resultText = overrideText ?: entry.finalText
+        return PipelineResult(text = resultText, entry = entry, error = error, notice = notice)
     }
 
     /** History is a convenience, not the dictation itself: a storage failure must not sink a run. */

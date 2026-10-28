@@ -17,6 +17,9 @@
     <string name="feedback_not_delivered">Could not insert the text</string>
     <string name="feedback_cleanup_failed">Cleanup failed, raw text used</string>
     <string name="feedback_with_warning">%1$s. %2$s</string>
+    <string name="feedback_undone">Undone</string>
+    <string name="feedback_cleared">Cleared</string>
+    <string name="feedback_nothing_to_undo">Nothing to undo</string>
 
     <!-- Navigation and shared -->
     <string name="screen_home">Dashboard</string>

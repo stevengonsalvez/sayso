@@ -136,4 +136,31 @@ class TextInjectorTest {
         assertEquals("", resolveExistingText(""))
         assertEquals("", resolveExistingText("   "))
     }
+
+    @Test
+    fun `removeInjectedText removes matching suffix`() {
+        assertEquals("Hello", removeInjectedText("Hello world", "world"))
+        assertEquals("Hello", removeInjectedText("Hello world.", "world."))
+        assertEquals("Hello", removeInjectedText("Hello world.", "world"))
+        assertEquals("", removeInjectedText("world", "world"))
+    }
+
+    @Test
+    fun `removeInjectedText removes internal occurrence`() {
+        assertEquals("Hello there", removeInjectedText("Hello world there", "world"))
+        assertEquals("Hello there", removeInjectedText("Hello World there", "world"))
+    }
+
+    @Test
+    fun `removeInjectedText preserves text if target not found`() {
+        assertEquals("Hello world", removeInjectedText("Hello world", "unknown"))
+        assertEquals("", removeInjectedText("", "world"))
+    }
+
+    @Test
+    fun `removeInjectedText does not remove substrings inside other words`() {
+        assertEquals("concatenate", removeInjectedText("concatenate", "cat"))
+        assertEquals("vacation spot", removeInjectedText("vacation spot", "cat"))
+        assertEquals("saw a today", removeInjectedText("saw a cat today", "cat"))
+    }
 }

@@ -20,6 +20,8 @@ import ai.sayso.dictation.AppGraph
 import ai.sayso.dictation.R
 import ai.sayso.dictation.core.AudioClip
 import ai.sayso.dictation.core.OutputMethod
+import ai.sayso.dictation.polish.DisfluencyResolver
+import ai.sayso.dictation.polish.StandaloneCommand
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -412,8 +414,39 @@ class DictationService : AccessibilityService() {
         val targetPackage = getTargetPackageName()
         val result = AppGraph.pipeline.run(clip, targetPackage)
         if (result.text.isBlank()) {
-            fail(result.error ?: getString(R.string.feedback_no_speech))
+            val message = result.error ?: getString(R.string.feedback_discarded)
+            feedback(message)
             return
+        }
+
+        val command = DisfluencyResolver.parseStandaloneCommand(result.text)
+        when (command) {
+            StandaloneCommand.UNDO -> {
+                val previous = lastInjectedText
+                if (previous.isNullOrBlank()) {
+                    feedback(getString(R.string.feedback_nothing_to_undo))
+                    return
+                }
+                val undone = injector?.undo(previous) == true
+                if (undone) {
+                    lastInjectedText = null
+                    feedback(getString(R.string.feedback_undone))
+                } else {
+                    fail(getString(R.string.feedback_not_delivered))
+                }
+                return
+            }
+            StandaloneCommand.CLEAR -> {
+                val cleared = injector?.clearText() == true
+                if (cleared) {
+                    lastInjectedText = null
+                    feedback(getString(R.string.feedback_cleared))
+                } else {
+                    fail(getString(R.string.feedback_not_delivered))
+                }
+                return
+            }
+            StandaloneCommand.NONE -> Unit
         }
 
         val method = injector?.inject(result.text) ?: OutputMethod.NONE
