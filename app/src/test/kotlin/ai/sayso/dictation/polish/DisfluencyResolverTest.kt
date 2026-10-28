@@ -104,6 +104,38 @@ class DisfluencyResolverTest {
     }
 
     @Test
+    fun `preserves ordinary conversational clauses after commas`() {
+        assertEquals(
+            "I agree, actually I think it's good",
+            DisfluencyResolver.resolveSelfCorrections("I agree, actually I think it's good"),
+        )
+        assertEquals(
+            "I am late, sorry",
+            DisfluencyResolver.resolveSelfCorrections("I am late, sorry"),
+        )
+        assertEquals(
+            "I am late, sorry for the delay",
+            DisfluencyResolver.resolveSelfCorrections("I am late, sorry for the delay"),
+        )
+    }
+
+    @Test
+    fun `preserves literal punctuation names in dictation`() {
+        assertEquals("I missed my period today.", LocalRulesPolisher.clean("I missed my period today"))
+        assertEquals("The colon is healthy.", LocalRulesPolisher.clean("the colon is healthy"))
+        assertEquals("Use an oxford comma here.", LocalRulesPolisher.clean("use an oxford comma here"))
+        assertEquals("A grace period of thirty days.", LocalRulesPolisher.clean("a grace period of thirty days"))
+        assertEquals("Note: this is important.", LocalRulesPolisher.clean("note colon this is important"))
+    }
+
+    @Test
+    fun `detects cancelled utterances`() {
+        assertTrue(DisfluencyResolver.isCancelled("never mind scratch that"))
+        assertTrue(DisfluencyResolver.isCancelled("send email to Bob, delete that"))
+        org.junit.Assert.assertFalse(DisfluencyResolver.isCancelled("send email to Bob"))
+    }
+
+    @Test
     fun `transforms spoken punctuation directives`() {
         assertEquals("How are you?", DisfluencyResolver.resolve("how are you question mark").trim())
         assertEquals("Watch out!", DisfluencyResolver.resolve("watch out exclamation point").trim())

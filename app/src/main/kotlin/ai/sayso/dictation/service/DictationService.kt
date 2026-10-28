@@ -414,7 +414,8 @@ class DictationService : AccessibilityService() {
         val targetPackage = getTargetPackageName()
         val result = AppGraph.pipeline.run(clip, targetPackage)
         if (result.text.isBlank()) {
-            fail(result.error ?: getString(R.string.feedback_no_speech))
+            val message = result.error ?: getString(R.string.feedback_discarded)
+            feedback(message)
             return
         }
 

@@ -41,6 +41,7 @@ fun removeInjectedText(existing: String, lastInjected: String): String {
 
     val target = lastInjected.trim()
     val targetNoPunct = target.trimEnd('.', '!', '?', ',', ';', ':')
+    if (targetNoPunct.isBlank()) return existing
 
     val trimmedExisting = existing.trimEnd()
     // 1. Exact or case-insensitive match
@@ -48,24 +49,26 @@ fun removeInjectedText(existing: String, lastInjected: String): String {
         return ""
     }
 
-    // 2. Suffix match (with or without trailing punctuation on existing)
+    // 2. Word-bounded suffix match (with or without trailing punctuation on existing)
     val existingNoPunct = trimmedExisting.trimEnd('.', '!', '?', ',', ';', ':')
     if (existingNoPunct.endsWith(targetNoPunct, ignoreCase = true)) {
-        return existingNoPunct.substring(0, existingNoPunct.length - targetNoPunct.length).trimEnd()
-    }
-
-    // 3. Substring match (remove the last occurrence)
-    val idx = existing.lastIndexOf(targetNoPunct, ignoreCase = true)
-    if (idx >= 0) {
-        val before = existing.substring(0, idx).trimEnd()
-        var after = existing.substring(idx + targetNoPunct.length).trimStart()
-        if (after.startsWith(".") || after.startsWith("!") || after.startsWith("?") || after.startsWith(",")) {
-            after = after.drop(1).trimStart()
+        val startIdx = existingNoPunct.length - targetNoPunct.length
+        val hasWordBoundary = startIdx == 0 || !existingNoPunct[startIdx - 1].isLetterOrDigit()
+        if (hasWordBoundary) {
+            return existingNoPunct.substring(0, startIdx).trimEnd()
         }
-        return if (before.isEmpty()) after else if (after.isEmpty()) before else "$before $after"
     }
 
-    return existing
+    // 3. Word-bounded substring match (remove the last occurrence)
+    val pattern = Regex("(?i)(?<![\\p{L}\\p{N}])${Regex.escape(targetNoPunct)}(?![\\p{L}\\p{N}])")
+    val match = pattern.findAll(existing).lastOrNull() ?: return existing
+
+    val before = existing.substring(0, match.range.first).trimEnd()
+    var after = existing.substring(match.range.last + 1).trimStart()
+    if (after.startsWith(".") || after.startsWith("!") || after.startsWith("?") || after.startsWith(",")) {
+        after = after.drop(1).trimStart()
+    }
+    return if (before.isEmpty()) after else if (after.isEmpty()) before else "$before $after"
 }
 
 /** Regex matching common input field placeholders/hints that should not be treated as existing user text. */
@@ -145,13 +148,33 @@ class TextInjector(private val service: AccessibilityService) {
         return deliveryOutcome(inserted) { copyToClipboard(text) }
     }
 
+    /** Returns the confirmed focused editable target node, or null if none holds focus. */
+    private fun focusedTarget(): AccessibilityNodeInfo? {
+        val root = service.rootInActiveWindow
+        val inputFocus = root?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+        if (inputFocus != null && inputFocus.isEditable) {
+            return inputFocus
+        }
+
+        for (window in service.windows) {
+            if (!window.isActive && !window.isFocused) continue
+            val wRoot = window.root ?: continue
+            val wFocus = wRoot.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (wFocus != null && wFocus.isEditable) {
+                return wFocus
+            }
+        }
+
+        return candidates().firstOrNull { it.isEditable && it.isFocused }
+    }
+
     /**
-     * Undoes the last injected text from the active editable node.
+     * Undoes the last injected text from the currently focused editable node.
      * Returns true if successfully removed.
      */
     fun undo(lastInjected: String): Boolean {
         if (lastInjected.isBlank()) return false
-        val node = candidates().sortedByDescending(::score).firstOrNull { it.isEditable } ?: return false
+        val node = focusedTarget() ?: return false
 
         val existing = resolveExistingText(
             text = node.text,
@@ -169,11 +192,11 @@ class TextInjector(private val service: AccessibilityService) {
     }
 
     /**
-     * Clears all text in the active editable node.
+     * Clears all text in the currently focused editable node.
      * Returns true if successfully cleared.
      */
     fun clearText(): Boolean {
-        val node = candidates().sortedByDescending(::score).firstOrNull { it.isEditable } ?: return false
+        val node = focusedTarget() ?: return false
         val arguments = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
         }

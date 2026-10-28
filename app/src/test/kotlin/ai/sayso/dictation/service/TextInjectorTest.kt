@@ -156,4 +156,11 @@ class TextInjectorTest {
         assertEquals("Hello world", removeInjectedText("Hello world", "unknown"))
         assertEquals("", removeInjectedText("", "world"))
     }
+
+    @Test
+    fun `removeInjectedText does not remove substrings inside other words`() {
+        assertEquals("concatenate", removeInjectedText("concatenate", "cat"))
+        assertEquals("vacation spot", removeInjectedText("vacation spot", "cat"))
+        assertEquals("saw a today", removeInjectedText("saw a cat today", "cat"))
+    }
 }

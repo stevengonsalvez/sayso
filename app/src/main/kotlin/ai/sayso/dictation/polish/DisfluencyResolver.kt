@@ -49,13 +49,36 @@ object DisfluencyResolver {
         "(?i)^(?:\\d+|zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth)$",
     )
 
-    private val SPOKEN_PUNCTUATION = listOf(
+    private val PRONOUNS = setOf("i", "we", "you", "he", "she", "it", "they", "there")
+
+    private val PERIOD_DIRECTIVE = Regex("(?i)\\b(?:period|full\\s+stop)\\b")
+    private val PERIOD_NOUN_PREFIX = setOf(
+        "the", "a", "an", "my", "his", "her", "their", "our", "this", "that",
+        "grace", "time", "waiting", "long", "short", "menstrual", "first", "second", "third", "trial",
+    )
+    private val PERIOD_NOUN_SUFFIX = setOf(
+        "of", "in", "between", "from", "for", "tutor", "panties", "piece", "costume",
+    )
+
+    private val COMMA_DIRECTIVE = Regex("(?i)\\bcomma\\b")
+    private val COMMA_NOUN_PREFIX = setOf(
+        "the", "a", "an", "oxford", "serial", "inverted", "trailing", "missing",
+    )
+    private val COMMA_NOUN_SUFFIX = setOf(
+        "separated", "splice", "delimited", "delineated",
+    )
+
+    private val COLON_DIRECTIVE = Regex("(?i)\\bcolon\\b")
+    private val COLON_NOUN_PREFIX = setOf(
+        "the", "a", "an", "my", "his", "her", "their", "our", "healthy", "sigmoid", "spastic", "irritable",
+    )
+    private val COLON_NOUN_SUFFIX = setOf(
+        "cancer", "surgery", "screening", "cleanse", "irrigation", "polyps", "disease", "wall", "tissue", "is", "was",
+    )
+
+    private val STATIC_SPOKEN_PUNCTUATION = listOf(
         Regex("(?i)\\bquestion\\s+mark\\b") to "?",
         Regex("(?i)\\bexclamation\\s+(?:mark|point)\\b") to "!",
-        Regex("(?i)\\bfull\\s+stop\\b") to ".",
-        Regex("(?i)\\bperiod\\b(?!\\s+(?:of|in|between|from)\\b)") to ".",
-        Regex("(?i)\\bcomma\\b(?!\\s+(?:separated|splice|delimited)\\b)") to ",",
-        Regex("(?i)\\bcolon\\b(?!\\s+(?:cancer|surgery|screening|cleanse)\\b)") to ":",
         Regex("(?i)\\bsemicolon\\b") to ";",
         Regex("(?i)\\bellipsis\\b|\\bdot\\s+dot\\s+dot\\b") to "...",
         Regex("(?i)\\bopen\\s+quotes?\\s*") to "\"",
@@ -73,6 +96,20 @@ object DisfluencyResolver {
     private val SPACING_AFTER_OPEN_PAREN = Regex("(\\()\\s+")
     private val PUNCT_CAPITALIZE = Regex("([.?!]\\s+)([a-z])")
 
+    private val CANCELLED_END_REGEX = Regex("(?i)(?:,\\s*)?\\b(?:scratch\\s+that|delete\\s+that)\\s*[.!]?$")
+
+    /**
+     * Checks if the utterance ends with a cancellation command like "scratch that"
+     * indicating the entire phrase should be discarded.
+     */
+    fun isCancelled(text: String): Boolean {
+        if (text.isBlank()) return false
+        val trimmed = text.trim()
+        if (CANCELLED_END_REGEX.containsMatchIn(trimmed)) return true
+        val resolved = resolve(trimmed)
+        return resolved.isBlank()
+    }
+
     /**
      * Applies full disfluency resolution and voice directive processing.
      */
@@ -82,6 +119,7 @@ object DisfluencyResolver {
         var processed = stripFillers(text)
         processed = removeStutters(processed)
         processed = resolveSelfCorrections(processed)
+        if (processed.isBlank()) return ""
         processed = applySpokenPunctuation(processed)
         processed = applyFormattingDirectives(processed)
 
@@ -172,12 +210,17 @@ object DisfluencyResolver {
 
         val matchedMarker = match.value.lowercase()
         val isExplicitScratch = matchedMarker.contains("scratch that") || matchedMarker.contains("delete that")
+        val isConversational = matchedMarker.contains("actually") ||
+            matchedMarker.contains("in fact") ||
+            matchedMarker.contains("i mean") ||
+            matchedMarker.contains("sorry")
 
         // Utterance ending with "scratch that" cancels the preceding phrase
         if (rawSuffix.isBlank()) {
-            return if (isExplicitScratch) "" else prefix
+            return if (isExplicitScratch) "" else text
         }
 
+        val hasCarrierPhrase = CARRIER_PHRASE.containsMatchIn(rawSuffix)
         val cleanSuffix = CARRIER_PHRASE.replace(rawSuffix, "").trimStart(',', ';').trimStart()
         val suffixWords = cleanSuffix.split(Regex("\\s+")).filter { it.isNotBlank() }
         val prefixWords = prefix.split(Regex("\\s+")).filter { it.isNotBlank() }
@@ -185,23 +228,39 @@ object DisfluencyResolver {
         if (suffixWords.isEmpty() || prefixWords.isEmpty()) return cleanSuffix
 
         // Case 1: Overlapping prefix match ("call Bob" -> "call Alice")
-        val overlapWordIndex = findOverlapIndex(prefixWords, suffixWords)
+        val overlapWordIndex = findOverlapIndex(prefixWords, suffixWords, isConversational)
         if (overlapWordIndex >= 0) {
             val keptPrefix = prefixWords.take(overlapWordIndex).joinToString(" ").trimEnd(',', ';')
             return if (keptPrefix.isEmpty()) cleanSuffix else "$keptPrefix $cleanSuffix"
         }
 
         // Case 2: Matching grammatical categories (days, months, numbers)
-        val lastPrefixWord = prefixWords.last().lowercase().trimEnd('.', ',', '!', '?')
-        val firstSuffixWord = suffixWords.first().lowercase().trimEnd('.', ',', '!', '?')
+        var pCheck = prefixWords
+        var sCheck = suffixWords
+        var commonSuffixCount = 0
+        while (pCheck.size > 1 && sCheck.size > 1 &&
+            pCheck.last().equals(sCheck.last(), ignoreCase = true)
+        ) {
+            pCheck = pCheck.dropLast(1)
+            sCheck = sCheck.dropLast(1)
+            commonSuffixCount++
+        }
+        val lastPWord = pCheck.last().lowercase().trimEnd('.', ',', '!', '?')
+        val firstSWord = sCheck.first().lowercase().trimEnd('.', ',', '!', '?')
 
-        val isCategoryMatch = (DAYS_OF_WEEK.contains(lastPrefixWord) && DAYS_OF_WEEK.contains(firstSuffixWord)) ||
-            (MONTHS.contains(lastPrefixWord) && MONTHS.contains(firstSuffixWord)) ||
-            (NUMBER_TOKEN.matches(lastPrefixWord) && NUMBER_TOKEN.matches(firstSuffixWord))
+        val isCategoryMatch = (DAYS_OF_WEEK.contains(lastPWord) && DAYS_OF_WEEK.contains(firstSWord)) ||
+            (MONTHS.contains(lastPWord) && MONTHS.contains(firstSWord)) ||
+            (NUMBER_TOKEN.matches(lastPWord) && NUMBER_TOKEN.matches(firstSWord))
 
         if (isCategoryMatch) {
-            val keptPrefix = prefixWords.dropLast(1).joinToString(" ").trimEnd(',', ';')
+            val dropCount = commonSuffixCount + 1
+            val keptPrefix = prefixWords.dropLast(dropCount).joinToString(" ").trimEnd(',', ';')
             return if (keptPrefix.isEmpty()) cleanSuffix else "$keptPrefix $cleanSuffix"
+        }
+
+        // If conversational and no explicit evidence of replacement exists, preserve both clauses
+        if (isConversational && !hasCarrierPhrase) {
+            return text
         }
 
         // Case 3: Explicit "scratch that" or "delete that" with full clause
@@ -221,13 +280,28 @@ object DisfluencyResolver {
             return if (keptPrefix.isEmpty()) cleanSuffix else "$keptPrefix $cleanSuffix"
         }
 
-        // Default fallback: replace last word and append suffix
+        // Default fallback for explicit markers: replace last word and append suffix
         val keptPrefix = prefixWords.dropLast(1).joinToString(" ").trimEnd(',', ';')
         return if (keptPrefix.isEmpty()) cleanSuffix else "$keptPrefix $cleanSuffix"
     }
 
-    private fun findOverlapIndex(prefixWords: List<String>, suffixWords: List<String>): Int {
+    private fun findOverlapIndex(prefixWords: List<String>, suffixWords: List<String>, isConversational: Boolean): Int {
         val firstSuffix = suffixWords.first().lowercase().trimEnd('.', ',', '!', '?')
+        // Do not treat a single pronoun as conversational correction overlap (e.g. "I agree, actually I think...")
+        if (isConversational && PRONOUNS.contains(firstSuffix)) {
+            val secondSuffix = suffixWords.getOrNull(1)?.lowercase()?.trimEnd('.', ',', '!', '?')
+            if (secondSuffix == null) return -1
+            // Require at least 2 consecutive overlapping words if starting with pronoun
+            for (i in 0 until prefixWords.size - 1) {
+                val p1 = prefixWords[i].lowercase().trimEnd('.', ',', '!', '?')
+                val p2 = prefixWords[i + 1].lowercase().trimEnd('.', ',', '!', '?')
+                if (p1 == firstSuffix && p2 == secondSuffix) {
+                    return i
+                }
+            }
+            return -1
+        }
+
         for (i in prefixWords.indices.reversed()) {
             val pWord = prefixWords[i].lowercase().trimEnd('.', ',', '!', '?')
             if (pWord == firstSuffix) {
@@ -238,19 +312,66 @@ object DisfluencyResolver {
     }
 
     /**
-     * Replaces spoken punctuation words with punctuation marks.
+     * Replaces spoken punctuation words with punctuation marks, disambiguating
+     * literal nouns like "period", "colon", and "comma".
      */
     fun applySpokenPunctuation(text: String): String {
         var res = text
-        for ((pattern, replacement) in SPOKEN_PUNCTUATION) {
+        for ((pattern, replacement) in STATIC_SPOKEN_PUNCTUATION) {
             res = pattern.replace(res, replacement)
         }
+
+        // Disambiguate "period" / "full stop"
+        res = PERIOD_DIRECTIVE.replace(res) { match ->
+            val beforeWord = extractWordBefore(res, match.range.first)
+            val afterWord = extractWordAfter(res, match.range.last)
+            if (PERIOD_NOUN_PREFIX.contains(beforeWord) || PERIOD_NOUN_SUFFIX.contains(afterWord)) {
+                match.value
+            } else {
+                "."
+            }
+        }
+
+        // Disambiguate "colon"
+        res = COLON_DIRECTIVE.replace(res) { match ->
+            val beforeWord = extractWordBefore(res, match.range.first)
+            val afterWord = extractWordAfter(res, match.range.last)
+            if (COLON_NOUN_PREFIX.contains(beforeWord) || COLON_NOUN_SUFFIX.contains(afterWord)) {
+                match.value
+            } else {
+                ":"
+            }
+        }
+
+        // Disambiguate "comma"
+        res = COMMA_DIRECTIVE.replace(res) { match ->
+            val beforeWord = extractWordBefore(res, match.range.first)
+            val afterWord = extractWordAfter(res, match.range.last)
+            if (COMMA_NOUN_PREFIX.contains(beforeWord) || COMMA_NOUN_SUFFIX.contains(afterWord)) {
+                match.value
+            } else {
+                ","
+            }
+        }
+
         res = SPACING_BEFORE_PUNCT.replace(res, "$1")
         res = SPACING_AFTER_OPEN_PAREN.replace(res, "$1")
         res = PUNCT_CAPITALIZE.replace(res) { match ->
             match.groupValues[1] + match.groupValues[2].uppercase()
         }
         return res
+    }
+
+    private fun extractWordBefore(text: String, startIndex: Int): String {
+        if (startIndex <= 0) return ""
+        val substring = text.substring(0, startIndex).trimEnd()
+        return substring.split(Regex("\\s+")).lastOrNull()?.lowercase()?.trimEnd('.', ',', '!', '?', ';', ':').orEmpty()
+    }
+
+    private fun extractWordAfter(text: String, endIndex: Int): String {
+        if (endIndex >= text.length - 1) return ""
+        val substring = text.substring(endIndex + 1).trimStart()
+        return substring.split(Regex("\\s+")).firstOrNull()?.lowercase()?.trimStart('.', ',', '!', '?', ';', ':').orEmpty()
     }
 
     /**
