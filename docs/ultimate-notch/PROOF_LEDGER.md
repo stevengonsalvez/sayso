@@ -93,6 +93,10 @@ NOT OBSERVED: the status-line text of the published activity (the screenshot sho
 
 Two conflicts resolved by me: (1) cleanup: main added a 50 ms `LocalPortProbe` before calling Ollama; I put it inside the `localSLM` closure so the pipeline's local-rules fallback still applies when the port is closed (throws, pipeline falls back). (2) `NotchPanelController`: main replaced the status area with a richer live view (Listening/Finishing/notice, live preview text); I kept main's view and added a separate module-activity line plus the critical Approve/Deny buttons and tap policy under it, shown only when not live and a module activity exists. Build and full suite pass (539 tests in 4 suites). NOT verified: how the combined notch looks or behaves (layout never seen), and main's streaming/instant-stop with module wiring.
 
+## Scheduler date range (2026-10-05)
+
+PR #61 (wall-clock scheduler deadlines) merged before I read it. Reading it, `wallTime` did `Int(seconds.rounded(.down))`, which traps on a NaN, infinite or huge date. A probe test (RED: fatal error "Double value cannot be converted to Int because it is either infinite or NaN") confirmed it on the merged scheduler. I found no current caller that passes such a date: Timer countdowns are bounded and finite, the external API caps expiry at 3600 s; but in-process activity `expiresAfter` is unbounded and reaches the scheduler through `SaysoExpiryTicker`, so the path is reachable by a future module. Fixed by clamping to 0...2100-01-01 and treating NaN as now. Regression test `DispatchSchedulerRangeTests`; full suite 637 pass twice. This is on the notch branch, not yet on main.
+
 ## Review tooling
 
 Codex review was attempted and failed on a usage limit until 2026-10-07; Opus `code-reviewer` is the substitute.

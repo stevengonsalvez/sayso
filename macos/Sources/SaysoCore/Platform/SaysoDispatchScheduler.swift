@@ -18,8 +18,10 @@ public struct SaysoDispatchScheduler: SaysoScheduling {
         return SaysoSubscription { timer.cancel() }
     }
 
+    /// Dates outside a sane range (NaN, infinite, absurdly far) are clamped, so a bad date can never trap the app.
     private static func wallTime(_ date: Date) -> DispatchWallTime {
-        let seconds = date.timeIntervalSince1970
+        let raw = date.timeIntervalSince1970
+        let seconds = raw.isNaN ? Date().timeIntervalSince1970 : min(max(raw, 0), 4_102_444_800) // 2100-01-01
         let whole = seconds.rounded(.down)
         return DispatchWallTime(timespec: timespec(tv_sec: Int(whole), tv_nsec: Int((seconds - whole) * 1_000_000_000)))
     }
