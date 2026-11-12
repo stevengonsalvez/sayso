@@ -18,8 +18,15 @@ public struct SaysoDispatchScheduler: SaysoScheduling {
         return SaysoSubscription { timer.cancel() }
     }
 
+    /// Wall-time in nanoseconds must stay below 2^62 ns (about year 2116) to avoid libdispatch overflow.
+    private static let maxWallTimeSeconds: TimeInterval = 4_102_444_800 // 2100-01-01 00:00:00 UTC
+    /// Lower clamp bound: timespec(0,0) maps to DISPATCH_TIME_FOREVER in libdispatch dispatch_walltime.
+    private static let minWallTimeSeconds: TimeInterval = 1
+
+    /// Dates outside a sane range (NaN, infinite, absurdly far) are clamped, so a bad date can never trap the app.
     private static func wallTime(_ date: Date) -> DispatchWallTime {
-        let seconds = date.timeIntervalSince1970
+        let raw = date.timeIntervalSince1970
+        let seconds = raw.isNaN ? Date().timeIntervalSince1970 : min(max(raw, minWallTimeSeconds), maxWallTimeSeconds)
         let whole = seconds.rounded(.down)
         return DispatchWallTime(timespec: timespec(tv_sec: Int(whole), tv_nsec: Int((seconds - whole) * 1_000_000_000)))
     }

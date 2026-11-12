@@ -2,14 +2,14 @@ import Foundation
 import Testing
 @testable import SaysoCore
 
-private final class Counter: @unchecked Sendable {
+final class Counter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
     func bump() { lock.withLock { value += 1 } }
     var count: Int { lock.withLock { value } }
 }
 
-private func waitUntil(_ timeout: TimeInterval = 2, _ condition: () -> Bool) async -> Bool {
+func waitUntil(_ timeout: TimeInterval = 2, _ condition: () -> Bool) async -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if condition() { return true }

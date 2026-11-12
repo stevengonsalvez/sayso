@@ -47,7 +47,7 @@ public struct SaysoActivity: Equatable, Sendable {
         self.stackID = stackID
         self.kind = kind
         self.title = title
-        self.expiresAfter = expiresAfter
+        self.expiresAfter = expiresAfter.flatMap { $0.isNaN ? nil : $0 }
         self.actions = actions
         self.interruption = interruption
         self.progress = progress.flatMap { $0.isNaN ? nil : min(max($0, 0), 1) }
