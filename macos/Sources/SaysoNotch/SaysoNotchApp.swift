@@ -289,6 +289,20 @@ final class SaysoAppModel: ObservableObject {
         isSaysoCapturing: { [saysoListening] in saysoListening.isSet }
     )
     private var privacyPaneShown = false
+    /// Keeps named text on this Mac, in the settings defaults (a throwaway suite under `--ui-test-fresh-settings`).
+    /// The clipboard is read only when the user copies a snippet holding {clipboard}; Copy writes the expanded text.
+    /// A UI test launch with fresh settings may swap in an in-memory board, so tests never touch the real clipboard.
+    private let snippets: SnippetsModule = {
+        let testBoard = SnippetsUITestHook.board(arguments: CommandLine.arguments)
+        return SnippetsModule(
+            store: UserDefaultsSnippetsStore(defaults: SaysoAppModel.settingsDefaults),
+            clipboard: testBoard ?? PasteboardSnippetsClipboardReader() as SnippetsClipboardReading,
+            pasteboard: testBoard ?? PasteboardCalculatorPort() as CalculatorPasteboardPort,
+            scheduler: SaysoDispatchScheduler()
+        )
+    }()
+    /// The pane's last snippet outcome; cleared when snippets start or stop.
+    @Published private(set) var snippetsMessage: String?
     private var saysoListeningObserver: AnyCancellable?
     /// The Studio pane counts as watching the stats only while it is the shown tab and its window is visible:
     /// a closed, minimised or covered window may never tell the view it disappeared.
@@ -299,7 +313,7 @@ final class SaysoAppModel: ObservableObject {
         modules: [
             tts, historyModule, vocabularyModule, ModelsModule(), shortcutIntents, DictationModule(), ControlModule(),
             externalActivities, clipboardModule, fileShelf, timerModule, caffeineModule, worldClocks, nowPlaying,
-            systemStats, calculator, colorPicker, fileTools, privacyGuard,
+            systemStats, calculator, colorPicker, fileTools, privacyGuard, snippets,
         ],
         events: moduleEvents
     )
@@ -567,6 +581,14 @@ final class SaysoAppModel: ObservableObject {
         let privacyGuardWasRunning = privacyGuardRunning
         modules.setEnabled(privacyGuard.descriptor.id, settings.privacyGuardEnabled)
         if privacyGuardRunning != privacyGuardWasRunning { objectWillChange.send() }
+        // On by default: snippets are the user's own text, and the clipboard is read only when one holding
+        // {clipboard} is copied; turning it off clears the copy notice and what it expanded, and keeps the saved list.
+        let snippetsWereRunning = snippetsRunning
+        modules.setEnabled(snippets.descriptor.id, settings.snippetsEnabled)
+        if snippetsRunning != snippetsWereRunning {
+            snippetsMessage = nil
+            objectWillChange.send()
+        }
     }
 
     var fileShelfItems: [FileShelfItem] { fileShelf.items }
@@ -675,6 +697,47 @@ final class SaysoAppModel: ObservableObject {
 
     func revealFileToolsOutput(_ url: URL) {
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// From the module, not the setting, so the pane says off only once snippets have really stopped.
+    var snippetsRunning: Bool {
+        switch modules.health(of: snippets.descriptor.id) {
+        case .ready, .degraded: true
+        case .disabled, .failed, .quarantined, .permissionRequired: false
+        }
+    }
+
+    /// In the order added; empty while snippets are off.
+    var snippetList: [Snippet] { snippets.snippets }
+
+    /// The last copy while its notice shows; the pane redraws when the notice ends.
+    var lastSnippetCopy: SnippetCopy? { snippets.lastCopy }
+
+    /// True when the snippet was saved, so the pane can clear its fields.
+    func addSnippet(name: String, body: String) -> Bool {
+        switch snippets.add(name: name, body: body) {
+        case let .success(warnings):
+            snippetsMessage = Self.snippetsLine("Added \(name.trimmingCharacters(in: .whitespacesAndNewlines))", warnings)
+            return true
+        case let .failure(error):
+            snippetsMessage = error.message
+            return false
+        }
+    }
+
+    func copySnippet(_ name: String) {
+        switch snippets.copy(name) {
+        case let .success(copy): snippetsMessage = Self.snippetsLine("Copied \(copy.name)", copy.warnings)
+        case let .failure(error): snippetsMessage = error.message
+        }
+    }
+
+    func deleteSnippet(_ name: String) {
+        snippetsMessage = snippets.delete(name)?.message ?? "Deleted \(name)"
+    }
+
+    private static func snippetsLine(_ done: String, _ warnings: [SnippetsWarning]) -> String {
+        ([done] + warnings.map(\.message)).joined(separator: ". ")
     }
 
     static let worldClockQuickAdds = [
@@ -2503,7 +2566,7 @@ final class SaysoAppModel: ObservableObject {
     /// Studio tabs by module id; modules without a tab open the first tab.
     private static let studioTabs = [
         "dictation": 0, "control": 1, "history": 2, "models": 4, "vocabulary": 6, "timer": 7, "caffeine": 7, "world-clocks": 7, "system-stats": 7,
-        "calculator": 7, "color-picker": 7, "file-tools": 7, "privacy-guard": 7,
+        "calculator": 7, "color-picker": 7, "file-tools": 7, "privacy-guard": 7, "snippets": 7,
         "shortcut-intents": 8, "now-playing": 10,
         "tts": 9,
     ]
@@ -3359,6 +3422,8 @@ private struct NotchWorkspace: View {
 
                 FileToolsSection(model: model)
 
+                SnippetsSection(model: model)
+
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -3776,6 +3841,93 @@ private struct FileToolsSection: View {
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         let chosen = panel.urls.map(\.path).joined(separator: "\n")
         paths = paths.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? chosen : paths + "\n" + chosen
+    }
+}
+
+/// The user's own named text. Placeholders are filled only on Copy; the clipboard is read only then, and only for a
+/// snippet holding {clipboard}.
+private struct SnippetsSection: View {
+    @ObservedObject var model: SaysoAppModel
+    @State private var name = ""
+    @State private var text = ""
+
+    var body: some View {
+        let running = model.snippetsRunning
+        let copied = running ? model.lastSnippetCopy : nil
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Snippets").font(.headline)
+                if running {
+                    Text("Keep up to \(SnippetsModule.maxSnippets) named pieces of text and copy one with a click. {date} and {time} become today's date and the time, and {clipboard} becomes the text on the clipboard, all filled in only when you press Copy; that is the only time the clipboard is read. Any other word in braces is kept as typed. Snippets are kept on this Mac only and nothing is sent anywhere.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Snippets are off: nothing is listed, copied or read. Your saved snippets are kept. Turn them on in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("snippets-off")
+                }
+            }
+            if running {
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.snippetList.isEmpty {
+                        Text("No snippets yet.").font(.callout).foregroundStyle(.secondary)
+                    }
+                    ForEach(model.snippetList, id: \.name) { snippet in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(snippet.name).font(.callout.weight(.semibold))
+                                Text(snippet.body).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                            }
+                            Spacer()
+                            Button("Copy") { model.copySnippet(snippet.name) }
+                                .accessibilityLabel("Copy \(snippet.name)")
+                                .accessibilityIdentifier("snippets-copy-\(snippet.name)")
+                            Button("Delete") { model.deleteSnippet(snippet.name) }
+                                .accessibilityLabel("Delete \(snippet.name)")
+                                .accessibilityIdentifier("snippets-delete-\(snippet.name)")
+                        }
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("snippets-list")
+            }
+            TextField("Name, for example Sign off", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("snippets-name")
+            TextEditor(text: $text)
+                .font(.callout)
+                .frame(minHeight: 60, maxHeight: 120)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(SaysoPalette.brandNavyContainer))
+                .accessibilityLabel("Snippet text")
+                .accessibilityIdentifier("snippets-body")
+            HStack(spacing: 12) {
+                Button("Add") {
+                    if model.addSnippet(name: name, body: text) {
+                        name = ""
+                        text = ""
+                    }
+                }
+                .accessibilityIdentifier("snippets-add")
+                Text(running ? model.snippetsMessage ?? "Name a snippet, type its text and press Add." : "Off")
+                    .font(.callout)
+                    .accessibilityIdentifier("snippets-status")
+                Spacer()
+            }
+            .disabled(!running)
+            if let copied {
+                Text(copied.text)
+                    .font(.callout.monospaced())
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+                    .accessibilityLabel(copied.text)
+                    .accessibilityIdentifier("snippets-copied-text")
+            }
+        }
+        .disabled(!running)
+        .padding(20)
+        .background(SaysoPalette.surface, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -9188,6 +9340,15 @@ private struct SaysoSettingsView: View {
                     Toggle("File tools", isOn: $model.settings.fileToolsEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-file-tools-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "Snippets (on by default)",
+                    description: "When on, the Notch & HUD pane keeps up to \(SnippetsModule.maxSnippets) named snippets of text that you copy with a click. What is stored is each snippet's name and text, on this Mac only. {date} and {time} are filled in when you copy. {clipboard} reads the clipboard only when you copy a snippet that holds it, never when you save or list snippets, and its text goes only into that copy. Copy puts the filled-in text on the clipboard and shows Copied with the snippet's name in the open notch for \(Int(SnippetsModule.noticeSeconds)) seconds. Nothing is sent anywhere. Turning this off clears the copy notice and the filled-in text and keeps your saved snippets for when you turn it on again.",
+                    example: "Save Thanks, {clipboard} as Sign off, copy a name, then copy Sign off."
+                ) {
+                    Toggle("Snippets", isOn: $model.settings.snippetsEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-snippets-toggle")
                 }
 
                 // Section 5: Reset & Maintenance
