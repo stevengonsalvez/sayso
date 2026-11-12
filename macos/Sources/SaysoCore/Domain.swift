@@ -312,6 +312,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var fileToolsEnabled = true
     /// On unless turned off: the privacy guard reads only whether a microphone or camera is switched on by any app.
     public var privacyGuardEnabled = true
+    /// On unless turned off: battery health reads only the battery registry, never a Bluetooth device.
+    public var batteryHealthEnabled = true
     public var byokBaseURL = "https://api.openai.com/v1"
     public var byokTranscriptionModel = "gpt-4o-mini-transcribe"
     public var byokTranslationModel = "gpt-4.1-mini"
@@ -389,7 +391,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case mode, overlayPresentation, language, route, transcriptionExecutionMode, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
-        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled, calculatorEnabled, colorPickerEnabled, fileToolsEnabled, privacyGuardEnabled
+        case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled, calculatorEnabled, colorPickerEnabled, fileToolsEnabled, privacyGuardEnabled, batteryHealthEnabled
         case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
@@ -462,6 +464,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         colorPickerEnabled = decoded(Bool.self, .colorPickerEnabled, fallback: colorPickerEnabled)
         fileToolsEnabled = decoded(Bool.self, .fileToolsEnabled, fallback: fileToolsEnabled)
         privacyGuardEnabled = decoded(Bool.self, .privacyGuardEnabled, fallback: privacyGuardEnabled)
+        batteryHealthEnabled = decoded(Bool.self, .batteryHealthEnabled, fallback: batteryHealthEnabled)
         byokBaseURL = decoded(String.self, .byokBaseURL, fallback: byokBaseURL)
         byokTranscriptionModel = decoded(String.self, .byokTranscriptionModel, fallback: byokTranscriptionModel)
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
