@@ -340,3 +340,10 @@ Four real bugs found and fixed, each with a regression test written first and ob
 ## CI note: main after PR #69 (2026-10-07)
 
 - Main's post-merge macOS run for PR #69 (run `37576747930`, head `f7fd08f`) hung on attempt 1: the job started 05:31:52Z, sat in `Run native tests with test keychain` and was cancelled at 06:01:52Z, about 29 minutes later (the job's `timeout-minutes` is 25). No log was kept for that attempt (the job log API answers 404 `BlobNotFound`). Attempt 2 passed (06:02:14Z to 06:13:28Z). Cause unconfirmed: without a log, a hung test, a stalled runner and a keychain wait cannot be told apart; a repeat with a log would narrow it.
+
+## Battery health review pass on the rebased head (2026-11-14)
+
+- Rebased on main `7da6831` without conflicts. `swift test` on the rebased head: 929 tests in 32 suites, all pass.
+- Reviewed the whole diff for correctness, locking, retain cycles and privacy. No Critical or Major finding, so no code changed in this pass. The module reads only `AppleSmartBattery`, power sources and the `BatteryPercent` registry property; no Bluetooth API, no file or network write.
+- Checked against this Mac's registry (read-only `ioreg`): `Temperature` 3071 read as tenths of a kelvin is 33.95 °C, beside `VirtualTemperature` 3389 read as hundredths of a degree, 33.89 °C. The two agree, so the unit in `IOKitBatteryHealthPort.battery(registry:)` stands. Not verified on an Intel Mac, where the unit may differ; a wrong unit there would read a hot battery as Unknown, not as an alert.
+- NOT OBSERVED: a live worn or hot battery, the app launched in this pass (no GUI launch was made), CI on the new head at the time of writing.
