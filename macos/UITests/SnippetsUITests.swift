@@ -19,24 +19,34 @@ final class SnippetsUITests: XCTestCase {
 
     override func tearDown() { app.terminate() }
 
-    /// The copied text line shows what the module wrote to the fake board: `{clipboard}` read from the fake board at
-    /// the moment of Copy, `{date}` from the app's clock in the medium date style of this Mac's locale.
-    func testAnAddedSnippetIsListedAndCopyExpandsTheClipboardAndTheDate() {
+    /// A copy that filled in `{clipboard}` may hold a secret, so the pane says it includes clipboard text instead of
+    /// showing it; a copy without it shows its text, with `{date}` from the app's clock in the medium date style of
+    /// this Mac's locale.
+    func testAnAddedSnippetIsListedAndCopyKeepsClipboardTextOffTheScreen() {
         openNotchPane()
-        addSnippet(name: "Sign off", body: "Thanks, {clipboard}, {date}")
+        addSnippet(name: "Sign off", body: "Thanks, {clipboard}")
         let copy = element("snippets-copy-Sign off")
         XCTAssertTrue(copy.waitForExistence(timeout: 5), "the new snippet has a Copy button")
         XCTAssertTrue(element("snippets-list").descendants(matching: .any)["snippets-copy-Sign off"].exists, "inside the list")
 
         let before = NSPasteboard.general.changeCount
-        let dayBefore = Self.today()
         reveal(copy)
         copy.click()
         waitFor("snippets-status", toRead: "Copied Sign off")
+        XCTAssertEqual(readText("snippets-copied-text"), "Copied Sign off (includes clipboard text)")
+        XCTAssertFalse(readText("snippets-copied-text").contains("from the test"), "the clipboard text is not shown")
+
+        addSnippet(name: "Stamp", body: "Today is {date}")
+        let stamp = element("snippets-copy-Stamp")
+        XCTAssertTrue(stamp.waitForExistence(timeout: 5))
+        let dayBefore = Self.today()
+        reveal(stamp)
+        stamp.click()
+        waitFor("snippets-status", toRead: "Copied Stamp")
         let copied = readText("snippets-copied-text")
         let dayAfter = Self.today()
         XCTAssertTrue(
-            [dayBefore, dayAfter].map { "Thanks, from the test, \($0)" }.contains(copied),
+            [dayBefore, dayAfter].map { "Today is \($0)" }.contains(copied),
             "the expanded text, got \(copied), expected the date \(dayBefore)"
         )
         // Only the count is read, never the contents.

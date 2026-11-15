@@ -18,6 +18,8 @@ public enum SnippetsWarning: Equatable, Sendable {
 public struct SnippetsExpansion: Equatable, Sendable {
     public let text: String
     public let warnings: [SnippetsWarning]
+    /// True when text from the clipboard was inserted, so the result may hold a secret.
+    public let usedClipboard: Bool
 }
 
 /// Replaces `{date}`, `{time}` and `{clipboard}` in one pass, so text that a placeholder inserts is never read as
@@ -38,6 +40,7 @@ public struct SnippetsExpander: Sendable {
         var text = ""
         var warnings: [SnippetsWarning] = []
         var pasted: String??
+        var usedClipboard = false
         for piece in Self.pieces(of: body) {
             switch piece {
             case let .plain(plain):
@@ -50,6 +53,7 @@ public struct SnippetsExpander: Sendable {
                     if pasted == nil { pasted = .some(clipboard()) }
                     if let value = pasted ?? nil, !value.isEmpty {
                         text += value
+                        usedClipboard = true
                     } else if !warnings.contains(.clipboardHasNoText) {
                         warnings.append(.clipboardHasNoText)
                     }
@@ -60,7 +64,7 @@ public struct SnippetsExpander: Sendable {
                 }
             }
         }
-        return SnippetsExpansion(text: text, warnings: warnings)
+        return SnippetsExpansion(text: text, warnings: warnings, usedClipboard: usedClipboard)
     }
 
     /// Unknown placeholders in `body`, found without expanding anything or reading the clipboard.

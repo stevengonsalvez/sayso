@@ -16,7 +16,7 @@ public final class SnippetsModule: SaysoModule, @unchecked Sendable {
     )
     fileprivate let store: SnippetsStore
     private let clipboard: SnippetsClipboardReading
-    private let pasteboard: CalculatorPasteboardPort
+    private let pasteboard: SnippetsPasteboardWriting
     fileprivate let scheduler: SaysoScheduling
     private let expander: SnippetsExpander
     fileprivate let now: @Sendable () -> Date
@@ -26,7 +26,7 @@ public final class SnippetsModule: SaysoModule, @unchecked Sendable {
     public init(
         store: SnippetsStore,
         clipboard: SnippetsClipboardReading,
-        pasteboard: CalculatorPasteboardPort,
+        pasteboard: SnippetsPasteboardWriting,
         scheduler: SaysoScheduling,
         locale: Locale = .autoupdatingCurrent,
         timeZone: TimeZone = .autoupdatingCurrent,
@@ -103,8 +103,13 @@ public final class SnippetsModule: SaysoModule, @unchecked Sendable {
         case let .failure(error): return .failure(error)
         }
         let expansion = expander.expand(snippet.body, at: now(), clipboard: { self.clipboard.readText() })
-        guard pasteboard.write(expansion.text) else { return .failure(.writeFailed(snippet.name)) }
-        let copy = SnippetCopy(name: snippet.name, text: expansion.text, warnings: expansion.warnings)
+        guard pasteboard.write(expansion.text, concealed: expansion.usedClipboard) else {
+            return .failure(.writeFailed(snippet.name))
+        }
+        let copy = SnippetCopy(
+            name: snippet.name, preview: expansion.usedClipboard ? "" : expansion.text,
+            usedClipboard: expansion.usedClipboard, warnings: expansion.warnings
+        )
         runtime.show(copy)
         return .success(copy)
     }

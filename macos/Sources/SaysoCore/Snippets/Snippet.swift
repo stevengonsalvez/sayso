@@ -11,15 +11,19 @@ public struct Snippet: Codable, Equatable, Sendable {
     }
 }
 
-/// What one Copy produced; kept only while its notice shows.
+/// What one Copy produced; kept only while its notice shows. The text itself is not kept when it holds clipboard
+/// text: that may be a secret, so the pane says only that the copy includes it.
 public struct SnippetCopy: Equatable, Sendable {
     public let name: String
-    public let text: String
+    /// What the pane may show; empty when `usedClipboard`.
+    public let preview: String
+    public let usedClipboard: Bool
     public let warnings: [SnippetsWarning]
 
-    public init(name: String, text: String, warnings: [SnippetsWarning]) {
+    public init(name: String, preview: String, usedClipboard: Bool, warnings: [SnippetsWarning]) {
         self.name = name
-        self.text = text
+        self.preview = preview
+        self.usedClipboard = usedClipboard
         self.warnings = warnings
     }
 }

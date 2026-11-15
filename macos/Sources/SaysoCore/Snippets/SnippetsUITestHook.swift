@@ -13,21 +13,26 @@ public enum SnippetsUITestHook {
 }
 
 /// An in-memory clipboard: reads return its text, and a write replaces the text and is recorded.
-public final class SnippetsUITestBoard: SnippetsClipboardReading, CalculatorPasteboardPort, @unchecked Sendable {
+public final class SnippetsUITestBoard: SnippetsClipboardReading, SnippetsPasteboardWriting, @unchecked Sendable {
     private let lock = NSLock()
     private var text: String?
     private var writes: [String] = []
+    private var flags: [Bool] = []
 
     init(text: String?) { self.text = text }
 
     public var written: [String] { lock.withLock { writes } }
 
+    /// Whether each recorded write was marked concealed.
+    public var concealedFlags: [Bool] { lock.withLock { flags } }
+
     public func readText() -> String? { lock.withLock { text } }
 
-    public func write(_ text: String) -> Bool {
+    public func write(_ text: String, concealed: Bool) -> Bool {
         lock.withLock {
             self.text = text
             writes.append(text)
+            flags.append(concealed)
             return true
         }
     }

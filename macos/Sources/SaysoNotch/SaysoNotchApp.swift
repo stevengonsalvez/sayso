@@ -297,7 +297,7 @@ final class SaysoAppModel: ObservableObject {
         return SnippetsModule(
             store: UserDefaultsSnippetsStore(defaults: SaysoAppModel.settingsDefaults),
             clipboard: testBoard ?? PasteboardSnippetsClipboardReader() as SnippetsClipboardReading,
-            pasteboard: testBoard ?? PasteboardCalculatorPort() as CalculatorPasteboardPort,
+            pasteboard: testBoard ?? PasteboardSnippetsWriter() as SnippetsPasteboardWriting,
             scheduler: SaysoDispatchScheduler()
         )
     }()
@@ -3916,12 +3916,13 @@ private struct SnippetsSection: View {
             }
             .disabled(!running)
             if let copied {
-                Text(copied.text)
+                // Text that holds clipboard text may be a secret: the pane says so instead of showing it.
+                let shown = copied.usedClipboard ? "Copied \(copied.name) (includes clipboard text)" : copied.preview
+                Text(shown)
                     .font(.callout.monospaced())
                     .lineLimit(3)
                     .truncationMode(.tail)
-                    .textSelection(.enabled)
-                    .accessibilityLabel(copied.text)
+                    .accessibilityLabel(shown)
                     .accessibilityIdentifier("snippets-copied-text")
             }
         }
