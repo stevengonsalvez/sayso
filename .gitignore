@@ -23,3 +23,6 @@ macos/.swiftpm/xcode/xcuserdata/
 .codex/
 .gemini/
 handover*.md
+
+# live E2E evidence screenshots are local only (public repo, private desktop content)
+docs/ultimate-notch/evidence/
