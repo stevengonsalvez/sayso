@@ -132,6 +132,7 @@ final class SaysoAppModel: ObservableObject {
         var waitCount = 0
         var previous: String?
         var clarification: (choices: [String], askedAt: Date)?
+        var hasAnsweredClarification = false
         var apiKey: String?
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
@@ -2873,6 +2874,7 @@ final class SaysoAppModel: ObservableObject {
                         recentActions: run.cycle.recentActions
                     )
                     run.clarification = nil
+                    run.hasAnsweredClarification = true
                     controlStatus = "Applying clarification"
                     executeControlRun(run)
                 } catch {
@@ -3150,6 +3152,19 @@ final class SaysoAppModel: ObservableObject {
                             }
                             controlStatus = "Planned: \(step.reason)"
                             moduleEvents.publish(ControlStepPlanned(reason: step.reason))
+                            if ControlLoopPolicy.lowConfidenceResolution(
+                                confidence: step.confidence,
+                                hasAnsweredClarification: run.hasAnsweredClarification,
+                                isTryNow: run.isTryNow
+                            ) == .requestApproval {
+                                // The user already chose. Asking again would loop, so hand them the exact action to approve.
+                                pendingControlStep = ControlLoopPolicy.approvalStep(for: step)
+                                pendingControlFinishes = finishes
+                                controlStatus = "Review required: \(step.reason)"
+                                controlCoordinator.requestReview(reason: step.reason)
+                                controlExecutionTask = nil
+                                return
+                            }
                             if step.confidence < ControlPolicy.minimumConfidence {
                                 let choices = planned.alternatives
                                 guard !choices.isEmpty else {
