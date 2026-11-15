@@ -7,6 +7,10 @@ public final class SnippetsModule: SaysoModule, @unchecked Sendable {
     public static let maxSnippets = 50
     public static let nameLimit = 60
     public static let bodyLimit = 10_000
+    /// The most a filled-in snippet may hold, in UTF-8 bytes: what the Clipboard module records at most.
+    public static let expansionLimit = ClipboardPrivacy.maximumRecordedBytes
+    /// The most of a copy's text the pane gets, in characters.
+    public static let previewLimit = 500
     /// As long as the Calculator, Colour picker and File tools notices.
     public static let noticeSeconds: TimeInterval = 10
     static let stackID = "snippets-copy"
@@ -102,12 +106,19 @@ public final class SnippetsModule: SaysoModule, @unchecked Sendable {
         case let .success(found): snippet = found
         case let .failure(error): return .failure(error)
         }
-        let expansion = expander.expand(snippet.body, at: now(), clipboard: { self.clipboard.readText() })
+        let expansion: SnippetsExpansion
+        do {
+            expansion = try expander.expand(snippet.body, at: now(), clipboard: { self.clipboard.readText() })
+        } catch let error as SnippetsError {
+            return .failure(error)
+        } catch {
+            preconditionFailure("expanding throws only SnippetsError: \(error)")
+        }
         guard pasteboard.write(expansion.text, concealed: expansion.usedClipboard) else {
             return .failure(.writeFailed(snippet.name))
         }
         let copy = SnippetCopy(
-            name: snippet.name, preview: expansion.usedClipboard ? "" : expansion.text,
+            name: snippet.name, preview: expansion.usedClipboard ? "" : String(expansion.text.prefix(Self.previewLimit)),
             usedClipboard: expansion.usedClipboard, warnings: expansion.warnings
         )
         runtime.show(copy)

@@ -40,6 +40,8 @@ public enum SnippetsError: Error, Equatable, Sendable {
     case full
     case notFound(String)
     case writeFailed(String)
+    /// The snippet, once filled in, would pass `SnippetsModule.expansionLimit`.
+    case expansionTooLong
 
     public var message: String {
         switch self {
@@ -53,6 +55,7 @@ public enum SnippetsError: Error, Equatable, Sendable {
         case .full: "You can keep at most \(SnippetsModule.maxSnippets) snippets. Delete one to add another."
         case let .notFound(name): "There is no snippet named \(name)."
         case let .writeFailed(name): "Could not copy \(name) to the clipboard."
+        case .expansionTooLong: "That snippet is more than 256 KB once filled in, so nothing was copied."
         }
     }
 }

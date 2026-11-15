@@ -35,30 +35,38 @@ public struct SnippetsExpander: Sendable {
         self.timeZone = timeZone
     }
 
-    /// `clipboard` is called at most once, and only when the body holds `{clipboard}`.
-    public func expand(_ body: String, at date: Date, clipboard: () -> String?) -> SnippetsExpansion {
+    /// `clipboard` is called at most once, and only when the body holds `{clipboard}`. Throws `expansionTooLong` as soon
+    /// as the result would pass `limit` UTF-8 bytes, before the piece that would pass it is added, so a big clipboard
+    /// repeated by many placeholders is never built.
+    public func expand(
+        _ body: String, at date: Date, limit: Int = SnippetsModule.expansionLimit, clipboard: () -> String?
+    ) throws -> SnippetsExpansion {
         var text = ""
+        func append(_ piece: String) throws {
+            guard text.utf8.count + piece.utf8.count <= limit else { throw SnippetsError.expansionTooLong }
+            text += piece
+        }
         var warnings: [SnippetsWarning] = []
         var pasted: String??
         var usedClipboard = false
         for piece in Self.pieces(of: body) {
             switch piece {
             case let .plain(plain):
-                text += plain
+                try append(plain)
             case let .placeholder(token, name):
                 switch name.lowercased() {
-                case "date": text += format(date, date: .medium, time: .none)
-                case "time": text += format(date, date: .none, time: .short)
+                case "date": try append(format(date, date: .medium, time: .none))
+                case "time": try append(format(date, date: .none, time: .short))
                 case "clipboard":
                     if pasted == nil { pasted = .some(clipboard()) }
                     if let value = pasted ?? nil, !value.isEmpty {
-                        text += value
+                        try append(value)
                         usedClipboard = true
                     } else if !warnings.contains(.clipboardHasNoText) {
                         warnings.append(.clipboardHasNoText)
                     }
                 default:
-                    text += token
+                    try append(token)
                     let warning = SnippetsWarning.unknownPlaceholder(token)
                     if !warnings.contains(warning) { warnings.append(warning) }
                 }
