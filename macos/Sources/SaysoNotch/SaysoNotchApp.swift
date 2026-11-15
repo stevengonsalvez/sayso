@@ -3123,11 +3123,11 @@ final class SaysoAppModel: ObservableObject {
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
                             moduleEvents.publish(ControlStepPlanned(reason: "verified Calculator step"))
-                        } else if !run.folderStepIssued, ControlLoopPolicy.isExplicitFolderCommand(run.cycle.goal) {
+                        } else if !run.folderStepIssued, let folderCommand = ControlLoopPolicy.explicitFolderCommand(run.cycle.goal) {
                             // An explicit path needs no model: plan it exactly, and keep the path off the network.
                             run.folderStepIssued = true
                             step = try ControlPlanner.plan(
-                                command: run.cycle.goal,
+                                command: folderCommand,
                                 snapshot: snapshot,
                                 installedApplications: run.installedApplications
                             )

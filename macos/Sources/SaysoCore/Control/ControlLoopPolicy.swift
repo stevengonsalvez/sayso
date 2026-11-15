@@ -36,10 +36,23 @@ public enum ControlLoopPolicy {
         )
     }
 
-    /// 'open folder <path>' is planned by `ControlPlanner` without a model, which keeps the path off the network.
-    public static func isExplicitFolderCommand(_ goal: String) -> Bool {
-        let command = goal.lowercased()
-        guard command.hasPrefix("open folder ") else { return false }
-        return !command.dropFirst("open folder ".count).trimmingCharacters(in: .whitespaces).isEmpty
+    private static let folderPrefix = "open folder "
+    private static let pathEdgeNoise = CharacterSet.whitespacesAndNewlines
+        .union(CharacterSet(charactersIn: "\"'\u{201C}\u{201D}\u{2018}\u{2019}"))
+    private static let pathTrailingNoise = pathEdgeNoise.union(CharacterSet(charactersIn: ".,;!?"))
+
+    /// 'open folder <path>' with an absolute or ~/ path, normalised for `ControlPlanner`: trailing sentence
+    /// punctuation and surrounding quotes are not part of a spoken path. Planning it locally keeps the path off the
+    /// network. A spoken folder name ('open folder downloads') returns nil and still goes to the model.
+    public static func explicitFolderCommand(_ goal: String) -> String? {
+        let command = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard command.lowercased().hasPrefix(folderPrefix) else { return nil }
+        var path = String(command.dropFirst(folderPrefix.count))
+        path = String(path.drop(while: { $0.unicodeScalars.allSatisfy(pathEdgeNoise.contains) }))
+        while let last = path.last, last.unicodeScalars.allSatisfy(pathTrailingNoise.contains) {
+            path.removeLast()
+        }
+        guard path.hasPrefix("/") || path.hasPrefix("~") else { return nil }
+        return folderPrefix + path
     }
 }

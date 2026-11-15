@@ -55,14 +55,24 @@ import Testing
 
 // An explicit folder path is planned locally so the path never reaches the network.
 
-@Test func openFolderWithAPathIsAnExplicitFolderCommand() {
-    #expect(ControlLoopPolicy.isExplicitFolderCommand("open folder /Applications"))
-    #expect(ControlLoopPolicy.isExplicitFolderCommand("Open Folder ~/Documents"))
+@Test func openFolderWithAnAbsoluteOrHomePathIsAnExplicitFolderCommand() {
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /Applications") == "open folder /Applications")
+    #expect(ControlLoopPolicy.explicitFolderCommand("Open Folder ~/Documents") == "open folder ~/Documents")
 }
 
-@Test func otherOpenCommandsAreNotExplicitFolderCommands() {
-    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open folder"))
-    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open the folder with my notes"))
-    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open calculator"))
-    #expect(!ControlLoopPolicy.isExplicitFolderCommand("please open folder /tmp"))
+@Test func trailingSentencePunctuationAndQuotesAreNotPartOfThePath() {
+    #expect(ControlLoopPolicy.explicitFolderCommand("Open folder ~/Documents.") == "open folder ~/Documents")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /tmp/notes!") == "open folder /tmp/notes")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder \"/Applications\"") == "open folder /Applications")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder \u{201C}~/My Files\u{201D}.") == "open folder ~/My Files")
+    #expect(ControlLoopPolicy.explicitFolderCommand("  open folder /Applications  ") == "open folder /Applications")
+}
+
+@Test func spokenFolderNamesAndOtherCommandsAreNotExplicitFolderCommands() {
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder downloads") == nil)
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder") == nil)
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder \"\"") == nil)
+    #expect(ControlLoopPolicy.explicitFolderCommand("open the folder with my notes") == nil)
+    #expect(ControlLoopPolicy.explicitFolderCommand("open calculator") == nil)
+    #expect(ControlLoopPolicy.explicitFolderCommand("please open folder /tmp") == nil)
 }
