@@ -23,7 +23,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/k2-fsa/sherpa-onnx.git",
-            exact: "1.13.8"
+            exact: "2.0.1"
         ),
     ],
     targets: [
