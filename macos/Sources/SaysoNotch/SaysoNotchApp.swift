@@ -132,6 +132,8 @@ final class SaysoAppModel: ObservableObject {
         var waitCount = 0
         var previous: String?
         var clarification: (choices: [String], askedAt: Date)?
+        var hasAnsweredClarification = false
+        var folderStepIssued = false
         var apiKey: String?
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
@@ -2936,6 +2938,7 @@ final class SaysoAppModel: ObservableObject {
                         recentActions: run.cycle.recentActions
                     )
                     run.clarification = nil
+                    run.hasAnsweredClarification = true
                     controlStatus = "Applying clarification"
                     executeControlRun(run)
                 } catch {
@@ -3104,6 +3107,10 @@ final class SaysoAppModel: ObservableObject {
         )
     }
 
+    private static func calculatorClearButton(in snapshot: DesktopSnapshot) -> DesktopElement? {
+        snapshot.elements.first { ["All Clear", "Clear"].contains($0.title) && $0.supportsPress }
+    }
+
     private func executeControlRun(
         _ run: ControlCommandRun,
         approvedStep: ControlPlanStep? = nil,
@@ -3128,14 +3135,29 @@ final class SaysoAppModel: ObservableObject {
                     let step: ControlPlanStep
                     let finishes: Bool
                     var isApprovedStep = false
+                    var isExplicitFolderStep = false
                     if let approved = carriedStep {
                         step = approved.0
                         finishes = approved.1
                         carriedStep = nil
                         isApprovedStep = true
                     } else {
-                        let snapshot = try controller.capture(application: run.target)
+                        var snapshot = try controller.capture(application: run.target)
                         currentSnapshot = snapshot
+                        if !run.calculatorWasCleared, run.calculatorTask != nil,
+                           run.target.bundleIdentifier == "com.apple.calculator" {
+                            // A freshly launched app can expose no controls for its first moments.
+                            var settleAttempts = 0
+                            while ControlLoopPolicy.shouldWaitForCalculatorControls(
+                                clearAvailable: Self.calculatorClearButton(in: snapshot) != nil,
+                                attemptsMade: settleAttempts
+                            ) {
+                                settleAttempts += 1
+                                try await Task.sleep(for: .milliseconds(ControlLoopPolicy.calculatorSettleDelayMilliseconds))
+                                snapshot = try controller.capture(application: run.target)
+                                currentSnapshot = snapshot
+                            }
+                        }
                         if let task = run.calculatorTask,
                            run.target.bundleIdentifier == "com.apple.calculator" {
                             if run.nextCalculatorCommandIndex >= task.commands.count {
@@ -3147,9 +3169,7 @@ final class SaysoAppModel: ObservableObject {
                             }
                             let command: String
                             if !run.calculatorWasCleared {
-                                guard let clear = snapshot.elements.first(where: {
-                                    ["All Clear", "Clear"].contains($0.title) && $0.supportsPress
-                                }) else {
+                                guard let clear = Self.calculatorClearButton(in: snapshot) else {
                                     throw SaysoError.invalidAction("Calculator Clear control is unavailable.")
                                 }
                                 command = "click \(clear.title)"
@@ -3167,6 +3187,18 @@ final class SaysoAppModel: ObservableObject {
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
                             moduleEvents.publish(ControlStepPlanned(reason: "verified Calculator step"))
+                        } else if !run.folderStepIssued, let folderCommand = ControlLoopPolicy.explicitFolderCommand(run.cycle.goal) {
+                            // An explicit path needs no model: plan it exactly, and keep the path off the network.
+                            run.folderStepIssued = true
+                            isExplicitFolderStep = true
+                            step = try ControlPlanner.plan(
+                                command: folderCommand,
+                                snapshot: snapshot,
+                                installedApplications: run.installedApplications
+                            )
+                            finishes = false // the run ends through ControlLoopPolicy.completesRun, not an observed effect
+                            controlStatus = "Planned: \(step.reason)"
+                            moduleEvents.publish(ControlStepPlanned(reason: step.reason))
                         } else {
                             // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
                             if run.apiKey == nil { run.apiKey = await typeSafeKey() }
@@ -3197,11 +3229,22 @@ final class SaysoAppModel: ObservableObject {
                             }
                             controlStatus = "Planned: \(step.reason)"
                             moduleEvents.publish(ControlStepPlanned(reason: step.reason))
-                            if step.confidence < ControlPolicy.minimumConfidence {
+                            let resolution = ControlLoopPolicy.lowConfidenceResolution(
+                                confidence: step.confidence,
+                                hasAnsweredClarification: run.hasAnsweredClarification,
+                                isTryNow: run.isTryNow,
+                                hasAlternatives: !planned.alternatives.isEmpty
+                            )
+                            // An answer only covers the plan made right after it; a later low-confidence step asks again.
+                            run.hasAnsweredClarification = false
+                            switch resolution {
+                            case .proceed:
+                                break
+                            case .refuse:
+                                // Also reached when the user already answered and the plan is still weak: fail closed.
+                                throw SaysoError.invalidAction("Jev was not confident enough to act.")
+                            case .askClarification:
                                 let choices = planned.alternatives
-                                guard !choices.isEmpty else {
-                                    throw SaysoError.invalidAction("Jev was not confident enough to act.")
-                                }
                                 let question = "Which one: \(choices.joined(separator: ", "))?"
                                 run.previous = question
                                 run.clarification = (choices, Date())
@@ -3249,6 +3292,7 @@ final class SaysoAppModel: ObservableObject {
                     }
                     controlStatus = entry.result
                     if ControlCycleCompletion.shouldComplete(after: step.action, effect: entry.effect, goal: run.cycle.goal)
+                        || ControlLoopPolicy.completesRun(after: step.action, explicitFolderStep: isExplicitFolderStep)
                         || finishes && (entry.effect == .observed || entry.effect == .alreadySatisfied) {
                         await completeControlRun("Control completed")
                         return

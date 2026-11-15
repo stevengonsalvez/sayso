@@ -523,6 +523,18 @@ import Testing
     #expect(!ControlPolicy.canAutoRun(step))
 }
 
+@Test func executorRefusesALowConfidenceStepEvenWhenApproved() async {
+    // The confidence gate runs before any Accessibility call, so an approval can never lift a weak plan.
+    let step = ControlPlanStep(
+        action: .scroll(lines: 1, expectedFingerprint: "target"), confidence: 0.4, reason: "uncertain target",
+        requiresConfirmation: true
+    )
+
+    await #expect(throws: SaysoError.invalidAction("Confidence below Sayso control threshold")) {
+        _ = try await AXDesktopController().execute(step, approved: true)
+    }
+}
+
 @Test func controlAllowsConfiguredThreshold() {
     let step = ControlPlanStep(
         action: .scroll(lines: 1, expectedFingerprint: "target"), confidence: 0.60, reason: "grounded"
@@ -739,6 +751,19 @@ import Testing
     #expect(openOutcome(beforeURL: nil, targetWasFrontmost: true, observedURL: targetURL).effect == .unknown)
     #expect(openOutcome(beforeURL: nil, observedBundle: "com.google.Chrome", observedURL: targetURL) == .notObserved)
     #expect(openOutcome(beforeURL: nil, observedURL: nil) == .notObserved)
+}
+
+@Test func openNavigationIsUnknownWhenFrontmostHandlerExposesNoURL() {
+    // Browsers such as Arc expose no document URL through Accessibility. That is unknown, not a failed navigation.
+    let outcome = openOutcome(beforeURL: nil, targetWasFrontmost: true, observedURL: nil)
+    #expect(outcome == .targetAlreadyActive)
+    #expect(outcome.effect == .unknown)
+}
+
+@Test func openNavigationWithoutAnExposedURLStaysNotObservedWhenTheTargetHadADocument() {
+    // The target was frontmost but already showing a document, so a missing URL now is not "already active".
+    let before = URL(string: "https://news.example.org/")!
+    #expect(openOutcome(beforeURL: before, targetWasFrontmost: true, observedURL: nil) == .notObserved)
 }
 
 @Test func openNavigationDoesNotClaimAlreadyOpenOrRedirectedTargets() {
