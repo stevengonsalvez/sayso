@@ -748,6 +748,12 @@ import Testing
     #expect(outcome.effect == .unknown)
 }
 
+@Test func openNavigationWithoutAnExposedURLStaysNotObservedWhenTheTargetHadADocument() {
+    // The target was frontmost but already showing a document, so a missing URL now is not "already active".
+    let before = URL(string: "https://news.example.org/")!
+    #expect(openOutcome(beforeURL: before, targetWasFrontmost: true, observedURL: nil) == .notObserved)
+}
+
 @Test func openNavigationDoesNotClaimAlreadyOpenOrRedirectedTargets() {
     let targetURL = URL(string: "https://example.com/docs?version=1#read")!
     let redirected = URL(string: "https://www.example.com/docs?version=1#read")!

@@ -762,8 +762,8 @@ public enum ControlExternalEffect {
         observedURL: URL?
     ) -> OpenNavigationOutcome {
         guard targetBundleIdentifier == observedBundleIdentifier else { return .notObserved }
-        guard let observedURL else { return targetWasFrontmost && beforeURL == nil ? .targetAlreadyActive : .notObserved }
         if targetWasFrontmost, beforeURL == nil { return .targetAlreadyActive }
+        guard let observedURL else { return .notObserved }
         if let beforeURL, sameDocument(beforeURL, targetURL) { return .alreadyOpen }
         if sameDocument(observedURL, targetURL) { return .navigated }
         if let beforeURL, sameDocument(observedURL, beforeURL) { return .notObserved }
