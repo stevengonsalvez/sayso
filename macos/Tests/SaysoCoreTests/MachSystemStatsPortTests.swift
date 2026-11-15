@@ -43,7 +43,7 @@ private func spinUntilMeasurable(from start: SystemCPUTicks) throws {
 }
 
 /// Runs against this Mac's real kernel, IOKit and file system: no fakes. Ranges only, since the values move.
-@Suite struct MachSystemStatsPortTests {
+@Suite(.timeLimit(.minutes(2))) struct MachSystemStatsPortTests {
     @Test func twoRealSamplesThroughTheModuleGiveACPULoadBetweenZeroAndOne() throws {
         let scheduler = ManualScheduler(), clock = Clock()
         let module = SystemStatsModule(port: MachSystemStatsPort(), scheduler: scheduler, now: { clock.now })

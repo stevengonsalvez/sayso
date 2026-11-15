@@ -4,10 +4,21 @@ import Foundation
 import Testing
 @testable import SaysoCore
 
+/// Three tests call the real CoreMediaIO and are skipped on a hosted CI runner. There, the first CoreMediaIO property
+/// call (`CMIOObjectGetPropertyDataSize` on the system object) blocks forever in a synchronous XPC wait inside
+/// `CMIODALExtensionSession` (`CMIOExtensionProviderHostContext pluginStates:`), because the headless virtual machine
+/// has no camera extension service to answer. A blocked system call cannot be interrupted, so `.timeLimit` does not
+/// help; it hung the macOS job on main, PR #70 and PR #71 until the 25 minute job timeout.
+private let isHostedCI: Bool = {
+    let environment = ProcessInfo.processInfo.environment
+    return environment["GITHUB_ACTIONS"] == "true" || environment["CI"] == "true"
+}()
+
 /// The real adapter against this Mac's CoreAudio and CoreMediaIO. Only device properties are read, here and in the
 /// adapter: nothing is opened, recorded or sampled, and no permission is asked for.
-@Suite struct CoreAudioMediaPrivacyPortTests {
-    @Test func itListsEveryBuiltInMicrophoneAndCameraTheSystemReportsWithoutThrowing() throws {
+@Suite(.timeLimit(.minutes(2))) struct CoreAudioMediaPrivacyPortTests {
+    @Test(.disabled(if: isHostedCI, "CoreMediaIO blocks forever on a hosted CI runner with no camera extension service"))
+    func itListsEveryBuiltInMicrophoneAndCameraTheSystemReportsWithoutThrowing() throws {
         let devices = try CoreAudioMediaPrivacyPort().devices()
         let microphones = Set(devices.filter { $0.kind == .microphone }.map(\.id))
         let cameras = Set(devices.filter { $0.kind == .camera }.map(\.id))
@@ -27,7 +38,8 @@ import Testing
         print("PRIVACY-PORT-OBSERVED " + devices.map { "\($0.kind.rawValue)=\"\($0.name)\" running=\($0.isRunning)" }.joined(separator: " "))
     }
 
-    @Test func listingTwiceGivesTheSameDevices() throws {
+    @Test(.disabled(if: isHostedCI, "CoreMediaIO blocks forever on a hosted CI runner with no camera extension service"))
+    func listingTwiceGivesTheSameDevices() throws {
         let port = CoreAudioMediaPrivacyPort()
         let first = try port.devices().map { "\($0.kind.rawValue)|\($0.id)|\($0.name)" }
         let second = try port.devices().map { "\($0.kind.rawValue)|\($0.id)|\($0.name)" }
@@ -36,7 +48,8 @@ import Testing
 
     /// `DeviceIsRunning` is this process's own use of a device, where `DeviceIsRunningSomewhere`, which the adapter
     /// reads, is any process's. Neither listing may leave this process using a device.
-    @Test func listingNeverSwitchesADeviceOnInThisProcess() throws {
+    @Test(.disabled(if: isHostedCI, "CoreMediaIO blocks forever on a hosted CI runner with no camera extension service"))
+    func listingNeverSwitchesADeviceOnInThisProcess() throws {
         let port = CoreAudioMediaPrivacyPort()
         _ = try port.devices()
         _ = try port.devices()
