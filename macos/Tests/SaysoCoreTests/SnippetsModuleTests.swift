@@ -67,6 +67,15 @@ private final class CountingClipboard: @unchecked Sendable {
         #expect(expansion.warnings.isEmpty)
     }
 
+    @Test func theExpansionSaysWhetherClipboardTextWasInserted() throws {
+        let now = try tenPastTwo()
+        let board = CountingClipboard("pasted")
+        #expect(try expander().expand("Got {clipboard}", at: now, clipboard: board.read).usedClipboard)
+        #expect(try expander().expand("Plain {date}", at: now, clipboard: board.read).usedClipboard == false)
+        #expect(try expander().expand("Got {clipboard}", at: now, clipboard: { nil }).usedClipboard == false, "nothing was inserted")
+        #expect(try expander().expand("Got {clipboard}", at: now, clipboard: { "" }).usedClipboard == false, "nothing was inserted")
+    }
+
     @Test func aClipboardWithNoTextLeavesThePlaceholderEmptyAndWarns() throws {
         let expansion = try expander().expand("Thanks, {clipboard}!", at: try tenPastTwo(), clipboard: { nil })
         #expect(expansion.text == "Thanks, !")
@@ -101,17 +110,18 @@ private final class FakeClipboardReader: SnippetsClipboardReading, @unchecked Se
     func readText() -> String? { lock.withLock { count += 1; return current } }
 }
 
-/// Write side: records writes only.
-private final class FakeSnippetsBoard: CalculatorPasteboardPort, @unchecked Sendable {
+/// Write side: records writes and whether each was marked concealed.
+private final class FakeSnippetsBoard: SnippetsPasteboardWriting, @unchecked Sendable {
     private let lock = NSLock()
-    private var writes: [String] = []
+    private var log: [(text: String, concealed: Bool)] = []
     private var refusing = false
-    var written: [String] { lock.withLock { writes } }
+    var written: [String] { lock.withLock { log.map(\.text) } }
+    var concealedFlags: [Bool] { lock.withLock { log.map(\.concealed) } }
     func refuse(_ on: Bool) { lock.withLock { refusing = on } }
-    func write(_ text: String) -> Bool {
+    func write(_ text: String, concealed: Bool) -> Bool {
         lock.withLock {
             guard !refusing else { return false }
-            writes.append(text)
+            log.append((text, concealed))
             return true
         }
     }
@@ -301,7 +311,7 @@ private func snippetsRig(
         _ = try rig.module.add(name: "Sign off", body: "Thanks, {clipboard}, {date}").get()
 
         let copy = try rig.module.copy("Sign off").get()
-        #expect(copy == SnippetCopy(name: "Sign off", text: "Thanks, from the test, 10 Oct 2026", warnings: []))
+        #expect(copy == SnippetCopy(name: "Sign off", preview: "", usedClipboard: true, warnings: []))
         #expect(rig.board.written == ["Thanks, from the test, 10 Oct 2026"])
         #expect(rig.clipboard.reads == 1, "read at the moment of copy")
         #expect(rig.module.lastCopy == copy)
@@ -326,7 +336,7 @@ private func snippetsRig(
     @Test func copyingReadsTheClipboardOnlyForASnippetThatAsksForIt() throws {
         let rig = try snippetsRig()
         _ = try rig.module.add(name: "Address", body: "1 Main St").get()
-        #expect(try rig.module.copy("address").get().text == "1 Main St")
+        #expect(try rig.module.copy("address").get().preview == "1 Main St")
         #expect(rig.clipboard.reads == 0)
         #expect(rig.module.copy("Missing") == .failure(.notFound("Missing")))
         #expect(rig.clipboard.reads == 0)
@@ -337,10 +347,40 @@ private func snippetsRig(
         let rig = try snippetsRig(clipboard: nil)
         _ = try rig.module.add(name: "Odd", body: "{foo} {clipboard}.").get()
         let copy = try rig.module.copy("Odd").get()
-        #expect(copy.text == "{foo} .")
+        #expect(copy.preview == "{foo} .")
         #expect(copy.warnings == [.unknownPlaceholder("{foo}"), .clipboardHasNoText])
         #expect(rig.board.written == ["{foo} ."])
         #expect(rig.activities.map(\.title) == ["Copied Odd"])
+    }
+
+    /// Some password managers set no marker on what they copy, so the reader cannot tell. A copy that took text from the
+    /// clipboard is written marked concealed, so the Clipboard module (which would record Sayso as the source) skips it.
+    @Test func aCopyThatFilledInClipboardTextIsWrittenConcealedAndNeverShownInThePane() throws {
+        let rig = try snippetsRig(clipboard: "hunter2")
+        _ = try rig.module.add(name: "Login", body: "Login: {clipboard}").get()
+        let copy = try rig.module.copy("Login").get()
+        #expect(rig.board.written == ["Login: hunter2"])
+        #expect(rig.board.concealedFlags == [true], "marked concealed so clipboard history skips it")
+        #expect(copy.usedClipboard)
+        #expect(!copy.preview.contains("hunter2"), "the filled-in text is not kept for the pane")
+        #expect(rig.module.lastCopy?.preview.contains("hunter2") == false)
+        #expect(rig.activities.map(\.title) == ["Copied Login"])
+    }
+
+    @Test func aCopyWithNoClipboardTextIsWrittenPlainAndShown() throws {
+        let rig = try snippetsRig()
+        _ = try rig.module.add(name: "Address", body: "1 Main St, {date}").get()
+        let copy = try rig.module.copy("Address").get()
+        #expect(rig.board.concealedFlags == [false], "nothing came from the clipboard, so nothing is hidden")
+        #expect(!copy.usedClipboard)
+        #expect(copy.preview == "1 Main St, 10 Oct 2026")
+
+        let empty = try snippetsRig(clipboard: nil)
+        _ = try empty.module.add(name: "Thanks", body: "Thanks {clipboard}").get()
+        let none = try empty.module.copy("Thanks").get()
+        #expect(empty.board.concealedFlags == [false], "an empty clipboard put nothing in")
+        #expect(!none.usedClipboard)
+        #expect(none.preview == "Thanks ")
     }
 
     @Test func aRefusedWriteIsAnErrorAndShowsNoNotice() throws {
@@ -555,6 +595,24 @@ private func withSuite(_ body: (UserDefaults) throws -> Void) throws {
     }
 }
 
+@Suite struct PasteboardSnippetsWriterTests {
+    @Test func aConcealedWriteCarriesTheMarkerClipboardHistorySkipsAndAPlainWriteDoesNot() {
+        let board = NSPasteboard(name: NSPasteboard.Name("SnippetsWriterTests.\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        let writer = PasteboardSnippetsWriter(pasteboard: board)
+        let types = { Set((board.types ?? []).map(\.rawValue)) }
+
+        #expect(writer.write("Login: hunter2", concealed: true))
+        #expect(board.string(forType: .string) == "Login: hunter2")
+        #expect(types().contains("org.nspasteboard.ConcealedType"))
+        #expect(ClipboardPrivacy.isSensitive(types: types(), sourceBundleID: nil), "the Clipboard module would skip it")
+
+        #expect(writer.write("1 Main St", concealed: false))
+        #expect(board.string(forType: .string) == "1 Main St")
+        #expect(!ClipboardPrivacy.isSensitive(types: types(), sourceBundleID: nil), "a plain write leaves no marker, and replaced the old one")
+    }
+}
+
 @Suite struct SnippetsUITestHookTests {
     @Test func theFakeBoardIsUsedOnlyWithFreshSettingsAndNeverFallsBackToTheRealOne() throws {
         #expect(SnippetsUITestHook.board(arguments: ["app"]) == nil)
@@ -565,7 +623,7 @@ private func withSuite(_ body: (UserDefaults) throws -> Void) throws {
             SnippetsUITestHook.board(arguments: ["app", "--ui-test-fresh-settings", "--ui-test-clipboard", "from the test"])
         )
         #expect(board.readText() == "from the test")
-        #expect(board.write("Thanks, from the test"))
+        #expect(board.write("Thanks, from the test", concealed: false))
         #expect(board.written == ["Thanks, from the test"])
         #expect(board.readText() == "Thanks, from the test", "like a real board, a write replaces the text")
 
