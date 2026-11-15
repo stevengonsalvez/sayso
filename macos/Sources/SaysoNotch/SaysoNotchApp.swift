@@ -3229,7 +3229,7 @@ final class SaysoAppModel: ObservableObject {
                     }
                     controlStatus = entry.result
                     if ControlCycleCompletion.shouldComplete(after: step.action, effect: entry.effect, goal: run.cycle.goal)
-                        || ControlLoopPolicy.completesRun(after: step.action, effect: entry.effect, explicitFolderStep: isExplicitFolderStep)
+                        || ControlLoopPolicy.completesRun(after: step.action, explicitFolderStep: isExplicitFolderStep)
                         || finishes && (entry.effect == .observed || entry.effect == .alreadySatisfied) {
                         await completeControlRun("Control completed")
                         return

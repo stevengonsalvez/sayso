@@ -51,11 +51,11 @@ public enum ControlLoopPolicy {
         return folderPrefix + path
     }
 
-    /// Opening a folder never reports an observed effect, so the explicit folder step ends the run itself. Reaching
-    /// this point means `NSWorkspace.open` returned true (a failure throws first), which is the only signal available.
+    /// Opening a folder never reports an observed effect, so the explicit folder step ends the run itself whatever
+    /// effect is recorded. Reaching this point means `NSWorkspace.open` returned true (a failure throws first).
     /// Without it the loop would plan again and send the path to the model.
-    public static func completesRun(after action: DesktopAction, effect: ControlEffect, explicitFolderStep: Bool) -> Bool {
+    public static func completesRun(after action: DesktopAction, explicitFolderStep: Bool) -> Bool {
         guard explicitFolderStep, case .openFolder = action else { return false }
-        return effect == .unknown || effect == .observed
+        return true
     }
 }

@@ -79,17 +79,15 @@ private func resolution(
 // An open-folder effect is always unknown, so the explicit folder step must end the run itself or the loop
 // would plan again and send the path to the model.
 
-@Test func explicitFolderStepCompletesTheRunEvenThoughItsEffectIsUnknown() {
+@Test func explicitFolderStepAlwaysCompletesTheRun() {
     let open = DesktopAction.openFolder(url: URL(fileURLWithPath: "/Applications"))
 
-    #expect(ControlLoopPolicy.completesRun(after: open, effect: .unknown, explicitFolderStep: true))
-    #expect(ControlLoopPolicy.completesRun(after: open, effect: .observed, explicitFolderStep: true))
+    #expect(ControlLoopPolicy.completesRun(after: open, explicitFolderStep: true))
 }
 
-@Test func onlyTheExplicitFolderShortcutCompletesOnAnUnknownEffect() {
+@Test func onlyTheExplicitFolderShortcutCompletesTheRunThisWay() {
     let open = DesktopAction.openFolder(url: URL(fileURLWithPath: "/Applications"))
 
-    #expect(!ControlLoopPolicy.completesRun(after: open, effect: .unknown, explicitFolderStep: false))
-    #expect(!ControlLoopPolicy.completesRun(after: open, effect: .notObserved, explicitFolderStep: true))
-    #expect(!ControlLoopPolicy.completesRun(after: .activate(bundleIdentifier: "com.apple.finder"), effect: .unknown, explicitFolderStep: true))
+    #expect(!ControlLoopPolicy.completesRun(after: open, explicitFolderStep: false))
+    #expect(!ControlLoopPolicy.completesRun(after: .activate(bundleIdentifier: "com.apple.finder"), explicitFolderStep: true))
 }
