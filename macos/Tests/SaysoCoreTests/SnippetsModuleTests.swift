@@ -76,6 +76,31 @@ private final class CountingClipboard: @unchecked Sendable {
         #expect(try expander().expand("Got {clipboard}", at: now, clipboard: { "" }).usedClipboard == false, "nothing was inserted")
     }
 
+    /// 900 `{clipboard}` fit in a 10,000 character body, so a big clipboard multiplies into a huge result.
+    @Test func anExpansionOverTheLimitIsRefusedBeforeItIsBuilt() throws {
+        let now = try tenPastTwo()
+        let body = String(repeating: "{clipboard}", count: 900)
+        let huge = CountingClipboard(String(repeating: "a", count: 1_000_000))
+        #expect(throws: SnippetsError.expansionTooLong) {
+            try expander().expand(body, at: now, clipboard: huge.read)
+        }
+        #expect(SnippetsModule.expansionLimit == ClipboardPrivacy.maximumRecordedBytes, "the most the Clipboard module records")
+    }
+
+    @Test func theLimitCountsUTF8BytesAndTheExactLimitStillPasses() throws {
+        let now = try tenPastTwo()
+        #expect(try expander().expand("ab{clipboard}", at: now, limit: 5, clipboard: { "cde" }).text == "abcde")
+        #expect(throws: SnippetsError.expansionTooLong) {
+            try expander().expand("ab{clipboard}", at: now, limit: 5, clipboard: { "cdef" })
+        }
+        #expect(throws: SnippetsError.expansionTooLong, "two bytes each, not one character each") {
+            try expander().expand("{clipboard}", at: now, limit: 5, clipboard: { "ééé" })
+        }
+        #expect(throws: SnippetsError.expansionTooLong, "plain text counts too") {
+            try expander().expand("abcdef", at: now, limit: 5, clipboard: { nil })
+        }
+    }
+
     @Test func aClipboardWithNoTextLeavesThePlaceholderEmptyAndWarns() throws {
         let expansion = try expander().expand("Thanks, {clipboard}!", at: try tenPastTwo(), clipboard: { nil })
         #expect(expansion.text == "Thanks, !")
@@ -381,6 +406,37 @@ private func snippetsRig(
         #expect(empty.board.concealedFlags == [false], "an empty clipboard put nothing in")
         #expect(!none.usedClipboard)
         #expect(none.preview == "Thanks ")
+    }
+
+    @Test func aCopyThatWouldExpandPastTheLimitIsRefusedAndWritesNothing() throws {
+        let rig = try snippetsRig(clipboard: String(repeating: "a", count: 1_000_000))
+        _ = try rig.module.add(name: "Bomb", body: String(repeating: "{clipboard}", count: 900)).get()
+        #expect(rig.module.copy("Bomb") == .failure(.expansionTooLong))
+        #expect(SnippetsError.expansionTooLong.message == "That snippet is more than 256 KB once filled in, so nothing was copied.")
+        #expect(rig.board.written.isEmpty, "nothing reached the pasteboard")
+        #expect(rig.activities.isEmpty)
+        #expect(rig.module.lastCopy == nil)
+        #expect(rig.scheduler.jobs.isEmpty)
+    }
+
+    @Test func aCopyJustUnderTheLimitStillWorks() throws {
+        let rig = try snippetsRig(clipboard: String(repeating: "a", count: SnippetsModule.expansionLimit))
+        _ = try rig.module.add(name: "Big", body: "{clipboard}").get()
+        let copy = try rig.module.copy("Big").get()
+        #expect(rig.board.written.map(\.utf8.count) == [SnippetsModule.expansionLimit])
+        #expect(rig.board.concealedFlags == [true])
+        #expect(copy.preview.isEmpty)
+    }
+
+    @Test func thePaneGetsOnlyAShortPrefixOfTheText() throws {
+        let rig = try snippetsRig()
+        let long = String(repeating: "x", count: 2_000)
+        _ = try rig.module.add(name: "Long", body: long).get()
+        let copy = try rig.module.copy("Long").get()
+        #expect(rig.board.written == [long], "the whole text is still copied")
+        #expect(SnippetsModule.previewLimit == 500)
+        #expect(copy.preview == String(repeating: "x", count: 500))
+        #expect(rig.module.lastCopy?.preview.count == 500, "what the module keeps is the prefix too")
     }
 
     @Test func aRefusedWriteIsAnErrorAndShowsNoNotice() throws {
