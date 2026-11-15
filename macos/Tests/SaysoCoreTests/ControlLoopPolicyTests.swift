@@ -18,39 +18,57 @@ import Testing
 
 // An answered clarification that stays low confidence must not ask the same question again.
 
+private func resolution(
+    confidence: Double = 0.3,
+    answered: Bool = false,
+    tryNow: Bool = false,
+    alternatives: Bool = true
+) -> ControlLoopPolicy.LowConfidenceResolution {
+    ControlLoopPolicy.lowConfidenceResolution(
+        confidence: confidence, hasAnsweredClarification: answered, isTryNow: tryNow, hasAlternatives: alternatives
+    )
+}
+
 @Test func firstLowConfidenceStepAsksForClarification() {
-    #expect(ControlLoopPolicy.lowConfidenceResolution(confidence: 0.3, hasAnsweredClarification: false, isTryNow: false) == .askClarification)
+    #expect(resolution() == .askClarification)
 }
 
 @Test func answeredClarificationThatStaysLowConfidenceRequestsApproval() {
-    #expect(ControlLoopPolicy.lowConfidenceResolution(confidence: 0.3, hasAnsweredClarification: true, isTryNow: false) == .requestApproval)
+    #expect(resolution(answered: true) == .requestApproval)
 }
 
 @Test func tryNowKeepsAskingEvenAfterAnAnswer() {
-    #expect(ControlLoopPolicy.lowConfidenceResolution(confidence: 0.3, hasAnsweredClarification: true, isTryNow: true) == .askClarification)
+    #expect(resolution(answered: true, tryNow: true) == .askClarification)
+}
+
+@Test func lowConfidenceWithNothingToChooseFromIsRefusedEvenAfterAnAnswer() {
+    #expect(resolution(alternatives: false) == .refuse)
+    #expect(resolution(answered: true, alternatives: false) == .refuse)
+    #expect(resolution(answered: true, tryNow: true, alternatives: false) == .refuse)
 }
 
 @Test func confidentStepsNeverEscalate() {
-    #expect(ControlLoopPolicy.lowConfidenceResolution(confidence: ControlPolicy.minimumConfidence, hasAnsweredClarification: true, isTryNow: false) == .proceed)
-    #expect(ControlLoopPolicy.lowConfidenceResolution(confidence: 0.9, hasAnsweredClarification: false, isTryNow: false) == .proceed)
+    #expect(resolution(confidence: ControlPolicy.minimumConfidence, answered: true) == .proceed)
+    #expect(resolution(confidence: 0.9, alternatives: false) == .proceed)
 }
 
-@Test func approvalStepKeepsTheActionButAlwaysRequiresConfirmation() {
+@Test func reviewStepKeepsTheActionButAlwaysRequiresConfirmation() {
     let low = ControlPlanStep(
         action: .activate(bundleIdentifier: "com.apple.calculator"), confidence: 0.3, reason: "Open Calculator",
         planningSource: .jev, candidateTitle: "Calculator"
     )
 
-    let approval = ControlLoopPolicy.approvalStep(for: low)
+    let review = low.requiringReview(reasonPrefix: "Low confidence: ")
 
-    #expect(approval.id == low.id)
-    #expect(approval.action == low.action)
-    #expect(approval.reason == low.reason)
-    #expect(approval.planningSource == .jev)
-    #expect(approval.candidateTitle == "Calculator")
-    #expect(approval.requiresConfirmation)
-    #expect(approval.confidence >= ControlPolicy.minimumConfidence)
-    #expect(!ControlPolicy.canAutoRun(approval))
+    #expect(review.id == low.id)
+    #expect(review.action == low.action)
+    #expect(review.reason == "Low confidence: Open Calculator")
+    #expect(review.planningSource == .jev)
+    #expect(review.candidateTitle == "Calculator")
+    #expect(review.requiresConfirmation)
+    #expect(review.confidence >= ControlPolicy.minimumConfidence)
+    #expect(!ControlPolicy.canAutoRun(review))
+    #expect(low.requiringReview().reason == "Open Calculator")
 }
 
 // An explicit folder path is planned locally so the path never reaches the network.

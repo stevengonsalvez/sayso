@@ -3166,24 +3166,30 @@ final class SaysoAppModel: ObservableObject {
                             }
                             controlStatus = "Planned: \(step.reason)"
                             moduleEvents.publish(ControlStepPlanned(reason: step.reason))
-                            if ControlLoopPolicy.lowConfidenceResolution(
+                            let resolution = ControlLoopPolicy.lowConfidenceResolution(
                                 confidence: step.confidence,
                                 hasAnsweredClarification: run.hasAnsweredClarification,
-                                isTryNow: run.isTryNow
-                            ) == .requestApproval {
+                                isTryNow: run.isTryNow,
+                                hasAlternatives: !planned.alternatives.isEmpty
+                            )
+                            // An answer only covers the plan made right after it; a later low-confidence step asks again.
+                            run.hasAnsweredClarification = false
+                            switch resolution {
+                            case .proceed:
+                                break
+                            case .refuse:
+                                throw SaysoError.invalidAction("Jev was not confident enough to act.")
+                            case .requestApproval:
                                 // The user already chose. Asking again would loop, so hand them the exact action to approve.
-                                pendingControlStep = ControlLoopPolicy.approvalStep(for: step)
+                                let review = step.requiringReview(reasonPrefix: "Low confidence: ")
+                                pendingControlStep = review
                                 pendingControlFinishes = finishes
-                                controlStatus = "Review required: \(step.reason)"
-                                controlCoordinator.requestReview(reason: step.reason)
+                                controlStatus = "Review required: \(review.reason)"
+                                controlCoordinator.requestReview(reason: review.reason)
                                 controlExecutionTask = nil
                                 return
-                            }
-                            if step.confidence < ControlPolicy.minimumConfidence {
+                            case .askClarification:
                                 let choices = planned.alternatives
-                                guard !choices.isEmpty else {
-                                    throw SaysoError.invalidAction("Jev was not confident enough to act.")
-                                }
                                 let question = "Which one: \(choices.joined(separator: ", "))?"
                                 run.previous = question
                                 run.clarification = (choices, Date())

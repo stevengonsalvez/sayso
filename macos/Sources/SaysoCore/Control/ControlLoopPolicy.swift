@@ -14,26 +14,22 @@ public enum ControlLoopPolicy {
         case proceed
         case askClarification
         case requestApproval
+        /// Nothing to choose from and nothing to approve: the model was not confident enough to act.
+        case refuse
     }
 
-    /// Once the user has answered a clarification, asking again would loop. Hand them the exact action to approve
-    /// instead. Try now keeps asking: it only ever accepts the expected Calculator action.
+    /// Once the user has answered a clarification, asking again would loop, so the next low-confidence step is handed
+    /// to them as the exact action to approve. Try now keeps asking: it only ever accepts the expected Calculator
+    /// action. With no alternatives there is nothing to ask or approve, so the run stops as it does without an answer.
     public static func lowConfidenceResolution(
         confidence: Double,
         hasAnsweredClarification: Bool,
-        isTryNow: Bool
+        isTryNow: Bool,
+        hasAlternatives: Bool
     ) -> LowConfidenceResolution {
         guard confidence < ControlPolicy.minimumConfidence else { return .proceed }
+        guard hasAlternatives else { return .refuse }
         return hasAnsweredClarification && !isTryNow ? .requestApproval : .askClarification
-    }
-
-    /// The same step, lifted to the minimum confidence and marked for confirmation so it never runs unreviewed.
-    public static func approvalStep(for step: ControlPlanStep) -> ControlPlanStep {
-        ControlPlanStep(
-            id: step.id, action: step.action, confidence: ControlPolicy.minimumConfidence,
-            reason: step.reason, planningSource: step.planningSource,
-            candidateTitle: step.candidateTitle, requiresConfirmation: true
-        )
     }
 
     private static let folderPrefix = "open folder "
