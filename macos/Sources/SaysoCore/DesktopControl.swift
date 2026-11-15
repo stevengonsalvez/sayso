@@ -482,15 +482,6 @@ public struct ControlPlanStep: Codable, Equatable, Identifiable, Sendable {
         self.requiresConfirmation = requiresConfirmation
     }
 
-    /// The same step lifted to the minimum confidence and marked for confirmation, so it never runs unreviewed.
-    public func requiringReview(reasonPrefix: String = "") -> ControlPlanStep {
-        ControlPlanStep(
-            id: id, action: action, confidence: ControlPolicy.minimumConfidence,
-            reason: reasonPrefix + reason, planningSource: planningSource,
-            candidateTitle: candidateTitle, requiresConfirmation: true
-        )
-    }
-
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)

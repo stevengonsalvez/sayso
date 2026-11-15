@@ -3178,16 +3178,8 @@ final class SaysoAppModel: ObservableObject {
                             case .proceed:
                                 break
                             case .refuse:
+                                // Also reached when the user already answered and the plan is still weak: fail closed.
                                 throw SaysoError.invalidAction("Jev was not confident enough to act.")
-                            case .requestApproval:
-                                // The user already chose. Asking again would loop, so hand them the exact action to approve.
-                                let review = step.requiringReview(reasonPrefix: "Low confidence: ")
-                                pendingControlStep = review
-                                pendingControlFinishes = finishes
-                                controlStatus = "Review required: \(review.reason)"
-                                controlCoordinator.requestReview(reason: review.reason)
-                                controlExecutionTask = nil
-                                return
                             case .askClarification:
                                 let choices = planned.alternatives
                                 let question = "Which one: \(choices.joined(separator: ", "))?"

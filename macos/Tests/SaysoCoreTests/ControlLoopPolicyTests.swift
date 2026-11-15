@@ -33,8 +33,8 @@ private func resolution(
     #expect(resolution() == .askClarification)
 }
 
-@Test func answeredClarificationThatStaysLowConfidenceRequestsApproval() {
-    #expect(resolution(answered: true) == .requestApproval)
+@Test func answeredClarificationThatStaysLowConfidenceFailsClosed() {
+    #expect(resolution(answered: true) == .refuse)
 }
 
 @Test func tryNowKeepsAskingEvenAfterAnAnswer() {
@@ -50,25 +50,6 @@ private func resolution(
 @Test func confidentStepsNeverEscalate() {
     #expect(resolution(confidence: ControlPolicy.minimumConfidence, answered: true) == .proceed)
     #expect(resolution(confidence: 0.9, alternatives: false) == .proceed)
-}
-
-@Test func reviewStepKeepsTheActionButAlwaysRequiresConfirmation() {
-    let low = ControlPlanStep(
-        action: .activate(bundleIdentifier: "com.apple.calculator"), confidence: 0.3, reason: "Open Calculator",
-        planningSource: .jev, candidateTitle: "Calculator"
-    )
-
-    let review = low.requiringReview(reasonPrefix: "Low confidence: ")
-
-    #expect(review.id == low.id)
-    #expect(review.action == low.action)
-    #expect(review.reason == "Low confidence: Open Calculator")
-    #expect(review.planningSource == .jev)
-    #expect(review.candidateTitle == "Calculator")
-    #expect(review.requiresConfirmation)
-    #expect(review.confidence >= ControlPolicy.minimumConfidence)
-    #expect(!ControlPolicy.canAutoRun(review))
-    #expect(low.requiringReview().reason == "Open Calculator")
 }
 
 // An explicit folder path is planned locally so the path never reaches the network.
