@@ -3072,6 +3072,7 @@ final class SaysoAppModel: ObservableObject {
                     let step: ControlPlanStep
                     let finishes: Bool
                     var isApprovedStep = false
+                    var isExplicitFolderStep = false
                     if let approved = carriedStep {
                         step = approved.0
                         finishes = approved.1
@@ -3126,12 +3127,13 @@ final class SaysoAppModel: ObservableObject {
                         } else if !run.folderStepIssued, let folderCommand = ControlLoopPolicy.explicitFolderCommand(run.cycle.goal) {
                             // An explicit path needs no model: plan it exactly, and keep the path off the network.
                             run.folderStepIssued = true
+                            isExplicitFolderStep = true
                             step = try ControlPlanner.plan(
                                 command: folderCommand,
                                 snapshot: snapshot,
                                 installedApplications: run.installedApplications
                             )
-                            finishes = true
+                            finishes = false // the run ends through ControlLoopPolicy.completesRun, not an observed effect
                             controlStatus = "Planned: \(step.reason)"
                             moduleEvents.publish(ControlStepPlanned(reason: step.reason))
                         } else {
@@ -3229,6 +3231,7 @@ final class SaysoAppModel: ObservableObject {
                     }
                     controlStatus = entry.result
                     if ControlCycleCompletion.shouldComplete(after: step.action, effect: entry.effect, goal: run.cycle.goal)
+                        || ControlLoopPolicy.completesRun(after: step.action, effect: entry.effect, explicitFolderStep: isExplicitFolderStep)
                         || finishes && (entry.effect == .observed || entry.effect == .alreadySatisfied) {
                         await completeControlRun("Control completed")
                         return
