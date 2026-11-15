@@ -6,7 +6,7 @@ Tags used below: **[verified]** = checked against a file in this repo or the pac
 
 ## Recommendation
 
-Start Apple Developer Program enrolment now (it is the only blocking step and verification can take days [general knowledge]). In parallel build everything that does not need the account: version stamping, DMG script, release workflow with ad hoc fallback, Sparkle behind a flag, appcast generation. When the account lands, the remaining work is adding five environment secrets to `macos-release` and cutting one tag.
+Start Apple Developer Program enrolment now (it is the only blocking step and verification can take days [general knowledge]). In parallel build everything that does not need the account: version stamping, DMG script, release workflow with ad hoc fallback, Sparkle behind a flag, appcast generation. When the account lands, the remaining work is: the five `SAYSO_MACOS_*` environment secrets (plus `SAYSO_SPARKLE_ED_KEY` from M5), the two repository variables, the `macos-release` environment with the `macos-v*` tag ruleset, one tag, and the M5 TCC survival test.
 
 ```
  now (no account)                     blocked (needs account)
@@ -67,12 +67,16 @@ The release job runs in a GitHub Environment named `macos-release`, configured a
 
 - Required reviewers: Stevie, so no tag push can read the signing secrets without a click.
 - Deployment branches and tags: "Selected branches and tags" with a single tag rule `macos-v*`, so a job on any other branch, tag or pull request is refused the environment and therefore every secret in it. Branch rules for `main` are not added.
+- Tag ruleset (Settings > Rules > Rulesets, target tags, pattern `macos-v*`): restrict creation, update and deletion; bypass list = repo admins only (the release role). Without it the deployment rule is not a control: anyone with write access could push `macos-v9.9.9` on a commit with an edited workflow that dumps the secrets, the ref would pass the deployment rule, only the reviewer click would remain, and the approval screen shows the ref name, not the diff.
 - Secrets live only in this environment. No `SAYSO_MACOS_*` or Sparkle key exists as a repository secret, and the plan forbids adding one.
 - The ad hoc fallback is a separate job with no `environment:` key. It cannot see any of these secrets, so it never signs with the Developer ID certificate and cannot publish to the update feed.
 
 Pull requests from forks do not receive repository secrets, and a pull request cannot satisfy the `macos-v*` tag rule, so the existing PR job stays ad hoc and is unaffected [general knowledge].
 
-### Job flow (tag `macos-v*` or `workflow_dispatch`)
+### Job flow (tag `macos-v*`; `workflow_dispatch` builds only the ad hoc job)
+
+The signed job is gated with `if: startsWith(github.ref, 'refs/tags/macos-v')`. A `workflow_dispatch` run from `main` therefore skips it (no red failure, no environment request, no reviewer ping) and builds only the ad hoc job.
+
 
 ```
  checkout ─▶ import cert into temp keychain ─▶ package-app.sh (Developer ID)
@@ -98,7 +102,7 @@ Steps in detail:
 | Apple Events (Music/Spotify now playing, desktop control actions) | entitlement `com.apple.security.automation.apple-events` + `NSAppleEventsUsageDescription` | yes (verified) |
 | Speech Recognition | `NSSpeechRecognitionUsageDescription` only, no entitlement when unsandboxed [general knowledge] | string yes (verified) |
 | Accessibility (`AXIsProcessTrusted`, desktop control, text tools) | TCC grant only, **no entitlement** | n/a |
-| Input Monitoring (global hotkeys, `CGPreflightListenEventAccess`) | TCC grant only, no entitlement, plus `NSInputMonitoringUsageDescription` | string yes (verified) |
+| Input Monitoring (global hotkeys, `CGPreflightListenEventAccess`) | TCC grant only, no entitlement, plus `NSInputMonitoringUsageDescription` | string yes (verified in `macos/Resources/Info.plist:29`) |
 
 Call sites for the TCC-only permissions are in `macos/Sources/SaysoCore/Permissions.swift` (verified).
 
@@ -122,7 +126,7 @@ File names: `Sayso-Notch-<version>.dmg` for first installs. Updates use a separa
 
 ## 3. Update channel: Sparkle 2
 
-**Recommendation: Sparkle 2.10.0** (already the version in `Package.resolved`, so pinning `exact: "2.10.0"` as a direct dependency should not create `Package.resolved` drift, which `macos.yml` fails on; this is an inference, confirm on the first PR).
+**Recommendation: Sparkle 2.10.0** (already the version in `Package.resolved`, so pinning `exact: "2.10.0"` as a direct dependency should not create `Package.resolved` drift, which `macos.yml` fails on; this is an inference, confirm on the first PR). The M3 PR must commit the regenerated `Package.resolved`, because `macos.yml` fails if `git diff --exit-code Package.resolved` shows drift.
 
 - **Integration**: add the Sparkle package as a direct dependency of `SaysoNotch`; hold an `SPUStandardUpdaterController` in the app; "Check for Updates" menu/settings item; Info.plist keys `SUFeedURL`, `SUPublicEDKey`, `SUEnableAutomaticChecks`. Ship **behind a flag** (feed URL empty and updater not started unless the key is present) so ad hoc and dev builds never poll.
 - **Packaging work is the real cost**: `package-app.sh` currently copies one binary. Sparkle needs `Sparkle.framework` copied into `Contents/Frameworks`, an rpath of `@executable_path/../Frameworks`, and inside-out signing (each XPC service and helper app, then the framework, then the app) with the same Developer ID identity and `--options runtime`. Do not use `codesign --deep` for signing [general knowledge]. Because Sayso is not sandboxed, Sparkle's XPC services may be removable [general knowledge, check Sparkle docs]. Re-signing the framework with our identity keeps library validation satisfied without `disable-library-validation` (test this).
@@ -133,7 +137,7 @@ File names: `Sayso-Notch-<version>.dmg` for first installs. Updates use a separa
   Release payloads (zip, DMG) live on the versioned `macos-vX.Y.Z` GitHub release; the appcast `enclosure url` points there. Both hosts are free for a public repo.
 - **Appcast generation**: `generate_appcast` over a directory of update zips signs each with the EdDSA key and, if prior versions are present in that directory, produces delta updates. CI must therefore download the previous N zips from earlier `macos-v*` releases before running it. Ship full updates first, add deltas in milestone 6.
 - **Update artifact**: a zip of the stapled `.app` (`ditto -c -k --sequesterRsrc --keepParent`) is Sparkle's canonical input [general knowledge]; the DMG remains for first install.
-- **Versioning**: CI derives `CFBundleShortVersionString` from the tag and `CFBundleVersion` from a monotonic counter (`GITHUB_RUN_NUMBER` or commit count) via `plutil -replace` on the copied Info.plist in `package-app.sh`. Never edit the committed plist per release.
+- **Versioning**: CI derives `CFBundleShortVersionString` from the tag and `CFBundleVersion` from a monotonic counter via `plutil -replace` on the copied Info.plist in `package-app.sh`. Never edit the committed plist per release. Counter source, pick one: (a) commit count (`git rev-list --count HEAD`), which needs `fetch-depth: 0` on checkout because the default shallow clone returns 1; or (b) `GITHUB_RUN_NUMBER`, which restarts at 1 if the workflow file is renamed or the repo is recreated. Sparkle requires `CFBundleVersion` to be strictly increasing across releases, so (b) needs a fixed offset or a guard that fails the job if the new value is not greater than the last released build.
 - **Ad hoc update caveat**: whether Sparkle will apply an update to an ad hoc signed app on EdDSA alone is not verified; do not rely on testing the update path with ad hoc builds. Real update tests wait for milestone 5.
 
 ## 4. TCC grants across updates (Accessibility, Microphone, Input Monitoring)
@@ -142,7 +146,7 @@ How macOS keys grants [general knowledge, standard TCC behaviour]: a grant is st
 
 | Signing | Designated requirement | Survives rebuild/update? |
 |---|---|---|
-| Ad hoc (`-`) | pinned to the exact `cdhash`, changes every build | **No**: grants invalidated each rebuild. Accessibility can show "on" in Settings while `AXIsProcessTrusted()` returns false. Documented in `docs/ultimate-notch/E2E_BATCH_1.md` (line 29). |
+| Ad hoc (`-`) | pinned to the exact `cdhash`, changes every build | **No** [general knowledge: cdhash pinning]. `docs/ultimate-notch/E2E_BATCH_1.md` (section 1) says only that ad hoc builds lose Accessibility and Microphone grants on each rebuild. The "Accessibility shows on but `AXIsProcessTrusted()` returns false" symptom is [unconfirmed], not in a repo file. |
 | Apple Development | `identifier "ai.sayso.notch" and anchor apple generic and certificate leaf[subject.CN] = "<that cert>"` (verified on the local package) | Yes between builds with the same cert, but tied to one developer's personal cert |
 | Developer ID Application | `identifier "ai.sayso.notch" and anchor apple generic and ... certificate leaf[subject.OU] = "<team id>"` [general knowledge on the exact clauses] | **Yes**, as long as the bundle id stays `ai.sayso.notch` and the Developer ID certificate team stays the same |
 
@@ -174,7 +178,7 @@ Also affected (by the same mechanism, inference): Keychain items stored under se
 | Enrol in the Apple Developer Program (about USD 99/year) | Account creation and payment; Stevie only |
 | Developer ID Application certificate | Issued by the account (certificate signing request from a Mac, created in the developer portal or Xcode); export as .p12 |
 | Notarisation credentials | App Store Connect API key (preferred) or an app-specific password |
-| Creating the `macos-release` environment (required reviewer Stevie, deployment tags limited to `macos-v*`), adding the five `SAYSO_MACOS_*` secrets to it (not to the repository), and the two repository variables | Needs the values above; Stevie or a repo admin |
+| Creating the `macos-release` environment (required reviewer Stevie, deployment tags limited to `macos-v*`) plus the tag ruleset `macos-v*` (creation, update and deletion restricted to repo admins), adding the five `SAYSO_MACOS_*` secrets and `SAYSO_SPARKLE_ED_KEY` (M5) to the environment (not to the repository), and the two repository variables | Needs the values above; Stevie or a repo admin |
 | First notarised release, `spctl` "Notarized Developer ID" proof | Needs a real signature |
 | TCC survival test (section 4), live Sparkle update test | Needs two real Developer ID builds |
 | Generating the production Sparkle EdDSA key | Not Apple-blocked, but it is a secret that only Stevie should create and back up |
@@ -186,7 +190,7 @@ Also affected (by the same mechanism, inference): Keychain items stored under se
 | Version stamping in `package-app.sh` (`SAYSO_VERSION`, `SAYSO_BUILD`) | Monotonic `CFBundleVersion` ready for Sparkle |
 | `SAYSO_RELEASE=1` guard and API-key notarise branch in `package-app.sh` | Code path exists, untested until M4 |
 | `macos/Scripts/make-dmg.sh` | Build and mount-check an ad hoc DMG locally |
-| `.github/workflows/macos-release.yml` with ad hoc fallback | Two jobs: an ad hoc job with no `environment:` key that always produces an `-adhoc` DMG artifact, clearly labelled and never published to the feed, and a signed job that declares `environment: macos-release` (tags `macos-v*` only) and is the only one that can read the secrets. |
+| `.github/workflows/macos-release.yml` with ad hoc fallback | Two jobs: an ad hoc job with no `environment:` key that always produces an `-adhoc` DMG artifact, clearly labelled and never published to the feed, and a signed job that declares `environment: macos-release`, carries the `if: startsWith(github.ref, 'refs/tags/macos-v')` gate (tags `macos-v*` only) and is the only one that can read the secrets. |
 | Exact-entitlement-set CI assertion | Protects section 1 table |
 | Sparkle direct dependency + `SPUStandardUpdaterController` behind a flag | Off by default, no feed URL |
 | Appcast generation script and a local test (`python3 -m http.server`, throwaway test EdDSA key) | Feed format proven before any account exists |
@@ -200,7 +204,7 @@ Also affected (by the same mechanism, inference): Keychain items stored under se
 | M1 | `package-app.sh`: version stamping, `SAYSO_RELEASE` guard, notary API-key branch; exact-entitlements CI check | no | PR green; ad hoc build still passes existing `macos.yml` |
 | M2 | `make-dmg.sh` + `macos-release.yml` (ad hoc fallback, `macos-v*` tags, `macos.yml` tag filter) | no | `workflow_dispatch` produces a mountable `-adhoc` DMG artifact |
 | M3 | Sparkle behind a flag, framework embedding and inside-out signing, appcast script, local feed test | no | App built with the flag on offers a test update from a local feed; flag off changes nothing |
-| M4 | Cert, secrets, environment; tag `macos-v1.0.0` | yes | Release has a stapled DMG; `spctl` says Notarized Developer ID; `stapler validate` passes |
+| M4 | Cert, secrets, environment, tag ruleset `macos-v*`; tag `macos-v1.0.0` | yes | Release has a stapled DMG; `spctl` says Notarized Developer ID; `stapler validate` passes |
 | M5 | TCC survival test and live Sparkle `1.0.0` to `1.0.1` update; generate and back up EdDSA key; publish feed | yes | All section 4 checks pass and results recorded in `docs/ultimate-notch/PROOF_LEDGER.md` |
 | M6 | Delta updates, decide universal (arm64 + x86_64) vs arm64-only, enable automatic checks by default | partly | Decision recorded; first delta applied |
 
