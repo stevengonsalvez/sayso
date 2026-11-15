@@ -6,7 +6,7 @@ Tags used below: **[verified]** = checked against a file in this repo or the pac
 
 ## Recommendation
 
-Start Apple Developer Program enrolment now (it is the only blocking step and verification can take days [general knowledge]). In parallel build everything that does not need the account: version stamping, DMG script, release workflow with ad hoc fallback, Sparkle behind a flag, appcast generation. When the account lands, the remaining work is adding five repository secrets and cutting one tag.
+Start Apple Developer Program enrolment now (it is the only blocking step and verification can take days [general knowledge]). In parallel build everything that does not need the account: version stamping, DMG script, release workflow with ad hoc fallback, Sparkle behind a flag, appcast generation. When the account lands, the remaining work is adding five environment secrets to `macos-release` and cutting one tag.
 
 ```
  now (no account)                     blocked (needs account)
@@ -44,7 +44,9 @@ Two repo facts that shape the plan:
 
 ## 1. Developer ID signing and notarisation in CI
 
-### Repository secrets (names only)
+### Environment secrets in `macos-release` (names only)
+
+All values below are stored as secrets of the GitHub Environment `macos-release`, NOT as repository secrets. A repository secret is readable by any workflow job on any branch or tag that can run, so it would bypass the environment's reviewer gate. An environment secret is released only to a job that declares `environment: macos-release` and passes that environment's protection rules.
 
 Prefix `SAYSO_MACOS_` follows the existing `SAYSO_` Android convention.
 
@@ -61,7 +63,14 @@ Repository variables (not secrets, not sensitive): `SAYSO_MACOS_SIGN_IDENTITY` (
 
 Fallback if Stevie prefers an Apple ID flow: `SAYSO_MACOS_APPLE_ID` plus `SAYSO_MACOS_APP_PASSWORD` (app-specific password) plus the team id variable, passed to `notarytool` as `--apple-id --password --team-id`. API key is the recommendation.
 
-The new release job should run in a GitHub Environment named `macos-release` with required-reviewer approval, so tag pushes cannot read the signing secrets without a click. Fork pull requests do not receive repository secrets [general knowledge], so the existing PR job stays ad hoc and is unaffected.
+The release job runs in a GitHub Environment named `macos-release`, configured as follows (settings made by Stevie or a repo admin):
+
+- Required reviewers: Stevie, so no tag push can read the signing secrets without a click.
+- Deployment branches and tags: "Selected branches and tags" with a single tag rule `macos-v*`, so a job on any other branch, tag or pull request is refused the environment and therefore every secret in it. Branch rules for `main` are not added.
+- Secrets live only in this environment. No `SAYSO_MACOS_*` or Sparkle key exists as a repository secret, and the plan forbids adding one.
+- The ad hoc fallback is a separate job with no `environment:` key. It cannot see any of these secrets, so it never signs with the Developer ID certificate and cannot publish to the update feed.
+
+Pull requests from forks do not receive repository secrets, and a pull request cannot satisfy the `macos-v*` tag rule, so the existing PR job stays ad hoc and is unaffected [general knowledge].
 
 ### Job flow (tag `macos-v*` or `workflow_dispatch`)
 
@@ -165,7 +174,7 @@ Also affected (by the same mechanism, inference): Keychain items stored under se
 | Enrol in the Apple Developer Program (about USD 99/year) | Account creation and payment; Stevie only |
 | Developer ID Application certificate | Issued by the account (certificate signing request from a Mac, created in the developer portal or Xcode); export as .p12 |
 | Notarisation credentials | App Store Connect API key (preferred) or an app-specific password |
-| Adding the five `SAYSO_MACOS_*` secrets and the two variables, creating the `macos-release` environment | Needs the values above; Stevie or a repo admin |
+| Creating the `macos-release` environment (required reviewer Stevie, deployment tags limited to `macos-v*`), adding the five `SAYSO_MACOS_*` secrets to it (not to the repository), and the two repository variables | Needs the values above; Stevie or a repo admin |
 | First notarised release, `spctl` "Notarized Developer ID" proof | Needs a real signature |
 | TCC survival test (section 4), live Sparkle update test | Needs two real Developer ID builds |
 | Generating the production Sparkle EdDSA key | Not Apple-blocked, but it is a secret that only Stevie should create and back up |
@@ -177,7 +186,7 @@ Also affected (by the same mechanism, inference): Keychain items stored under se
 | Version stamping in `package-app.sh` (`SAYSO_VERSION`, `SAYSO_BUILD`) | Monotonic `CFBundleVersion` ready for Sparkle |
 | `SAYSO_RELEASE=1` guard and API-key notarise branch in `package-app.sh` | Code path exists, untested until M4 |
 | `macos/Scripts/make-dmg.sh` | Build and mount-check an ad hoc DMG locally |
-| `.github/workflows/macos-release.yml` with ad hoc fallback | If the secrets are absent the job still produces an `-adhoc` DMG artifact, clearly labelled, never published to the feed. The signed path is `if: secrets present`. |
+| `.github/workflows/macos-release.yml` with ad hoc fallback | Two jobs: an ad hoc job with no `environment:` key that always produces an `-adhoc` DMG artifact, clearly labelled and never published to the feed, and a signed job that declares `environment: macos-release` (tags `macos-v*` only) and is the only one that can read the secrets. |
 | Exact-entitlement-set CI assertion | Protects section 1 table |
 | Sparkle direct dependency + `SPUStandardUpdaterController` behind a flag | Off by default, no feed URL |
 | Appcast generation script and a local test (`python3 -m http.server`, throwaway test EdDSA key) | Feed format proven before any account exists |
