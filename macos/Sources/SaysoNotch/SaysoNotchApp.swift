@@ -3041,6 +3041,10 @@ final class SaysoAppModel: ObservableObject {
         )
     }
 
+    private static func calculatorClearButton(in snapshot: DesktopSnapshot) -> DesktopElement? {
+        snapshot.elements.first { ["All Clear", "Clear"].contains($0.title) && $0.supportsPress }
+    }
+
     private func executeControlRun(
         _ run: ControlCommandRun,
         approvedStep: ControlPlanStep? = nil,
@@ -3071,8 +3075,22 @@ final class SaysoAppModel: ObservableObject {
                         carriedStep = nil
                         isApprovedStep = true
                     } else {
-                        let snapshot = try controller.capture(application: run.target)
+                        var snapshot = try controller.capture(application: run.target)
                         currentSnapshot = snapshot
+                        if !run.calculatorWasCleared, run.calculatorTask != nil,
+                           run.target.bundleIdentifier == "com.apple.calculator" {
+                            // A freshly launched app can expose no controls for its first moments.
+                            var settleAttempts = 0
+                            while ControlLoopPolicy.shouldWaitForCalculatorControls(
+                                clearAvailable: Self.calculatorClearButton(in: snapshot) != nil,
+                                attemptsMade: settleAttempts
+                            ) {
+                                settleAttempts += 1
+                                try await Task.sleep(for: .milliseconds(ControlLoopPolicy.calculatorSettleDelayMilliseconds))
+                                snapshot = try controller.capture(application: run.target)
+                                currentSnapshot = snapshot
+                            }
+                        }
                         if let task = run.calculatorTask,
                            run.target.bundleIdentifier == "com.apple.calculator" {
                             if run.nextCalculatorCommandIndex >= task.commands.count {
@@ -3084,9 +3102,7 @@ final class SaysoAppModel: ObservableObject {
                             }
                             let command: String
                             if !run.calculatorWasCleared {
-                                guard let clear = snapshot.elements.first(where: {
-                                    ["All Clear", "Clear"].contains($0.title) && $0.supportsPress
-                                }) else {
+                                guard let clear = Self.calculatorClearButton(in: snapshot) else {
                                     throw SaysoError.invalidAction("Calculator Clear control is unavailable.")
                                 }
                                 command = "click \(clear.title)"
