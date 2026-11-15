@@ -52,3 +52,17 @@ import Testing
     #expect(approval.confidence >= ControlPolicy.minimumConfidence)
     #expect(!ControlPolicy.canAutoRun(approval))
 }
+
+// An explicit folder path is planned locally so the path never reaches the network.
+
+@Test func openFolderWithAPathIsAnExplicitFolderCommand() {
+    #expect(ControlLoopPolicy.isExplicitFolderCommand("open folder /Applications"))
+    #expect(ControlLoopPolicy.isExplicitFolderCommand("Open Folder ~/Documents"))
+}
+
+@Test func otherOpenCommandsAreNotExplicitFolderCommands() {
+    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open folder"))
+    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open the folder with my notes"))
+    #expect(!ControlLoopPolicy.isExplicitFolderCommand("open calculator"))
+    #expect(!ControlLoopPolicy.isExplicitFolderCommand("please open folder /tmp"))
+}

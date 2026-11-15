@@ -133,6 +133,7 @@ final class SaysoAppModel: ObservableObject {
         var previous: String?
         var clarification: (choices: [String], askedAt: Date)?
         var hasAnsweredClarification = false
+        var folderStepIssued = false
         var apiKey: String?
         var calculatorWasCleared = false
         var nextCalculatorCommandIndex = 1
@@ -3122,6 +3123,17 @@ final class SaysoAppModel: ObservableObject {
                             isApprovedStep = true
                             controlStatus = "Planned: verified Calculator step"
                             moduleEvents.publish(ControlStepPlanned(reason: "verified Calculator step"))
+                        } else if !run.folderStepIssued, ControlLoopPolicy.isExplicitFolderCommand(run.cycle.goal) {
+                            // An explicit path needs no model: plan it exactly, and keep the path off the network.
+                            run.folderStepIssued = true
+                            step = try ControlPlanner.plan(
+                                command: run.cycle.goal,
+                                snapshot: snapshot,
+                                installedApplications: run.installedApplications
+                            )
+                            finishes = true
+                            controlStatus = "Planned: \(step.reason)"
+                            moduleEvents.publish(ControlStepPlanned(reason: step.reason))
                         } else {
                             // Resolve once per run: Keychain reads and a bws spawn are not per-cycle work.
                             if run.apiKey == nil { run.apiKey = await typeSafeKey() }

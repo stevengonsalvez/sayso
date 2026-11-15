@@ -35,4 +35,11 @@ public enum ControlLoopPolicy {
             candidateTitle: step.candidateTitle, requiresConfirmation: true
         )
     }
+
+    /// 'open folder <path>' is planned by `ControlPlanner` without a model, which keeps the path off the network.
+    public static func isExplicitFolderCommand(_ goal: String) -> Bool {
+        let command = goal.lowercased()
+        guard command.hasPrefix("open folder ") else { return false }
+        return !command.dropFirst("open folder ".count).trimmingCharacters(in: .whitespaces).isEmpty
+    }
 }
