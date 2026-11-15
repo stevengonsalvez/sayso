@@ -34,18 +34,24 @@ public enum ControlLoopPolicy {
     private static let folderPrefix = "open folder "
     private static let pathEdgeNoise = CharacterSet.whitespacesAndNewlines
         .union(CharacterSet(charactersIn: "\"'\u{201C}\u{201D}\u{2018}\u{2019}"))
-    private static let pathTrailingNoise = pathEdgeNoise.union(CharacterSet(charactersIn: ".,;!?"))
+    private static let sentencePunctuation: Set<Character> = [".", ",", ";", "!", "?"]
 
-    /// 'open folder <path>' with an absolute or ~/ path, normalised for `ControlPlanner`: trailing sentence
-    /// punctuation and surrounding quotes are not part of a spoken path. Planning it locally keeps the path off the
-    /// network. A spoken folder name ('open folder downloads') returns nil and still goes to the model.
+    /// 'open folder <path>' with an absolute or ~/ path, normalised for `ControlPlanner`: surrounding quotes and at
+    /// most one trailing sentence-punctuation character are not part of a spoken path, and a '.' or '..' path
+    /// component is never touched. Planning it locally keeps the path off the network. A spoken folder name
+    /// ('open folder downloads') returns nil and still goes to the model.
     public static func explicitFolderCommand(_ goal: String) -> String? {
         let command = goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard command.lowercased().hasPrefix(folderPrefix) else { return nil }
-        var path = String(command.dropFirst(folderPrefix.count))
-        path = String(path.drop(while: { $0.unicodeScalars.allSatisfy(pathEdgeNoise.contains) }))
-        while let last = path.last, last.unicodeScalars.allSatisfy(pathTrailingNoise.contains) {
+        func trimmed(_ text: String) -> String {
+            var text = String(text.drop(while: { $0.unicodeScalars.allSatisfy(pathEdgeNoise.contains) }))
+            while let last = text.last, last.unicodeScalars.allSatisfy(pathEdgeNoise.contains) { text.removeLast() }
+            return text
+        }
+        var path = trimmed(String(command.dropFirst(folderPrefix.count)))
+        if let last = path.last, sentencePunctuation.contains(last), !path.hasSuffix("/."), !path.hasSuffix("/..") {
             path.removeLast()
+            path = trimmed(path)
         }
         guard path.hasPrefix("/") || path.hasPrefix("~") else { return nil }
         return folderPrefix + path

@@ -67,6 +67,17 @@ private func resolution(
     #expect(ControlLoopPolicy.explicitFolderCommand("  open folder /Applications  ") == "open folder /Applications")
 }
 
+@Test func atMostOneTrailingPunctuationCharacterIsStripped() {
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /tmp/foo..") == "open folder /tmp/foo.")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /tmp/foo?!") == "open folder /tmp/foo?")
+}
+
+@Test func dotPathComponentsAreNeverStripped() {
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /tmp/..") == "open folder /tmp/..")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder /tmp/.") == "open folder /tmp/.")
+    #expect(ControlLoopPolicy.explicitFolderCommand("open folder \"~/Projects/..\"") == "open folder ~/Projects/..")
+}
+
 @Test func spokenFolderNamesAndOtherCommandsAreNotExplicitFolderCommands() {
     #expect(ControlLoopPolicy.explicitFolderCommand("open folder downloads") == nil)
     #expect(ControlLoopPolicy.explicitFolderCommand("open folder") == nil)
