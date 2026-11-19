@@ -45,7 +45,7 @@ public enum NotchStatusPolicy {
         func plain(_ text: String, tap: NotchTapAction? = nil, activity: SaysoActivity? = nil) -> NotchStatus {
             NotchStatus(text: text, criticalActions: [], tapAction: tap, dismissActionID: nil, activity: activity)
         }
-        if !partialText.isEmpty, isLive || !isControl { return plain(partialText) }
+        if !partialText.isEmpty, isLive { return plain(partialText) }
         if let notice { return plain(notice) }
         if !isLive, !isControl, let primary {
             let presentation = SaysoActivityPresentation(primary)
@@ -55,6 +55,7 @@ public enum NotchStatusPolicy {
                 NotchTapAction(moduleID: primary.moduleID, stackID: primary.stackID, actionID: $0.id, title: $0.title)
             }, activity: primary)
         }
+        if !partialText.isEmpty, !isControl { return plain(partialText) }
         if isControl { return plain(controlStatus) }
         if isListening ?? isLive { return plain("Listening for dictation") }
         return plain("Ready to dictate into the focused app")

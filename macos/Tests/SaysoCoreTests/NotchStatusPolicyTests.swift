@@ -42,14 +42,14 @@ private func status(
     #expect(status(primary: confirmationWithoutDeny).dismissActionID == nil)
 }
 
-@Test func nonCriticalActivityKeepsTheOldPrecedenceAndTapRunsItsFirstAction() {
+@Test func nonCriticalActivityShowsWhenDictationIsFinishedAndTapRunsItsFirstAction() {
     let idle = status(primary: retry)
     #expect(idle.text == "Could not install Model")
     #expect(idle.criticalActions.isEmpty)
     #expect(idle.tapAction == NotchTapAction(moduleID: "models", stackID: "install-m", actionID: "retry", title: "Retry"))
     #expect(idle.dismissActionID == nil)
 
-    #expect(status(partial: "hello", primary: retry).text == "hello")
+    #expect(status(partial: "hello", primary: retry).text == "Could not install Model")
     #expect(status(notice: "Saved", primary: retry).text == "Saved")
     #expect(status(live: true, primary: retry).tapAction == nil)
 }
@@ -67,6 +67,27 @@ private func status(
         #expect(result.dismissActionID == "dismiss")
         #expect(result.tapAction == nil, "tapping the question text never picks a choice")
     }
+}
+
+@Test func aFinishedTranscriptYieldsToAnActiveModuleNotice() {
+    let colour = SaysoActivity(moduleID: "color-picker", stackID: "picked", kind: .completion, title: "Picked #1E1E1E")
+    let result = status(partial: "previous dictation", primary: colour)
+    #expect(result.text == "Picked #1E1E1E")
+    #expect(result.activity == colour)
+    #expect(status(partial: "previous dictation", notice: "Saved", primary: colour).text == "Saved")
+}
+
+@Test func liveDictationTextKeepsPriorityOverAModuleNotice() {
+    let colour = SaysoActivity(moduleID: "color-picker", stackID: "picked", kind: .completion, title: "Picked #1E1E1E")
+    #expect(status(partial: "current words", live: true, primary: colour).text == "current words")
+}
+
+@Test func criticalActivityStillOutranksAFinishedTranscript() {
+    #expect(status(partial: "previous dictation", primary: review).text == "Review required: Delete file")
+}
+
+@Test func finishedTranscriptStillShowsWithoutANotice() {
+    #expect(status(partial: "previous dictation").text == "previous dictation")
 }
 
 @Test func controlModeShowsControlStatusAndOtherwiseDictationDefaults() {
@@ -116,5 +137,6 @@ private func status(
     #expect(status(primary: review).activity == review)
     #expect(status(notice: "Saved", primary: track).activity == nil, "a notice replaces the line")
     #expect(status(control: true, controlStatus: "Planned", primary: track).activity == nil, "Control status replaces the line")
-    #expect(status(partial: "hello", primary: track).activity == nil, "a dictation preview replaces the line")
+    #expect(status(partial: "hello", primary: track).activity == track, "an idle transcript yields to the activity")
+    #expect(status(partial: "hello", live: true, primary: track).activity == nil, "a live preview replaces the line")
 }
