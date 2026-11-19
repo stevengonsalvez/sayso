@@ -434,6 +434,14 @@ NOT OBSERVED: Remember (accept) from the card, because the notch exposes no such
 
 Cleanup: the test rule and candidates were reset by writing `[]` into `PersonalLexicon/lexicon.json` and `AutoCorrections/candidates.json` (the app was stopped; both held only my entries, the store loads `[]` as empty), the settings blob was restored, output volume restored to 29, the untitled TextEdit document closed without saving, the app session killed by its exact tmux name. No macOS permission prompt was answered.
 
+## Vocabulary suggestion controls (2026-11-19, issue #102)
+
+RED: `swift test --filter learnedCorrectionsCanBeSeenAndRemovedWithoutTouchingManualRules` failed to compile: `SaysoCorrectionLearning` had no member `learnedRules`. The settings fallback already existed, so its new round-trip test was characterization, not a RED.
+
+GREEN: focused run passed 5 tests, including opt-in settings decoding, candidate Remember and Dismiss, and removal of an automatically learned rule without removing a manual rule. Full `swift test` passed 988 tests in 39 suites with no failures, including the added card-resolution assertion on bridge sync. The Settings toggle and Studio controls compiled as part of the test build.
+
+NOT OBSERVED: the app was not launched or driven. Toggle behavior, Studio button taps, live list refresh, and notch card refresh remain unverified in a running app. No microphone, target text field, or macOS permission prompt was used.
+
 ## Issue #90 SLM download status and Cancel (2026-11-19)
 
 RED: focused `swift test --filter slmProgressAndCompletionReachModelsModule` failed to compile with `cannot find 'LocalSlmInstaller' in scope` in `LocalSlmInstallerTests.swift:23`. GREEN: focused SLM installer tests passed (3 tests), covering progress into ModelsModule, ready notice with 5 s expiry, Cancel clearing the activity and partial file without an install, and failure with Retry. Full `swift test`: 989 tests in 39 suites passed, 0 failures.

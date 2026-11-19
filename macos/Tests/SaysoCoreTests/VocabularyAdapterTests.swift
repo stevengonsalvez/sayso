@@ -16,8 +16,9 @@ private func makeLearning() async -> (SaysoCorrectionLearning, URL) {
 @Test func bridgeAnnouncesEachNewCandidateOnceAndAcceptPromotesItIntoARule() async throws {
     let (learning, root) = await makeLearning()
     defer { try? FileManager.default.removeItem(at: root) }
-    let bus = SaysoEventBus(), seen = Seen()
+    let bus = SaysoEventBus(), seen = Seen(), resolved = Resolved()
     _ = bus.subscribe(CorrectionCandidateReady.self) { seen.ready.append($0) }
+    _ = bus.subscribe(CorrectionCandidateResolved.self) { resolved.ids.append($0.candidateID) }
     let bridge = VocabularyBridge(learning: learning, bus: bus)
 
     try await learning.recordEdit(original: "Alen", edited: "Allen", sourceApplication: "Mail")
@@ -27,6 +28,8 @@ private func makeLearning() async -> (SaysoCorrectionLearning, URL) {
     #expect(seen.ready == [CorrectionCandidateReady(candidateID: candidate.id, source: "Alen", replacement: "Allen")])
 
     try await bridge.promote(candidateID: candidate.id)
+    bridge.sync()
+    #expect(resolved.ids == [candidate.id])
     #expect(learning.apply(to: "Alen arrived.").transformedText == "Allen arrived.")
 }
 
