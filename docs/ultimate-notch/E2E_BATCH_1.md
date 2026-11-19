@@ -73,7 +73,7 @@ Bundle ids: only TextEdit (`com.apple.TextEdit`) and Finder (`com.apple.finder`)
 | Orca | `?` (resolve at run time) | Focus an empty editable field | Same as TextEdit, or a documented limitation |
 | Arc | `?` (Arc is commonly `company.thebrowser.Browser`; resolve at run time) | Focus a text input on a scratch page, not the address bar | Same |
 | WhatsApp | `?` (resolve at run time) | Open a chat with a disposable contact, type in the draft field | Draft text exact; MESSAGE IS NEVER SENT; clear the draft afterwards |
-| Finder | `com.apple.finder` | Rename field of a scratch file | Record the result. The current build refuses (`ok:false`, `delivery:clipboard`, `targetCanPaste:false`, issue #91). Insertion or a clean refusal are both acceptable; the field must not be corrupted and no file may be renamed |
+| Finder | `com.apple.finder` | Rename field of a scratch file | Pass: the text is inserted. The build at 7da6831 refuses (`ok:false`, `delivery:clipboard`, `targetCanPaste:false`); record that as FAIL against issue #91 until #91 is fixed. A corrupted field or a renamed file is a safety FAIL |
 
 For the Finder rename field, `TextOutput.insertOrCopy` in `macos/Sources/SaysoCore/TextTools.swift` gates insertion and paste on `Destination.isSafeDeliveryTarget` and copies the text when that check fails; `TextOutput.canPaste` reports the same check. That fallback is deliberate, but which inner check failed for the rename field has not been traced (issue #91), so a refusal here is not a documented rule about Finder.
 
