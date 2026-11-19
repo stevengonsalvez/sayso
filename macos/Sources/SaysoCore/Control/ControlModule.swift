@@ -63,12 +63,23 @@ public struct ControlModule: SaysoModule {
                       let choice = lock.withLock({ choices.indices.contains(index) ? choices[index] : nil }) else { return }
                 context.dismiss(stackID: "clarification")
                 context.emit(ControlClarificationChosen(choice: choice))
+            case ("clarification", "dismiss"):
+                context.dismiss(stackID: "clarification")
+                context.emit(ControlCancelRequested())
             default:
                 break
             }
         }
 
+        /// Once the run moves on (a spoken answer or a tap), the question is stale; leaving its critical card up would
+        /// show dead buttons and sit above the next review card.
+        private func clearClarification() {
+            lock.withLock { choices = [] }
+            context.dismiss(stackID: "clarification")
+        }
+
         private func showRun(_ text: String) {
+            clearClarification()
             context.publish(
                 stackID: "run", kind: .activeTask, title: "Control: \(text)",
                 actions: [SaysoAction(id: "cancel", title: "Cancel")]
@@ -81,10 +92,15 @@ public struct ControlModule: SaysoModule {
                 stackID: "clarification", kind: .confirmation, title: question.question,
                 expiresAfter: ControlClarification.maximumAge,
                 actions: question.choices.enumerated().map { SaysoAction(id: "choice-\($0.offset)", title: $0.element) }
+                    + [SaysoAction(id: "dismiss", title: "Cancel")],
+                // Only critical activities draw their actions as buttons in the notch; a normal one shows the question as
+                // plain text with no way to answer it.
+                interruption: .critical
             )
         }
 
         private func review(_ request: ControlConfirmationRequired) {
+            clearClarification()
             lock.withLock { reviewStep = request.stepID }
             context.publish(
                 stackID: "confirmation", kind: .confirmation, title: "Review required: \(request.reason)",
