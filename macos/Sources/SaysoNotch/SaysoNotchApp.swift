@@ -2438,6 +2438,9 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
+    var pendingCorrections: [AutoCorrectionCandidate] { corrections.candidates }
+    var learnedCorrections: [PersonalLexiconRule] { corrections.learnedRules }
+
     func removeLexiconCorrection(_ rule: PersonalLexiconRule) {
         Task {
             do {
@@ -7480,7 +7483,7 @@ private struct VocabularyWorkspace: View {
             Divider()
 
             // Entry List
-            if filteredEntries.isEmpty {
+            if filteredEntries.isEmpty && model.pendingCorrections.isEmpty && model.learnedCorrections.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: "character.book.closed")
@@ -7496,6 +7499,32 @@ private struct VocabularyWorkspace: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
+                    if !model.pendingCorrections.isEmpty {
+                        Section("Suggestions") {
+                            ForEach(model.pendingCorrections) { candidate in
+                                HStack {
+                                    Text("\(candidate.original) → \(candidate.corrected)")
+                                    Spacer()
+                                    Button("Remember") { model.promoteCorrection(candidate) }
+                                        .accessibilityIdentifier("vocabulary-suggestion-remember-\(candidate.original)")
+                                    Button("Dismiss") { model.dismissCorrection(candidate) }
+                                        .accessibilityIdentifier("vocabulary-suggestion-dismiss-\(candidate.original)")
+                                }
+                            }
+                        }
+                    }
+                    if !model.learnedCorrections.isEmpty {
+                        Section("Learned corrections") {
+                            ForEach(model.learnedCorrections) { rule in
+                                HStack {
+                                    Text("\(rule.aliases.joined(separator: ", ")) → \(rule.canonical)")
+                                    Spacer()
+                                    Button("Remove") { model.removeLexiconCorrection(rule) }
+                                        .accessibilityIdentifier("vocabulary-learned-remove-\(rule.aliases.first ?? rule.canonical)")
+                                }
+                            }
+                        }
+                    }
                     ForEach(filteredEntries) { entry in
                         HStack(spacing: 14) {
                             VStack(alignment: .leading, spacing: 4) {
@@ -9487,6 +9516,15 @@ private struct SaysoSettingsView: View {
                     Toggle("Snippets", isOn: $model.settings.snippetsEnabled)
                         .labelsHidden()
                         .accessibilityIdentifier("settings-snippets-toggle")
+                }
+                SaysoSettingItemCard(
+                    title: "Learn from edits after dictation (off by default)",
+                    description: "After Sayso inserts a dictation into another app, it reads that text field again after 10 to 30 seconds to see which words you changed. Corrections stay on this Mac only. Sayso suggests remembering a correction and can remember it automatically after repeated matching edits. Nothing is sent anywhere.",
+                    example: "Change report to reports, then choose Remember in Vocabulary."
+                ) {
+                    Toggle("Learn from edits", isOn: $model.settings.autoCorrectionsEnabled)
+                        .labelsHidden()
+                        .accessibilityIdentifier("settings-auto-corrections-toggle")
                 }
 
                 // Section 5: Reset & Maintenance

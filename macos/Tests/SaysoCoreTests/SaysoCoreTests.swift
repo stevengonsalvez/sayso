@@ -81,6 +81,17 @@ import Testing
     #expect(try JSONDecoder().decode(SaysoSettings.self, from: invalidSessionMaximum).handsFreeMaximumSessionDurationSeconds == 30)
 }
 
+@Test func autoCorrectionsRemainOptInAcrossOlderSettingsAndRoundTrip() throws {
+    #expect(!SaysoSettings().autoCorrectionsEnabled)
+    let older = Data("{\"mode\":\"dictation\"}".utf8)
+    #expect(!(try JSONDecoder().decode(SaysoSettings.self, from: older)).autoCorrectionsEnabled)
+
+    var enabled = SaysoSettings()
+    enabled.autoCorrectionsEnabled = true
+    let saved = try JSONEncoder().encode(enabled)
+    #expect(try JSONDecoder().decode(SaysoSettings.self, from: saved).autoCorrectionsEnabled)
+}
+
 @Test func firstRunMigratesAutomaticLanguageToEnglish() {
     var settings = SaysoSettings()
     settings.language = .automatic
