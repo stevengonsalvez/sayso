@@ -434,6 +434,12 @@ NOT OBSERVED: Remember (accept) from the card, because the notch exposes no such
 
 Cleanup: the test rule and candidates were reset by writing `[]` into `PersonalLexicon/lexicon.json` and `AutoCorrections/candidates.json` (the app was stopped; both held only my entries, the store loads `[]` as empty), the settings blob was restored, output volume restored to 29, the untitled TextEdit document closed without saving, the app session killed by its exact tmux name. No macOS permission prompt was answered.
 
+## Issue #90 SLM download status and Cancel (2026-11-19)
+
+RED: focused `swift test --filter slmProgressAndCompletionReachModelsModule` failed to compile with `cannot find 'LocalSlmInstaller' in scope` in `LocalSlmInstallerTests.swift:23`. GREEN: focused SLM installer tests passed (3 tests), covering progress into ModelsModule, ready notice with 5 s expiry, Cancel clearing the activity and partial file without an install, and failure with Retry. Full `swift test`: 989 tests in 39 suites passed, 0 failures.
+
+NOT OBSERVED: a real SLM download, live notch rendering, or a Cancel click in the packaged app. The downloader and module tests use an injected fake download and event bus.
+
 ## Stale transcript hides module notices (issue #89, 2026-11-19)
 
 - RED: `swift test --filter NotchStatusPolicyTests` failed with 3 issues at the first RED run; the old line fails 5 issues against the final test set (an Opus review replayed it). `aFinishedTranscriptYieldsToAnActiveModuleNotice` showed `previous dictation` instead of `Picked #1E1E1E` and returned no activity; the retry activity test showed `hello` instead of `Could not install Model`.
