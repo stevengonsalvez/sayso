@@ -153,29 +153,6 @@ final class SaysoAppModel: ObservableObject {
         }
     }
 
-    private final class SlmDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-        let onProgress: (Double) -> Void
-
-        init(onProgress: @escaping (Double) -> Void) {
-            self.onProgress = onProgress
-        }
-
-        func urlSession(
-            _ session: URLSession,
-            downloadTask: URLSessionDownloadTask,
-            didWriteData bytesWritten: Int64,
-            totalBytesWritten: Int64,
-            totalBytesExpectedToWrite: Int64
-        ) {
-            guard totalBytesExpectedToWrite > 0 else { return }
-            let progress = min(0.99, max(0.05, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
-            onProgress(progress)
-        }
-
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        }
-    }
-
     @Published var settings: SaysoSettings
     @Published var lastTranscript: Transcript?
     @Published var controlStatus = "Ready"
@@ -362,6 +339,28 @@ final class SaysoAppModel: ObservableObject {
     private var expiryTicker: SaysoExpiryTicker?
     private var modelRetrySubscription: SaysoSubscription?
     private lazy var modelInstallReporter = ModelInstallReporter(bus: moduleEvents)
+    private lazy var slmInstaller: LocalSlmInstaller = {
+        let installer = LocalSlmInstaller(bus: moduleEvents)
+        installer.onChange = { [weak self] manifest, state, progress in
+            guard let self else { return }
+            let wasInstalling = self.slmStates[manifest.id] == .installing
+            self.slmStates[manifest.id] = state
+            if let progress {
+                self.slmDownloadProgress[manifest.id] = progress
+            } else {
+                self.slmDownloadProgress.removeValue(forKey: manifest.id)
+            }
+            switch state {
+            case .installing where !wasInstalling: self.notice = "Downloading \(manifest.displayName)..."
+            case .installed: self.notice = "\(manifest.displayName) ready on disk."
+            case .failed(let message): self.notice = "Download failed: \(message)"
+            case .notInstalled where wasInstalling && self.notice == "Downloading \(manifest.displayName)...":
+                self.notice = nil
+            default: break
+            }
+        }
+        return installer
+    }()
     private var transcriberChangeObserver: AnyCancellable?
     private var controlRun: ControlCommandRun?
     private var controlExecutionTask: Task<Void, Never>?
@@ -2156,43 +2155,9 @@ final class SaysoAppModel: ObservableObject {
         return slmStates[manifest.id] ?? .notInstalled
     }
 
-    func installSlm(_ manifest: LocalSlmManifest) async {
-        await MainActor.run {
-            slmStates[manifest.id] = .installing
-            slmDownloadProgress[manifest.id] = 0.05
-            notice = "Downloading \(manifest.displayName)..."
-        }
-        let destDir = LocalSlmCatalog.modelsDirectory()
-        let destFile = destDir.appendingPathComponent(manifest.fileName)
-        let delegate = SlmDownloadDelegate { [weak self] progress in
-            Task { @MainActor [weak self] in
-                self?.slmDownloadProgress[manifest.id] = progress
-            }
-        }
-        do {
-            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-            let (tempURL, response) = try await session.download(from: manifest.downloadURL)
-            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 500
-                throw LocalModelInstallError.unexpectedHTTPStatus(manifest.downloadURL, code)
-            }
-            if FileManager.default.fileExists(atPath: destFile.path) {
-                try? FileManager.default.removeItem(at: destFile)
-            }
-            try FileManager.default.moveItem(at: tempURL, to: destFile)
-            await MainActor.run {
-                slmStates[manifest.id] = .installed
-                slmDownloadProgress[manifest.id] = 1.0
-                notice = "\(manifest.displayName) ready on disk."
-            }
-        } catch {
-            await MainActor.run {
-                slmStates[manifest.id] = .failed(error.localizedDescription)
-                slmDownloadProgress.removeValue(forKey: manifest.id)
-                notice = "Download failed: \(error.localizedDescription)"
-            }
-        }
-    }
+    func installSlm(_ manifest: LocalSlmManifest) { slmInstaller.start(manifest) }
+
+    func cancelSlm(_ manifest: LocalSlmManifest) { slmInstaller.cancel(manifest) }
 
     func deleteSlm(_ manifest: LocalSlmManifest) {
         try? LocalSlmCatalog.delete(manifest)
@@ -2713,7 +2678,8 @@ final class SaysoAppModel: ObservableObject {
                 case FluidAudioLocalModelManager.multilingualModelID:
                     await self.localEnglishModel.install(language: self.settings.language)
                 case SherpaPunjabiModelManager.modelID: await self.localPunjabiModel.install()
-                default: break
+                default:
+                    if let slm = LocalSlmCatalog.byId(request.modelID) { self.installSlm(slm) }
                 }
             }
         }
@@ -6737,6 +6703,7 @@ private struct LocalSlmRowCard: View {
     let progress: Double?
     let onSelect: () -> Void
     let onDownload: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
         SaysoCard {
@@ -6891,6 +6858,9 @@ private struct LocalSlmRowCard: View {
                         RoundedRectangle(cornerRadius: 10)
                             .strokeBorder(SaysoPalette.brandAmber.opacity(0.3), lineWidth: 1)
                     )
+                    Button("Cancel", action: onCancel)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                 } else {
                     Button(action: onDownload) {
                         HStack(spacing: 8) {
@@ -7137,8 +7107,9 @@ private struct AICleanupWorkspace: View {
                             model.save()
                         },
                         onDownload: {
-                            Task { await model.installSlm(slm) }
-                        }
+                            model.installSlm(slm)
+                        },
+                        onCancel: { model.cancelSlm(slm) }
                     )
                 }
             }
@@ -8209,6 +8180,7 @@ private struct SaysoSlmGridCard: View {
     let progress: Double?
     let onSelect: () -> Void
     let onDownload: () -> Void
+    let onCancel: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -8316,6 +8288,10 @@ private struct SaysoSlmGridCard: View {
                         Text("Downloading \(pct)%")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(SaysoPalette.brandAmber)
+                        Spacer()
+                        Button("Cancel", action: onCancel)
+                            .buttonStyle(.borderless)
+                            .font(.caption2)
                     }
                     ProgressView(value: currentProgress)
                         .tint(SaysoPalette.brandAmber)
@@ -8750,8 +8726,9 @@ private struct ModelsWorkspace: View {
                         model.save()
                     },
                     onDownload: {
-                        Task { await model.installSlm(slm) }
+                        model.installSlm(slm)
                     },
+                    onCancel: { model.cancelSlm(slm) },
                     onDelete: {
                         model.deleteSlm(slm)
                     }
@@ -10703,12 +10680,15 @@ private struct StepTwoPostProcessingView: View {
                                         .foregroundStyle(SaysoPalette.brandAmber)
                                     ProgressView(value: model.slmDownloadProgress[slm.id] ?? 0.05)
                                         .tint(SaysoPalette.brandAmber)
+                                    Button("Cancel") { model.cancelSlm(slm) }
+                                        .buttonStyle(.borderless)
+                                        .font(.caption2)
                                 }
                                 .padding(8)
                                 .background(SaysoPalette.brandNavyWell, in: RoundedRectangle(cornerRadius: 6))
                             } else {
                                 Button(action: {
-                                    Task { await model.installSlm(slm) }
+                                    model.installSlm(slm)
                                 }) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "arrow.down.circle.fill")

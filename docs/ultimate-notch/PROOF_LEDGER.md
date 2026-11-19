@@ -442,6 +442,12 @@ GREEN: focused run passed 5 tests, including opt-in settings decoding, candidate
 
 NOT OBSERVED: the app was not launched or driven. Toggle behavior, Studio button taps, live list refresh, and notch card refresh remain unverified in a running app. No microphone, target text field, or macOS permission prompt was used.
 
+## Issue #90 SLM download status and Cancel (2026-11-19)
+
+RED: focused `swift test --filter slmProgressAndCompletionReachModelsModule` failed to compile with `cannot find 'LocalSlmInstaller' in scope` in `LocalSlmInstallerTests.swift:23`. GREEN: focused SLM installer tests passed (3 tests), covering progress into ModelsModule, ready notice with 5 s expiry, Cancel clearing the activity and partial file without an install, and failure with Retry. Full `swift test`: 989 tests in 39 suites passed, 0 failures.
+
+NOT OBSERVED: a real SLM download, live notch rendering, or a Cancel click in the packaged app. The downloader and module tests use an injected fake download and event bus.
+
 ## Stale transcript hides module notices (issue #89, 2026-11-19)
 
 - RED: `swift test --filter NotchStatusPolicyTests` failed with 3 issues at the first RED run; the old line fails 5 issues against the final test set (an Opus review replayed it). `aFinishedTranscriptYieldsToAnActiveModuleNotice` showed `previous dictation` instead of `Picked #1E1E1E` and returned no activity; the retry activity test showed `hello` instead of `Could not install Model`.

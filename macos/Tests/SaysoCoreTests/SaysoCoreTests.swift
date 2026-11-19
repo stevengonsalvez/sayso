@@ -408,22 +408,26 @@ import Testing
     let captured = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: "ai.sayso.target",
-        launchDate: start
+        launchDate: start,
+        processStartTime: nil
     )
     let reusedProcess = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: "ai.sayso.reused",
-        launchDate: start
+        launchDate: start,
+        processStartTime: nil
     )
     let missingBundle = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: nil,
-        launchDate: start
+        launchDate: start,
+        processStartTime: nil
     )
     let missingLaunchDate = TextOutputTargetIdentity(
         processIdentifier: 42,
         bundleIdentifier: "ai.sayso.target",
-        launchDate: nil
+        launchDate: nil,
+        processStartTime: nil
     )
 
     #expect(captured.matches(captured))
@@ -443,9 +447,46 @@ import Testing
         !captured.matches(.init(
             processIdentifier: 42,
             bundleIdentifier: "ai.sayso.target",
-            launchDate: start.addingTimeInterval(1)
+            launchDate: start.addingTimeInterval(1),
+            processStartTime: nil
         ))
     )
+}
+
+@Test func textOutputTargetIdentityMatchesNilLaunchDatesOnlyWithAProcessStartTime() {
+    let start = Date(timeIntervalSinceReferenceDate: 123)
+    let started = Date(timeIntervalSinceReferenceDate: 456)
+    let restarted = Date(timeIntervalSinceReferenceDate: 789)
+    let identity: (pid_t, String?, Date?, Date?) -> TextOutputTargetIdentity = {
+        TextOutputTargetIdentity(
+            processIdentifier: $0,
+            bundleIdentifier: $1,
+            launchDate: $2,
+            processStartTime: $3
+        )
+    }
+    let captured = identity(42, "com.apple.finder", nil, started)
+
+    #expect(captured.matches(identity(42, "com.apple.finder", nil, started)))
+    #expect(!captured.matches(identity(42, "com.apple.finder", nil, restarted)), "same pid, different process start: pid reuse")
+    #expect(!captured.matches(identity(42, "com.apple.finder", nil, nil)))
+    #expect(!identity(42, "com.apple.finder", nil, nil).matches(captured))
+    #expect(!captured.matches(identity(42, "com.apple.finder", start, started)))
+    #expect(!identity(42, "com.apple.finder", start, started).matches(captured))
+    #expect(identity(42, "com.apple.finder", start, nil).matches(identity(42, "com.apple.finder", start, nil)))
+    #expect(identity(42, "com.apple.finder", start, started).matches(identity(42, "com.apple.finder", start, restarted)), "a launch date on both sides decides")
+    #expect(!identity(42, "com.apple.finder", start, nil).matches(identity(42, "com.apple.finder", start.addingTimeInterval(1), nil)))
+    #expect(!captured.matches(identity(43, "com.apple.finder", nil, started)))
+    #expect(!captured.matches(identity(42, "ai.sayso.other", nil, started)))
+    let noBundle = TextOutputTargetIdentity(processIdentifier: 42, bundleIdentifier: nil, launchDate: nil, processStartTime: started)
+    #expect(!noBundle.matches(noBundle), "a missing bundle id never matches, even with equal start times")
+}
+
+@Test func processStartTimeIsStableAndReadableForTheCurrentProcessAndNilForAnImpossiblePid() {
+    let pid = ProcessInfo.processInfo.processIdentifier
+    #expect(TextOutputTargetIdentity.processStartTime(of: pid) != nil)
+    #expect(TextOutputTargetIdentity.processStartTime(of: pid) == TextOutputTargetIdentity.processStartTime(of: pid))
+    #expect(TextOutputTargetIdentity.processStartTime(of: 2_147_483_000) == nil)
 }
 
 @Test func appPasteFallbackAllowsOnlyExplicitMissingAXFocus() {
