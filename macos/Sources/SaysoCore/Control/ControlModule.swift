@@ -63,6 +63,9 @@ public struct ControlModule: SaysoModule {
                       let choice = lock.withLock({ choices.indices.contains(index) ? choices[index] : nil }) else { return }
                 context.dismiss(stackID: "clarification")
                 context.emit(ControlClarificationChosen(choice: choice))
+            case ("clarification", "dismiss"):
+                context.dismiss(stackID: "clarification")
+                context.emit(ControlCancelRequested())
             default:
                 break
             }
@@ -81,6 +84,10 @@ public struct ControlModule: SaysoModule {
                 stackID: "clarification", kind: .confirmation, title: question.question,
                 expiresAfter: ControlClarification.maximumAge,
                 actions: question.choices.enumerated().map { SaysoAction(id: "choice-\($0.offset)", title: $0.element) }
+                    + [SaysoAction(id: "dismiss", title: "Cancel")],
+                // Only critical activities draw their actions as buttons in the notch; a normal one shows the question as
+                // plain text with no way to answer it.
+                interruption: .critical
             )
         }
 

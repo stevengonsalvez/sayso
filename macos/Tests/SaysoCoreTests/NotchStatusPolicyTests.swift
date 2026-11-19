@@ -54,6 +54,21 @@ private func status(
     #expect(status(live: true, primary: retry).tapAction == nil)
 }
 
+@Test func aClarificationShowsOneButtonPerChoiceAndACancelThatDismissesIt() {
+    let question = SaysoActivity(
+        moduleID: "control", stackID: "clarification", kind: .confirmation, title: "Which one: 1: Plugly?",
+        actions: [SaysoAction(id: "choice-0", title: "1: Plugly"), SaysoAction(id: "dismiss", title: "Cancel")],
+        interruption: .critical
+    )
+    for control in [true, false] {
+        let result = status(control: control, controlStatus: "Which one: 1: Plugly?", primary: question)
+        #expect(result.text == "Which one: 1: Plugly?")
+        #expect(result.criticalActions.map(\.title) == ["1: Plugly", "Cancel"])
+        #expect(result.dismissActionID == "dismiss")
+        #expect(result.tapAction == nil, "tapping the question text never picks a choice")
+    }
+}
+
 @Test func controlModeShowsControlStatusAndOtherwiseDictationDefaults() {
     #expect(status(control: true, controlStatus: "Planned: open", primary: retry).text == "Planned: open")
     #expect(status().text == "Ready to dictate into the focused app")

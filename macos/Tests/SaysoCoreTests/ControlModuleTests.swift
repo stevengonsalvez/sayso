@@ -42,12 +42,22 @@ private func setup() -> (SaysoModuleHost, SaysoEventBus, Answers) {
     let ask = host.engine.stack.first
     #expect(ask?.title == "Which one: Steve, Steven?")
     #expect(ask?.kind == .confirmation)
-    #expect(ask?.interruption == .normal)
-    #expect(ask?.actions.map(\.title) == ["Steve", "Steven"])
+    #expect(ask?.interruption == .critical, "a normal activity draws no choice buttons in the notch")
+    #expect(ask?.actions.map(\.title) == ["Steve", "Steven", "Cancel"])
     #expect(ask?.expiresAfter == ControlClarification.maximumAge)
 
     #expect(host.perform(actionID: "choice-1", stackID: "clarification", moduleID: "control"))
     #expect(answers.choices == ["Steven"])
+    #expect(host.engine.stack.isEmpty)
+}
+
+@Test func cancellingAClarificationCancelsTheRunAndClearsTheCard() {
+    let (host, bus, answers) = setup()
+    bus.publish(ControlClarificationAsked(question: "Which one: Plugly?", choices: ["1: Plugly"], askedAt: Date()))
+
+    #expect(host.perform(actionID: "dismiss", stackID: "clarification", moduleID: "control"))
+    #expect(answers.cancels == 1)
+    #expect(answers.choices.isEmpty)
     #expect(host.engine.stack.isEmpty)
 }
 
