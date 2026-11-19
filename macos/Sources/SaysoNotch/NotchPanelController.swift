@@ -369,7 +369,9 @@ private struct VoiceWorkspaceContent: View {
         let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
         return NotchStatusPolicy.resolve(
             partialText: activeText,
-            isLive: isLive,
+            // Processing keeps the transcript line only while there is text to show; with no text yet, a module
+            // activity (for example now playing) must not be replaced by the idle "Ready to dictate" line.
+            isLive: isLive || (isProcessing && model.settings.mode == .dictation && !activeText.isEmpty),
             isControl: model.settings.mode == .control,
             notice: model.notice,
             controlStatus: model.controlStatus,
