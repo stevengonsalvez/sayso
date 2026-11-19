@@ -419,3 +419,9 @@ Defects (issue #102): the feature cannot be enabled from the app; the card carri
 NOT OBSERVED: Remember (accept) from the card, because the notch exposes no such control; the collapsed pill never showed the card; the same correction in an app other than TextEdit; the recognizer produced a different misspelling of the made-up word on each run, so the corrected word was `report` (always heard correctly) instead of a recognition error.
 
 Cleanup: the test rule and candidates were reset by writing `[]` into `PersonalLexicon/lexicon.json` and `AutoCorrections/candidates.json` (the app was stopped; both held only my entries, the store loads `[]` as empty), the settings blob was restored, output volume restored to 29, the untitled TextEdit document closed without saving, the app session killed by its exact tmux name. No macOS permission prompt was answered.
+
+## Stale transcript hides module notices (issue #89, 2026-11-19)
+
+- RED: `swift test --filter NotchStatusPolicyTests` failed with 3 issues. `aFinishedTranscriptYieldsToAnActiveModuleNotice` showed `previous dictation` instead of `Picked #1E1E1E` and returned no activity; the retry activity test showed `hello` instead of `Could not install Model`.
+- GREEN: finished dictation text now yields to notices and primary module activity, but remains the fallback with no notice. Recording and processing text keep priority. The focused policy run passed 11 tests; full `swift test` passed 990 tests in 39 suites, 0 failures.
+- Source check: the activity engine ranks and pins the primary activity, and the expanded notch renders the resolved status in its module row. NOT OBSERVED: the real notch was not driven live in this change.
