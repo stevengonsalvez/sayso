@@ -467,10 +467,14 @@ import Testing
     #expect(!identity(42, "com.apple.finder", start, nil).matches(identity(42, "com.apple.finder", start.addingTimeInterval(1), nil)))
     #expect(!captured.matches(identity(43, "com.apple.finder", nil, started)))
     #expect(!captured.matches(identity(42, "ai.sayso.other", nil, started)))
+    let noBundle = TextOutputTargetIdentity(processIdentifier: 42, bundleIdentifier: nil, launchDate: nil, processStartTime: started)
+    #expect(!noBundle.matches(noBundle), "a missing bundle id never matches, even with equal start times")
 }
 
-@Test func processStartTimeIsReadableForTheCurrentProcessAndNilForAnImpossiblePid() {
-    #expect(TextOutputTargetIdentity.processStartTime(of: ProcessInfo.processInfo.processIdentifier) != nil)
+@Test func processStartTimeIsStableAndReadableForTheCurrentProcessAndNilForAnImpossiblePid() {
+    let pid = ProcessInfo.processInfo.processIdentifier
+    #expect(TextOutputTargetIdentity.processStartTime(of: pid) != nil)
+    #expect(TextOutputTargetIdentity.processStartTime(of: pid) == TextOutputTargetIdentity.processStartTime(of: pid))
     #expect(TextOutputTargetIdentity.processStartTime(of: 2_147_483_000) == nil)
 }
 

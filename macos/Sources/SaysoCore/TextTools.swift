@@ -31,9 +31,17 @@ struct TextOutputTargetIdentity: Equatable, Sendable {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, processIdentifier]
-        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0,
+              info.kp_proc.p_pid == processIdentifier else { return nil }
         let start = info.kp_proc.p_un.__p_starttime
         return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }
+
+    /// The pid-reuse fingerprint for an app that reports no `launchDate`. Only regular (Dock) apps qualify, so background
+    /// and accessory processes with no launch date (login window, authentication prompts, agents) stay refused.
+    static func fallbackStartTime(for application: NSRunningApplication) -> Date? {
+        guard application.launchDate == nil, application.activationPolicy == .regular else { return nil }
+        return processStartTime(of: application.processIdentifier)
     }
 
     func allowsDelivery(
@@ -385,7 +393,7 @@ public enum TextOutput {
                 processIdentifier: targetProcessIdentifier,
                 bundleIdentifier: runningApplication.bundleIdentifier,
                 launchDate: runningApplication.launchDate,
-                processStartTime: TextOutputTargetIdentity.processStartTime(of: targetProcessIdentifier)
+                processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: runningApplication)
             ),
             bundleIdentifier: runningApplication.bundleIdentifier,
             recordingDestination: .init(
@@ -902,7 +910,7 @@ public enum SelectedTextEdit {
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
             launchDate: application.launchDate,
-            processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
+            processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
         )
         return .init(
             field: field,
@@ -921,7 +929,7 @@ public enum SelectedTextEdit {
                   processIdentifier: application.processIdentifier,
                   bundleIdentifier: application.bundleIdentifier,
                   launchDate: application.launchDate,
-                  processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
+                  processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
               )),
               let focused = copyElement(
                   kAXFocusedUIElementAttribute as CFString,
@@ -1043,7 +1051,7 @@ private extension TextOutput {
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
             launchDate: application.launchDate,
-            processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
+            processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
         )
     }
 
