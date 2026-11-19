@@ -7,15 +7,33 @@ struct TextOutputTargetIdentity: Equatable, Sendable {
     let processIdentifier: pid_t
     let bundleIdentifier: String?
     let launchDate: Date?
+    /// Kernel start time of the process. Some apps (Finder) report no `launchDate`, so this is the pid-reuse fingerprint then.
+    let processStartTime: Date?
 
     func matches(_ current: TextOutputTargetIdentity) -> Bool {
         guard let bundleIdentifier,
               let currentBundleIdentifier = current.bundleIdentifier,
-              let launchDate,
-              let currentLaunchDate = current.launchDate else { return false }
-        return processIdentifier == current.processIdentifier
-            && bundleIdentifier == currentBundleIdentifier
-            && launchDate == currentLaunchDate
+              processIdentifier == current.processIdentifier,
+              bundleIdentifier == currentBundleIdentifier else { return false }
+        switch (launchDate, current.launchDate) {
+        case let (captured?, current?):
+            return captured == current
+        case (nil, nil):
+            guard let processStartTime, let currentProcessStartTime = current.processStartTime else { return false }
+            return processStartTime == currentProcessStartTime
+        default:
+            return false
+        }
+    }
+
+    /// The kernel's start time for `processIdentifier`, or nil when the process is gone or the lookup fails.
+    static func processStartTime(of processIdentifier: pid_t) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, processIdentifier]
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
     }
 
     func allowsDelivery(
@@ -366,7 +384,8 @@ public enum TextOutput {
             applicationIdentity: .init(
                 processIdentifier: targetProcessIdentifier,
                 bundleIdentifier: runningApplication.bundleIdentifier,
-                launchDate: runningApplication.launchDate
+                launchDate: runningApplication.launchDate,
+                processStartTime: TextOutputTargetIdentity.processStartTime(of: targetProcessIdentifier)
             ),
             bundleIdentifier: runningApplication.bundleIdentifier,
             recordingDestination: .init(
@@ -882,7 +901,8 @@ public enum SelectedTextEdit {
         let identity = TextOutputTargetIdentity(
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
-            launchDate: application.launchDate
+            launchDate: application.launchDate,
+            processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
         )
         return .init(
             field: field,
@@ -900,7 +920,8 @@ public enum SelectedTextEdit {
               capture.applicationIdentity.matches(.init(
                   processIdentifier: application.processIdentifier,
                   bundleIdentifier: application.bundleIdentifier,
-                  launchDate: application.launchDate
+                  launchDate: application.launchDate,
+                  processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
               )),
               let focused = copyElement(
                   kAXFocusedUIElementAttribute as CFString,
@@ -1021,7 +1042,8 @@ private extension TextOutput {
         return .init(
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
-            launchDate: application.launchDate
+            launchDate: application.launchDate,
+            processStartTime: TextOutputTargetIdentity.processStartTime(of: application.processIdentifier)
         )
     }
 
