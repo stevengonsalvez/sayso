@@ -80,3 +80,24 @@ private func permissions(at url: URL) -> Int {
     try await learning.recordEdit(original: "Alen", edited: "Allen", sourceApplication: "Mail")
     #expect(!learning.rules.contains { $0.canonical == "Allen" })
 }
+
+@MainActor
+@Test func learnedCorrectionsCanBeSeenAndRemovedWithoutTouchingManualRules() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let learning = SaysoCorrectionLearning(baseDirectory: root, promotionThreshold: 3)
+    await learning.waitUntilLoaded()
+
+    try await learning.addRule(source: "jon", replacement: "John")
+    try await learning.recordEdit(original: "Alen", edited: "Allen", sourceApplication: "Mail")
+    let candidate = try #require(learning.candidates.first)
+    try await learning.promote(candidate)
+
+    let learned = try #require(learning.learnedRules.first)
+    #expect(learning.learnedRules.count == 1)
+    #expect(learned.canonical == "Allen")
+    #expect(learned.aliases == ["Alen"])
+    try await learning.removeRule(id: learned.id)
+    #expect(learning.learnedRules.isEmpty)
+    #expect(learning.apply(to: "Alen and jon").transformedText == "Alen and John")
+}

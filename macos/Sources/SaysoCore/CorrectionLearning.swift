@@ -119,6 +119,7 @@ public final class SaysoCorrectionLearning: ObservableObject {
     @Published public private(set) var isMonitoring = false
     public var candidates: [AutoCorrectionCandidate] { engine.candidates.filter { !$0.dismissed } }
     public var rules: [PersonalLexiconRule] { lexicon.rules }
+    public var learnedRules: [PersonalLexiconRule] { lexicon.rules.filter { $0.source == .automatic } }
 
     public init(baseDirectory: URL? = nil, promotionThreshold: Int = 3) {
         let configuration = Configuration(promotionThreshold: Self.clampedThreshold(promotionThreshold))
