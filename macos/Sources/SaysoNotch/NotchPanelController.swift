@@ -369,7 +369,7 @@ private struct VoiceWorkspaceContent: View {
         let activeText = !model.livePreviewText.isEmpty ? model.livePreviewText : model.transcriber.partialText
         return NotchStatusPolicy.resolve(
             partialText: activeText,
-            isLive: isLive,
+            isLive: isLive || (isProcessing && model.settings.mode == .dictation),
             isControl: model.settings.mode == .control,
             notice: model.notice,
             controlStatus: model.controlStatus,
