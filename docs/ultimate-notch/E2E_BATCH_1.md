@@ -73,9 +73,9 @@ Bundle ids: only TextEdit (`com.apple.TextEdit`) and Finder (`com.apple.finder`)
 | Orca | `?` (resolve at run time) | Focus an empty editable field | Same as TextEdit, or a documented limitation |
 | Arc | `?` (Arc is commonly `company.thebrowser.Browser`; resolve at run time) | Focus a text input on a scratch page, not the address bar | Same |
 | WhatsApp | `?` (resolve at run time) | Open a chat with a disposable contact, type in the draft field | Draft text exact; MESSAGE IS NEVER SENT; clear the draft afterwards |
-| Finder | `com.apple.finder` | Rename field of a scratch file | Pass: the text is inserted. The build at 7da6831 refuses (`ok:false`, `delivery:clipboard`, `targetCanPaste:false`); record that as FAIL against issue #91 until #91 is fixed. A corrupted field or a renamed file is a safety FAIL |
+| Finder | `com.apple.finder` | Rename field of a scratch file: select it with `open -R <file>`, press Return, then dictate with a hotkey (double Fn); do not click the notch, the rename commits when the field loses focus | Pass: the text is inserted into the rename field (checked 2026-11-19, PR #121). Press Escape afterwards to cancel the rename. A corrupted field or a renamed file you did not intend is a safety FAIL |
 
-For the Finder rename field, `TextOutput.insertOrCopy` in `macos/Sources/SaysoCore/TextTools.swift` gates insertion and paste on `Destination.isSafeDeliveryTarget` and copies the text when that check fails; `TextOutput.canPaste` reports the same check. That fallback is deliberate, but which inner check failed for the rename field has not been traced (issue #91), so a refusal here is not a documented rule about Finder.
+For the Finder rename field, `TextOutput.insertOrCopy` in `macos/Sources/SaysoCore/TextTools.swift` gates insertion and paste on `Destination.isSafeDeliveryTarget`. Finder reports no launch date, so the target identity check now falls back to the kernel process start time for regular apps (#91, PR #121). `sayso acceptance --target com.apple.finder` still returns `ok:false` because live partial insertion exists only for TextEdit and Notes; use real dictation for the Finder row.
 
 Pass criteria per HANDOVER for every target except the Finder row: partial transcript chunks reach the focused target; the clipboard is not used for normal streaming; a temporary clipboard is only a fallback; the previous clipboard is restored after verified insertion; dictated text stays available only when insertion fails. Note: the clipboard module's `pasteTemporarily` is NOT wired; the existing `TextOutput` logic is what is being tested.
 
@@ -105,7 +105,7 @@ Precondition: Desktop Control enabled in Settings and Accessibility granted. Use
 |---|---|
 | 6.1 Run "Open Calculator" | Notch shows "Control: ..." with a Cancel; ends with a completion notice; exactly one finish (no "Control stopped" after a cancel) |
 | 6.2 Cancel mid-run | Notch shows the cancelled state; no later completed or failed notice |
-| 6.3 Ambiguous target (two similar names) | One bounded clarification card with one button per choice; ignoring it for 60 s removes it; tapping the status text never picks a choice |
+| 6.3 Ambiguous target (two similar names) | One bounded clarification card with one button per choice plus a Cancel button that ends the run; answering by voice or tap clears the card; ignoring it for 60 s removes it; tapping the status text never picks a choice |
 | 6.4 A step that requires confirmation | A critical review card with explicit Approve and Deny buttons in EVERY mode; tapping the status text never approves; the menu item reads "Deny" |
 | 6.5 Approve in the Studio window while the card shows | Card disappears; the step runs once |
 | 6.6 Approve a stale card after a second step replaced it | Rejected; nothing runs |
