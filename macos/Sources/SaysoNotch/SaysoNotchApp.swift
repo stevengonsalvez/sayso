@@ -1780,7 +1780,7 @@ final class SaysoAppModel: ObservableObject {
                 setTranscriptCompletionNotice(failure.userMessage)
             }
         }
-        if pendingDelivery.settings.autoCorrectionsEnabled,
+        if settings.autoCorrectionsEnabled, pendingDelivery.settings.autoCorrectionsEnabled,
            case .delivered(.directInsertion) = output {
             corrections.startMonitoring(insertedText: finalText, destination: pendingDelivery.destination)
         }
@@ -9519,7 +9519,7 @@ private struct SaysoSettingsView: View {
                 }
                 SaysoSettingItemCard(
                     title: "Learn from edits after dictation (off by default)",
-                    description: "After Sayso inserts a dictation into another app, it reads that text field again after 10 to 30 seconds to see which words you changed. Corrections stay on this Mac only. Sayso suggests remembering a correction and can remember it automatically after repeated matching edits. Nothing is sent anywhere.",
+                    description: "After Sayso inserts a dictation into another app, it reads that whole text field again after 10 to 30 seconds to see which words you changed, so edits to other text in the same field can be picked up too. It keeps only the changed words and the app name, on this Mac only, and nothing is sent anywhere. Password fields are skipped. Sayso suggests remembering a correction and can remember it automatically after repeated matching edits. Turning this off stops the reading; corrections it already learned keep applying until you remove them in Vocabulary.",
                     example: "Change report to reports, then choose Remember in Vocabulary."
                 ) {
                     Toggle("Learn from edits", isOn: $model.settings.autoCorrectionsEnabled)
