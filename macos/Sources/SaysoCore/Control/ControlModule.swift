@@ -71,7 +71,15 @@ public struct ControlModule: SaysoModule {
             }
         }
 
+        /// Once the run moves on (a spoken answer or a tap), the question is stale; leaving its critical card up would
+        /// show dead buttons and sit above the next review card.
+        private func clearClarification() {
+            lock.withLock { choices = [] }
+            context.dismiss(stackID: "clarification")
+        }
+
         private func showRun(_ text: String) {
+            clearClarification()
             context.publish(
                 stackID: "run", kind: .activeTask, title: "Control: \(text)",
                 actions: [SaysoAction(id: "cancel", title: "Cancel")]
@@ -92,6 +100,7 @@ public struct ControlModule: SaysoModule {
         }
 
         private func review(_ request: ControlConfirmationRequired) {
+            clearClarification()
             lock.withLock { reviewStep = request.stepID }
             context.publish(
                 stackID: "confirmation", kind: .confirmation, title: "Review required: \(request.reason)",

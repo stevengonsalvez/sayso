@@ -428,7 +428,7 @@ private struct VoiceWorkspaceContent: View {
                     }
                     if let primary = model.primaryModuleActivity,
                        primary.interruption != .critical || statusModel.dismissActionID != nil {
-                        Button(primary.interruption == .critical ? "Deny" : "Dismiss notification") {
+                        Button(primary.interruption == .critical ? (statusModel.dismissActionID == "dismiss" ? "Cancel" : "Deny") : "Dismiss notification") {
                             if let id = statusModel.dismissActionID { model.performModuleAction(id) } else { model.dismissPrimaryModuleActivity() }
                         }
                     }

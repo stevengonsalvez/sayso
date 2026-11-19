@@ -61,6 +61,25 @@ private func setup() -> (SaysoModuleHost, SaysoEventBus, Answers) {
     #expect(host.engine.stack.isEmpty)
 }
 
+@Test func aSpokenAnswerThatMovesTheRunOnClearsTheClarificationCard() {
+    let (host, bus, _) = setup()
+    bus.publish(ControlClarificationAsked(question: "Which one: Plugly?", choices: ["1: Plugly"], askedAt: Date()))
+    bus.publish(ControlStepPlanned(reason: "open Plugly"))
+
+    #expect(host.engine.stack.contains { $0.stackID == "clarification" } == false)
+    #expect(host.perform(actionID: "choice-0", stackID: "clarification", moduleID: "control") == false)
+}
+
+@Test func aReviewCardIsNotHiddenBehindAnAnsweredClarification() {
+    let (host, bus, _) = setup()
+    let step = UUID()
+    bus.publish(ControlClarificationAsked(question: "Which one: Plugly?", choices: ["1: Plugly"], askedAt: Date()))
+    bus.publish(ControlConfirmationRequired(reason: "Delete file", stepID: step))
+
+    #expect(host.engine.stack.first?.stackID == "confirmation")
+    #expect(host.engine.stack.contains { $0.stackID == "clarification" } == false)
+}
+
 @Test func requiredConfirmationIsCriticalAndAnswersAreBoundToTheStep() {
     let (host, bus, answers) = setup()
     let step = UUID()
