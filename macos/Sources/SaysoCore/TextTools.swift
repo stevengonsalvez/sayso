@@ -7,15 +7,41 @@ struct TextOutputTargetIdentity: Equatable, Sendable {
     let processIdentifier: pid_t
     let bundleIdentifier: String?
     let launchDate: Date?
+    /// Kernel start time of the process. Some apps (Finder) report no `launchDate`, so this is the pid-reuse fingerprint then.
+    let processStartTime: Date?
 
     func matches(_ current: TextOutputTargetIdentity) -> Bool {
         guard let bundleIdentifier,
               let currentBundleIdentifier = current.bundleIdentifier,
-              let launchDate,
-              let currentLaunchDate = current.launchDate else { return false }
-        return processIdentifier == current.processIdentifier
-            && bundleIdentifier == currentBundleIdentifier
-            && launchDate == currentLaunchDate
+              processIdentifier == current.processIdentifier,
+              bundleIdentifier == currentBundleIdentifier else { return false }
+        switch (launchDate, current.launchDate) {
+        case let (captured?, current?):
+            return captured == current
+        case (nil, nil):
+            guard let processStartTime, let currentProcessStartTime = current.processStartTime else { return false }
+            return processStartTime == currentProcessStartTime
+        default:
+            return false
+        }
+    }
+
+    /// The kernel's start time for `processIdentifier`, or nil when the process is gone or the lookup fails.
+    static func processStartTime(of processIdentifier: pid_t) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, processIdentifier]
+        guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0,
+              info.kp_proc.p_pid == processIdentifier else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return Date(timeIntervalSince1970: TimeInterval(start.tv_sec) + TimeInterval(start.tv_usec) / 1_000_000)
+    }
+
+    /// The pid-reuse fingerprint for an app that reports no `launchDate`. Only regular (Dock) apps qualify, so background
+    /// and accessory processes with no launch date (login window, authentication prompts, agents) stay refused.
+    static func fallbackStartTime(for application: NSRunningApplication) -> Date? {
+        guard application.launchDate == nil, application.activationPolicy == .regular else { return nil }
+        return processStartTime(of: application.processIdentifier)
     }
 
     func allowsDelivery(
@@ -366,7 +392,8 @@ public enum TextOutput {
             applicationIdentity: .init(
                 processIdentifier: targetProcessIdentifier,
                 bundleIdentifier: runningApplication.bundleIdentifier,
-                launchDate: runningApplication.launchDate
+                launchDate: runningApplication.launchDate,
+                processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: runningApplication)
             ),
             bundleIdentifier: runningApplication.bundleIdentifier,
             recordingDestination: .init(
@@ -882,7 +909,8 @@ public enum SelectedTextEdit {
         let identity = TextOutputTargetIdentity(
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
-            launchDate: application.launchDate
+            launchDate: application.launchDate,
+            processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
         )
         return .init(
             field: field,
@@ -900,7 +928,8 @@ public enum SelectedTextEdit {
               capture.applicationIdentity.matches(.init(
                   processIdentifier: application.processIdentifier,
                   bundleIdentifier: application.bundleIdentifier,
-                  launchDate: application.launchDate
+                  launchDate: application.launchDate,
+                  processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
               )),
               let focused = copyElement(
                   kAXFocusedUIElementAttribute as CFString,
@@ -1021,7 +1050,8 @@ private extension TextOutput {
         return .init(
             processIdentifier: application.processIdentifier,
             bundleIdentifier: application.bundleIdentifier,
-            launchDate: application.launchDate
+            launchDate: application.launchDate,
+            processStartTime: TextOutputTargetIdentity.fallbackStartTime(for: application)
         )
     }
 
