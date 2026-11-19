@@ -395,7 +395,7 @@ Next step (done): a test for `TextOutputTargetIdentity.matches` with a nil `laun
 
 ## Deferred, needs Stevie (live E2E batch 1 re-run, 2026-11-15)
 
-Every item below is BLOCKED or NOT RUN, not failed. Update 2026-11-19: Models Cancel (#90), the Vocabulary Remember flow (#102) and the stale transcript case (#89) now have live PASS results (section "Live re-run of the #89, #90, #91, #102 fixes"), and 3.1, 3.2, 3.3 passed with synthetic Fn modifier events, so those rows are marked resolved below and kept for what is still open. Still needing Stevie or money: a physical Fn press by a person, Now Playing (Automation consent), Control Approve and Deny and the clarification buttons of 6.3 (paid planner), the Pomodoro sound and TTS heard by a human, and the notch microphone line.
+Every item below is BLOCKED or NOT RUN, not failed. Update 2026-11-19: Models Cancel (#90), the Vocabulary Remember flow (#102) and the stale transcript case (#89) now have live PASS results (section "Live re-run of the #89, #90, #91, #102 fixes"), and 3.1, 3.2, 3.3 passed with synthetic Fn modifier events, so those rows are marked resolved below and kept for what is still open. Still needing Stevie or money: a physical Fn press by a person, Now Playing (Automation consent), Control Approve and Deny and the clarification buttons of 6.3 (paid planner), and the Pomodoro sound and TTS heard by a human. The notch microphone line has a live PASS (last section).
 
 | Item | Why blocked | Repro steps once unblocked | Expected pass |
 |---|---|---|---|
@@ -407,7 +407,7 @@ Every item below is BLOCKED or NOT RUN, not failed. Update 2026-11-19: Models Ca
 | Vocabulary suggestion card: Remember (#102), resolved | PASS live 2026-11-19, see below (Remember in Studio; the notch card has no button, which I take to be the design of the fix: inference). | After #102 is fixed: enable auto-corrections, correct a word the same way three times in TextEdit, then accept the suggestion from the card or Settings. | The accepted correction appears in the Studio Vocabulary list and the notch card clears. |
 | Pomodoro completion sound | The countdown and the Short break phase were observed; the phase-change sound cannot be heard by an agent. | Start a 25 min Pomodoro with sound on and listen at the phase change. | A sound plays at the phase change. |
 | TTS heard by a human | Audio output was proven only by loopback into the microphone, not by a person listening. | Studio, Voice output, Speak, and listen. | Speech is audible; Stop works. |
-| Notch microphone line while dictating | The #89 fix is live-proven for a held transcript and a module line (below); the microphone in-use line itself was not re-run. | With dictation idle, start any app that records from the microphone and watch the notch. | Notch shows a microphone in use line, clears after it stops. |
+| Notch microphone line while dictating, resolved | PASS live 2026-11-19 (section "Live re-run of the notch microphone line" below). | With dictation idle, start any app that records from the microphone and watch the notch. | Notch shows a microphone in use line, clears after it stops. |
 
 ## Vocabulary suggestion live run (2026-11-15, head 70925c2, issue #84)
 
@@ -474,3 +474,14 @@ Runner: lead session driving the Mac with cua-driver; one driver, no real messag
 | 3.3 triple Fn starts Control | PASS (synthetic) | Notch switched to Control, `Listening for command...`, `Triple Fn · Control`; a second triple Fn stopped it within 1 s. While it listened, ambient speech was captured (`can you open ugly`) and Control showed `Which one: 1: Plugly?`; no choice was made and nothing launched. The line was still shown about 75 s after it appeared, against the 60 s expectation of runbook 6.3 (not investigated). | local only |
 
 Boundaries: Fn events were posted by a process, not a physical key press by a person. The Finder run used one clean pass on the integration build; earlier Finder reruns on the #121 head were disturbed by another app taking focus, and the first of them showed that the rename commits when the field loses focus (the file was renamed before Escape), which is why the notch is not clicked in the pass above. The Finder `sayso acceptance` CLI path returns `ok:false` for Finder because live partial insertion exists only for TextEdit and Notes; that is separate from the real-mic result. Scratch files and Finder windows were created in the session scratchpad only. After the Remove the local lexicon file no longer existed on disk (I did not check why); the app recreates it on the next rule. No other user data was changed.
+
+## Live re-run of the notch microphone line (2026-11-19, issue #84)
+
+Closes the Deferred row "Notch microphone line while dictating". Runner: lead session with cua-driver, no permission prompt answered. App: packaged from origin/main `b2783c1` (Apple Development signed, not notarized), `run-packaged-app.sh --automation-server`, single process, stopped afterwards by its exact tmux session name.
+
+| Step | Observed (UTC) | Evidence |
+|---|---|---|
+| Dictation idle, notch open (`Ready to dictate`) and QuickTime Player's File, New Audio Recording window opened through the File menu (no recording started) | 21:13:32 the open notch status line read `Microphone in use · MacBook Pro Microphone`. The recorder window alone appears to be enough to switch the input on (inference: Teams was also running, and I did not isolate which process held the microphone). | `proof-2026-11-19/notch-mic-in-use-line.png` |
+| QuickTime recorder window closed through File, Close | The line was gone at the first sample 4 s later (samples at 4, 8, 12 and 16 s all empty). | `proof-2026-11-19/notch-mic-line-cleared.png` |
+
+Boundaries and NOT OBSERVED: the baseline before the recorder opened was not captured as its own image, only the cleared state after it closed; I did not separate Sayso's idle state from other apps that may also use the microphone (Teams was running). The line was read in the open notch; the compact pill shows only the transcript or the idle line, as recorded in the section above. The camera line and a device from a second process at the same time were not run.
