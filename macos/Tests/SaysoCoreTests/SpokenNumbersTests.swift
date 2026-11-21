@@ -114,3 +114,12 @@ import Testing
     #expect(SpokenNumbers.normalize(once) == once)
     #expect(SpokenNumbers.normalize("five six seven\t") == "567\t")
 }
+
+@Test func aSmallNumberBeforePercentIsNeverDeleted() {
+    #expect(SpokenNumbers.normalize("a five percent raise") == "a five percent raise")
+    #expect(SpokenNumbers.normalize("I am one percent sure") == "I am one percent sure")
+    #expect(SpokenNumbers.normalize("nine percent.") == "nine percent.")
+    #expect(SpokenNumbers.normalize("three thirty percent") == "three thirty percent")
+    #expect(SpokenNumbers.normalize("seven fifty percent") == "seven fifty percent")
+    #expect(SpokenNumbers.normalize("it is twenty five percent.") == "it is 25%.")
+}

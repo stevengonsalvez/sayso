@@ -181,9 +181,8 @@ public enum SpokenNumbers {
         }
         var pieces = render(groups.map { ($0.group, tokens[$0.first].lead, tokens[$0.last - 1].trail) }, tokens: tokens, groups: groups.map { ($0.first, $0.last) })
         if let last = groups.last, i < tokens.count, tokens[i].lower == "percent", tokens[last.last - 1].trail.isEmpty,
-           tokens[i].lead.isEmpty, var text = pieces.popLast(), text.first?.isNumber == true || text.dropFirst().first?.isNumber == true {
-            text += "%" + tokens[i].trail
-            pieces.append(text)
+           tokens[i].lead.isEmpty, let text = pieces.last, text.first?.isNumber == true || text.dropFirst().first?.isNumber == true {
+            pieces[pieces.count - 1] = text + "%" + tokens[i].trail
             i += 1
         }
         return (pieces, i - start)
