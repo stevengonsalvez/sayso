@@ -349,7 +349,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var pronunciations: [SaysoPronunciationEntry] = PronunciationDefaults.standard
 
     // Multi-provider and model selections
-    public var selectedCloudProviderId = "groq"
+    public private(set) var selectedCloudProviderId = "groq"
     public var selectedCloudModelId = "distil-whisper-large-v3-en"
     public var selectedCloudCleanupProviderId = "groq"
     public var selectedCloudCleanupModelId = "llama-3.1-8b-instant"

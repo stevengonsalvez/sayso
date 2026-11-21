@@ -8779,7 +8779,7 @@ private struct ModelsWorkspace: View {
                                 isSelected: model.settings.selectedCloudProviderId == p.id,
                                 speedHint: hint
                             ) {
-                                model.settings.selectedCloudProviderId = p.id
+                                model.settings.selectCloudProvider(p.id)
                                 model.settings.byokBaseURL = p.defaultBaseURL
                                 if let first = p.transcriptionModels.first {
                                     model.settings.selectedCloudModelId = first.id
