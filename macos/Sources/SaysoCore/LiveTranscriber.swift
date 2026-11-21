@@ -1479,12 +1479,18 @@ public enum FileTranscriber {
         if route == .local, language != .automatic, !FluidAudioLocalModelManager.supportsNativeModel(for: language) {
             throw SaysoError.unavailable("On-device recognition is unavailable for \(language.displayName)")
         }
-        if route == .local,
-           LocalBatchEngine.choose(language: language, parakeetV3Installed: ParakeetV3Transcriber.isInstalled) == .parakeetV3 {
-            let text = try await ParakeetV3Transcriber.shared.transcribe(fileURL: fileURL)
-            return Transcript(text: text, language: language, route: route, isFinal: true)
-        }
         let localModel = FluidAudioLocalModelManager()
+        if LocalBatchEngine.choose(route: route, language: language, parakeetV3Installed: ParakeetV3Transcriber.isInstalled) == .parakeetV3 {
+            return try await LocalBatchEngine.run(
+                primary: { @Sendable in
+                    let text = try await ParakeetV3Transcriber.shared.transcribe(fileURL: fileURL)
+                    return Transcript(text: text, language: language, route: route, isFinal: true)
+                },
+                fallback: { @Sendable in
+                    try await transcribeWithFluidAudio(fileURL: fileURL, language: language, route: route, model: localModel)
+                }
+            )
+        }
         if prefersFluidAudio(language: language, route: route, localModelReady: localModel.isInstalled(for: language)) {
             return try await transcribeWithFluidAudio(fileURL: fileURL, language: language, route: route, model: localModel)
         }
