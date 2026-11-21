@@ -356,8 +356,6 @@ Runner: lead session driving the Mac with cua-driver 0.38.0. App: `macos/.artifa
 
 CI at head `7da6831` (push): `Build` success (run `43210401611`), `security` success (run `43210401668`), `macOS` cancelled (run `43210401691`).
 
-Row labels: `3.x` and `4` are the step numbers of the E2E_BATCH_1.md runbook (sections 3 and 4). `Item N` rows are the numbered items of this re-run.
-
 | Step | Result | Evidence | Notes |
 |---|---|---|---|
 | 3.4 Control-Option-N toggles notch | PASS | `e2e-3.4-desktop-before-20261114T234035Z.png` (collapsed "Dictation / Double Fn" pill) and `e2e-3.4-desktop-after-20261114T234035Z.png` (expanded panel, "Ready to dictate") | Sent as a global desktop hotkey. The same combo posted only to the app pid (`e2e-3.4-try2-*`) did not toggle, so Carbon hotkeys need system-level delivery. |
