@@ -28,7 +28,7 @@ public enum LocalBatchEngine: Equatable, Sendable {
             throw CancellationError()
         } catch {
             Logger(subsystem: "ai.sayso.notch", category: "ParakeetV3")
-                .error("Parakeet v3 failed, using the next engine: \(error.localizedDescription, privacy: .public)")
+                .error("Parakeet v3 failed (\(String(describing: type(of: error)), privacy: .public)), using the next engine: \(error.localizedDescription, privacy: .private)")
             return nil
         }
     }
