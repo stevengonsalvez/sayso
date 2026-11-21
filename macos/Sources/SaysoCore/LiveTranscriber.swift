@@ -804,14 +804,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             if let streamingClient, let streamingRoute {
                 self.cloudStreamingClient = streamingClient
                 streamingClient.start(
-                    onTranscript: { [weak self] text, _ in
+                    onTranscript: { @Sendable [weak self] text, _ in
                         Task { @MainActor [weak self] in
                             guard self?.cloudTranscriptionRunID == runID, self?.phase == .listening else { return }
                             self?.partialText = text
                             self?.onPartial?(text)
                         }
                     },
-                    onError: { [weak self] _ in
+                    onError: { @Sendable [weak self] _ in
                         Task { @MainActor [weak self] in
                             guard self?.cloudTranscriptionRunID == runID else { return }
                         }
@@ -838,7 +838,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                     req.shouldReportPartialResults = true
                     req.taskHint = .dictation
                     previewRequest = req
-                    cloudPreviewTask = recognizer.recognitionTask(with: req) { [weak self] result, _ in
+                    cloudPreviewTask = recognizer.recognitionTask(with: req) { @Sendable [weak self] result, _ in
                         if let text = result?.bestTranscription.formattedString {
                             Task { @MainActor [weak self] in
                                 guard self?.cloudTranscriptionRunID == runID, self?.phase == .listening else { return }
