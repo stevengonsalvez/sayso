@@ -395,7 +395,7 @@ Next step (done): a test for `TextOutputTargetIdentity.matches` with a nil `laun
 
 ## Deferred, needs Stevie (live E2E batch 1 re-run, 2026-11-15)
 
-Items below were BLOCKED or NOT RUN, not failed; rows marked resolved are kept for what is still open. Update 2026-11-19: Models Cancel (#90), the Vocabulary Remember flow (#102) and the stale transcript case (#89) now have live PASS results (section "Live re-run of the #89, #90, #91, #102 fixes"), and 3.1, 3.2, 3.3 passed with synthetic Fn modifier events, so those rows are marked resolved below and kept for what is still open. Update 2026-11-21: Now Playing, TTS, the Pomodoro sound and the physical Fn presses now have live results (section "Owner-only rows, live"). Control Approve and Deny and the clarification buttons of 6.3 now have a live result too, with gaps stated (section "Control Approve, Deny and clarification, live"). The notch microphone line has a live PASS (last section).
+Items below were BLOCKED or NOT RUN, not failed; rows marked resolved are kept for what is still open. Update 2026-11-19: Models Cancel (#90), the Vocabulary Remember flow (#102) and the stale transcript case (#89) now have live PASS results (section "Live re-run of the #89, #90, #91, #102 fixes"), and 3.1, 3.2, 3.3 passed with synthetic Fn modifier events, so those rows are marked resolved below and kept for what is still open. Update 2026-11-21: Now Playing, TTS, the Pomodoro sound and the physical Fn presses now have live results (section "Owner-only rows, live"). Control Approve and Deny and the clarification buttons of 6.3 now have a live result too, with gaps stated (section "Control Approve, Deny and clarification, live"). The notch microphone line has a live PASS (section "Live re-run of the notch microphone line").
 
 | Item | Why blocked | Repro steps once unblocked | Expected pass |
 |---|---|---|---|
@@ -498,7 +498,7 @@ Runner: lead session with cua-driver while Stevie was at the Mac and answered on
 | 3.1 physical double-tap Fn | PASS (reported, history entries only) | Stevie pressed Fn by hand; `history.json` gained three dictations between 09:21 and 09:24 UTC with his spoken words. My status recorder had stopped at 09:17:35, so the live `listening` state was not captured. | none |
 | 3.3 physical triple-tap Fn | PASS (physical, with screenshot) | After a triple-tap by Stevie the notch showed Control mode and a live transcript. | `proof-2026-11-21/control-mode-physical-triple-fn.png` |
 
-Still open, not failed: Control Approve and Deny on a real desktop step and the clarification buttons of 6.3 (the capped planner run was authorised but not started). Observations to track:
+Still open, not failed: Control Approve and Deny on a real desktop step and the clarification buttons of 6.3 (the paid planner run was authorised and has since been run, see "Control Approve, Deny and clarification, live"). Observations to track:
 
 - Control said `Unavailable: Choose another app, then return to Sayso Control` right after I relaunched Sayso with its own window in front. `controlTarget()` needs a previously frontmost app other than Sayso (`lastExternalApplication`); the guard is by design, but a fresh start with Sayso in front has no target, which a user can hit too.
 - The first scratch app exited by itself around 09:25 UTC with no crash report and no log line; the cause is unknown.
@@ -507,17 +507,17 @@ Still open, not failed: Control Approve and Deny on a real desktop step and the 
 
 ## Control Approve, Deny and clarification, live (2026-11-21, issue #84)
 
-Runner: lead session with cua-driver while Stevie kept hands off. App: packaged from a local merge of origin/main `f37345f` with the Deepgram crash fix and the Parakeet v3 branch (both since reviewed), launched with `--automation-server` because Desktop Control cannot be switched on from the app (issue #146). Provider: Deepgram streaming for the spoken command (Deepgram consent on), TypeSafe/Jev for planning (no billing error this time). Commands were spoken with a `say` voice through the speakers into the microphone and submitted with Stop Control. Evidence images are cropped to the notch.
+Runner: lead session with cua-driver while Stevie kept hands off. App: packaged from a local merge of origin/main `f37345f` with the Deepgram crash fix and the Parakeet v3 branch (both unmerged at build time, since merged as #142 and #145), launched with `--automation-server` because Desktop Control cannot be switched on from the app (issue #146). Provider: Deepgram streaming for the spoken command (Deepgram consent on), TypeSafe/Jev for planning (no billing error this time). Commands were spoken with a `say` voice through the speakers into the microphone and submitted with Stop Control. Evidence images are cropped to the notch.
 
 | Step (UTC) | Spoken command | Observed | Evidence |
 |---|---|---|---|
 | 17:58 | "Open calculator" | `Control completed`, Calculator opened, no review card (opening an app is not reviewed). | `proof-2026-11-21/control-completed.png` |
 | 17:59:04 | "In Calculator, clear it, then type twelve times three and press equals" | `Review required: Jev: Click All Clear` with Approve and Deny buttons. | `proof-2026-11-21/control-review-approve-deny.png` |
-| 17:59:37 | Approve pressed | The card was replaced by the clarification `Which one: 1: 1, 2: 1, 3: ?` with one button per choice plus Cancel (6.3). That the clear itself ran is inferred from the run moving on; the display was not captured. | `proof-2026-11-21/control-clarification-buttons.png` |
+| 17:59:37 | Approve pressed | The card was replaced by the clarification `Which one: 1: 1, 2: 1, 3: ?` with one button per choice plus Cancel (6.3). That the clear itself ran is inferred from the run moving on. Only a slice of the Calculator display is in the images (`352.8 ÷ 12` before Approve, blank after), too little to show the clear ran. | `proof-2026-11-21/control-clarification-buttons.png` |
 | 18:00:05 | Cancel pressed | `Cancellation requested. Current macOS action m...`; the 12 x 3 = 36 flow was not finished. | `proof-2026-11-21/control-cancel.png` |
 | 18:00:32 | "Click the seven button in Calculator" | `Control completed`, no review card. | none |
 | 18:01:08 | "Click the All Clear button in Calculator" | `Review required: Jev: Click Clear` with Approve and Deny. | `proof-2026-11-21/control-review-for-deny.png` |
-| 18:01:29 | Deny pressed | `Action discarded`; Calculator still showed the `C` key (a pending entry) before and after, so nothing was cleared. | `proof-2026-11-21/control-action-discarded.png` |
+| 18:01:29 | Deny pressed | `Action discarded`. The only sign that nothing was cleared: in two local screenshots (not committed) the Calculator key read `C`, not `AC`, before and after. That is an inference; the display value was not captured and the committed image shows only the notch. | `proof-2026-11-21/control-action-discarded.png` |
 
-Not observed: the 12 x 3 = 36 result, Approve running the step exactly once, a stale approve being rejected, the audit entry for these steps, the planner cost (about six planner commands ran, not one), and why the clarification labels read `1: 1, 2: 1, 3: ?`. The unreviewed click on 7 shows that not every click is reviewed; which steps need review was not examined.
+Not observed: the 12 x 3 = 36 result, Approve running the step exactly once, a stale approve being rejected, the audit entry for these steps, and why the clarification labels read `1: 1, 2: 1, 3: ?`. Planner use: four spoken commands plus any follow-up planner turns after Approve; the exact count and the cost were not measured. That is more than the one capped paid planner run first authorised (Stevie later said to run it now, but did not raise the cap). The unreviewed click on 7 shows that not every click is reviewed; which steps need review was not examined.
 
