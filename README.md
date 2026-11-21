@@ -184,7 +184,7 @@ A native macOS notch app lives under [`macos/`](macos/) (SwiftPM, SwiftUI). This
 
 | Area | Result | Notes |
 |---|---|---|
-| Hotkeys 3.1, 3.2, 3.3 | Partly | Synthetic Fn events pass. You reported a physical double tap (three history entries, nobody watched the notch); a physical triple tap showed Control mode (screenshot). 3.2 (stop by hotkey) was synthetic only; key edges were not captured. |
+| Hotkeys 3.1, 3.2, 3.3 | Partly | Synthetic Fn events pass. The owner reported a physical double tap (three history entries, nobody watched the notch); a physical triple tap showed Control mode (screenshot). 3.2 (stop by hotkey) was synthetic only; key edges were not captured. |
 | Hotkey 3.4 (Control-Option-N) | Pass | |
 | Dictation into TextEdit, Arc, Orca, WhatsApp (draft only, nothing sent), Finder rename field | Pass | Finder needed fix #121 (issue #91). |
 | Voice output (TTS) | Partly | Heard by a person; Stop during speech not exercised. |
