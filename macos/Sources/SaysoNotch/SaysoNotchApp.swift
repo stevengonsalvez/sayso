@@ -6434,6 +6434,19 @@ private struct TranscriptionWorkspace: View {
                             model.removeProviderKey(for: currentProvider)
                         }
                     )
+
+                    SaysoCard {
+                        Toggle("I understand dictation audio is sent to \(currentProvider.displayName) for transcription", isOn: Binding(
+                            get: { model.settings.byokConsentGranted },
+                            set: {
+                                model.settings.byokConsentGranted = $0
+                                model.save()
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("settings-byok-consent-toggle")
+                        .accessibilityHint("Required before dictation with a cloud provider can start")
+                    }
                 } else {
                     SaysoCard {
                         VStack(alignment: .leading, spacing: 10) {
