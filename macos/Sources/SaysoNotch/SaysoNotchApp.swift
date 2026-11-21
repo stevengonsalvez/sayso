@@ -6373,7 +6373,7 @@ private struct TranscriptionWorkspace: View {
                             Picker("Provider", selection: Binding(
                                 get: { model.settings.selectedCloudProviderId },
                                 set: { newId in
-                                    model.settings.selectedCloudProviderId = newId
+                                    model.settings.selectCloudProvider(newId)
                                     if let p = CloudProviderCatalog.provider(for: newId) {
                                         model.settings.byokBaseURL = p.defaultBaseURL
                                         if let firstModel = p.transcriptionModels.first {
@@ -6438,6 +6438,19 @@ private struct TranscriptionWorkspace: View {
                             model.removeProviderKey(for: currentProvider)
                         }
                     )
+
+                    SaysoCard {
+                        Toggle("I understand audio is sent to \(currentProvider.displayName) for transcription, and transcript text to my cleanup or translation provider when those are on", isOn: Binding(
+                            get: { model.settings.byokConsentGranted },
+                            set: {
+                                model.settings.byokConsentGranted = $0
+                                model.save()
+                            }
+                        ))
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("settings-byok-consent-toggle")
+                        .accessibilityHint("Required before dictation with a cloud provider can start")
+                    }
                 } else {
                     SaysoCard {
                         VStack(alignment: .leading, spacing: 10) {
@@ -8776,7 +8789,7 @@ private struct ModelsWorkspace: View {
                                 isSelected: model.settings.selectedCloudProviderId == p.id,
                                 speedHint: hint
                             ) {
-                                model.settings.selectedCloudProviderId = p.id
+                                model.settings.selectCloudProvider(p.id)
                                 model.settings.byokBaseURL = p.defaultBaseURL
                                 if let first = p.transcriptionModels.first {
                                     model.settings.selectedCloudModelId = first.id

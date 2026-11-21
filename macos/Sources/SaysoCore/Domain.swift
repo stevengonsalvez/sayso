@@ -351,7 +351,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var pronunciations: [SaysoPronunciationEntry] = PronunciationDefaults.standard
 
     // Multi-provider and model selections
-    public var selectedCloudProviderId = "groq"
+    public private(set) var selectedCloudProviderId = "groq"
     public var selectedCloudModelId = "distil-whisper-large-v3-en"
     public var selectedCloudCleanupProviderId = "groq"
     public var selectedCloudCleanupModelId = "llama-3.1-8b-instant"
@@ -372,6 +372,13 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     public var normalizedBYOKCleanupBaseURL: URL? {
         Self.normalizedBaseURL(byokCleanupBaseURL)
+    }
+
+    /// Picks the cloud transcription provider. Consent was given for one provider, so a different one clears it.
+    public mutating func selectCloudProvider(_ id: String) {
+        guard id != selectedCloudProviderId else { return }
+        selectedCloudProviderId = id
+        byokConsentGranted = false
     }
 
     public func hasConsent(for route: ProviderRoute) -> Bool {
