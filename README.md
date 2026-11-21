@@ -27,7 +27,8 @@
   <a href="#download">Download</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#privacy--data-safety">Privacy</a> &middot;
-  <a href="#tech-stack">Tech Stack</a>
+  <a href="#tech-stack">Tech Stack</a> &middot;
+  <a href="#macos-app-sayso-notch-status">macOS status</a>
 </p>
 
 ---
@@ -167,6 +168,47 @@ The first build automatically fetches the `sherpa-onnx` runtime AAR into `app/li
 - **Storage**: Room SQLite database (local private storage)
 
 ---
+
+## 🍎 macOS app (Sayso Notch): status
+
+A native macOS notch app lives under [`macos/`](macos/) (SwiftPM, SwiftUI). This section says what exists, what has been proven live on a real Mac, and what is still open. Status as of 2026-11-21; the evidence, with timestamps and screenshots, is in [`docs/ultimate-notch/PROOF_LEDGER.md`](docs/ultimate-notch/PROOF_LEDGER.md), and the test runbook is [`docs/ultimate-notch/E2E_BATCH_1.md`](docs/ultimate-notch/E2E_BATCH_1.md). It is signed for development only, not notarised, and there is no Apple Developer account yet (release plan: [`docs/macos-release-plan.md`](docs/macos-release-plan.md), issue #86).
+
+### What is built
+
+- **Dictation** from the notch with double Fn: on-device (Parakeet Realtime EOU 120M for live streaming; Parakeet TDT 0.6B v3 for finished English recordings when its files are installed), cloud providers you bring a key for (Deepgram, Groq, OpenAI-compatible; each needs an explicit consent switch), and Apple Speech.
+- **Text polish**: rules or local model cleanup, a vocabulary with learned corrections, and spoken numbers and times written as digits (`three thirty pm` becomes `3:30 PM`, `555-0192`, `25%`).
+- **Control** (hands-free desktop control with review cards), **Voice output**, **History**, **Models and downloads**.
+- **Notch modules**: Now Playing, Pomodoro and timers, Caffeine, World clocks, System stats, Calculator, Colour picker, File tools, Privacy guard (microphone and camera in use), Snippets, Battery health, Clipboard and File shelf.
+
+### Proven live on a real Mac
+
+| Area | Result | Notes |
+|---|---|---|
+| Hotkeys 3.1, 3.2, 3.3 | Partly | Synthetic Fn events pass; a physical double tap (history entries) and triple tap (Control mode screenshot) were seen. Key edges and the live status during the physical presses were not captured. |
+| Hotkey 3.4 (Control-Option-N) | Pass | |
+| Dictation into TextEdit, Arc, Orca, WhatsApp (draft only, nothing sent), Finder rename field | Pass | Finder needed fixes #121 and #91. |
+| Voice output (TTS) | Partly | Heard by a person; Stop during speech not exercised. |
+| Models download | Partly | Notch download line and Cancel pass (#90); a full download to "ready" was not observed. |
+| Vocabulary | Pass | Suggestion, Remember and learned correction (#102). |
+| Privacy guard | Pass | Real microphone and camera, notch line shown and cleared. |
+| Now Playing | Partly | Line shown and cleared with Sayso's own Automation grant; the track had no artist, and pause, resume and stop were not exercised. |
+| Pomodoro | Partly | Countdown and phase change pass; a chime was heard, which phase change is an inference. |
+| Colour sampler | Pass | |
+| Control: review card, Approve, Deny, clarification buttons | Partly | Seen live on Calculator. Not observed: `12 x 3 = 36`, Approve running exactly once, a stale approve, the audit entry. Paused by the owner; details in #149. |
+| Local English dictation quality | Known gap | Streaming uses the small model (lowercase, no punctuation, dropped words); Parakeet v3 and Whisper Large v3 Turbo were far better on a test paragraph. See #144. |
+
+### Still open
+
+| Issue | What |
+|---|---|
+| [#149](https://github.com/stevengonsalvez/sayso/issues/149) | Control live proof, paused: what is done and what is pending. |
+| [#146](https://github.com/stevengonsalvez/sayso/issues/146) | Desktop Control cannot be switched on from the app (the switch was removed); needs `--automation-server`. |
+| [#144](https://github.com/stevengonsalvez/sayso/issues/144) | Local model choices do nothing for English dictation; the WhisperKit card is static text; pre-warm and unload. |
+| [#143](https://github.com/stevengonsalvez/sayso/issues/143) | Same actor-isolation trap on first-run permission callbacks. |
+| [#139](https://github.com/stevengonsalvez/sayso/issues/139) | Cloud consent survives editing the provider base URL; consent switch only on the cloud route. |
+| [#140](https://github.com/stevengonsalvez/sayso/issues/140), [#148](https://github.com/stevengonsalvez/sayso/issues/148) | Two flaky tests (scheduler timing, disk free on the runner). |
+| [#86](https://github.com/stevengonsalvez/sayso/issues/86) | Release plan: Developer ID, notarisation, DMG, Sparkle, permission grants across updates. |
+| #132, #130, #123, #120, #99, #95, #92, #87 | Follow-ups from earlier merge-gate reviews. |
 
 ## 🏷️ Tags & Topics
 
