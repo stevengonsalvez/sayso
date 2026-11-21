@@ -36,7 +36,7 @@ public enum SpokenNumbers {
     }
 
     private static func normalizeLine(_ line: String) -> String {
-        let tokens = line.split(separator: " ", omittingEmptySubsequences: true).flatMap { split(token(String($0))) }
+        let tokens = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).flatMap { split(token(String($0))) }
         guard tokens.contains(where: { isNumberWord($0.lower) || $0.lower == "oh" }) else { return line }
         let leading = line.prefix { $0 == " " || $0 == "\t" }
         let trailing = String(line.reversed().prefix { $0 == " " || $0 == "\t" }.reversed())
@@ -206,6 +206,11 @@ public enum SpokenNumbers {
             }
             k += 1
         }
+        // A small lone number next to another number ("three thirty", "seven fifty") is ambiguous: keep the words.
+        let hasLoneSmall = values.contains { if case .cardinal(let v, let w) = $0.0 { return v < 10 && w == 1 }; return false }
+        if values.count > 1, hasLoneSmall {
+            return spans.flatMap { tokens[$0.0..<$0.1].map { $0.text } }
+        }
         var pieces: [String] = []
         var index = 0
         while index < values.count {
@@ -275,6 +280,7 @@ public enum SpokenNumbers {
                 let afterTens = low >= 20 && low % 10 == 0 && v >= 1 && v <= 9
                 guard low == 0 || afterTens, !(v == 0 && j > i) else { break }
                 current += v
+                if v == 0 { j += 1; break }
             } else if let v = tens[word] {
                 guard current % 100 == 0 else { break }
                 current += v

@@ -27,7 +27,7 @@ import Testing
 }
 
 @Test func glueredTokensFromTheEngineAreSplit() {
-    #expect(SpokenNumbers.normalize("fivefifty five") == "five 55")
+    #expect(SpokenNumbers.normalize("fivefifty five") == "five fifty five")
     #expect(SpokenNumbers.normalize("call fivefivefive zeroonenine two") == "call 555-0192")
     #expect(SpokenNumbers.normalize("threethirty pm") == "3:30 PM")
 }
@@ -72,12 +72,12 @@ import Testing
     #expect(SpokenNumbers.normalize("Which one am I supposed to pick") == "Which one am I supposed to pick")
     #expect(SpokenNumbers.normalize("No one am I afraid of") == "No one am I afraid of")
     #expect(SpokenNumbers.normalize("I'll be there at five thirty. Am I late?") == "I'll be there at 5:30. Am I late?")
-    #expect(SpokenNumbers.normalize("It was five fifteen, am I right?") == "It was five 15, am I right?")
+    #expect(SpokenNumbers.normalize("It was five fifteen, am I right?") == "It was five fifteen, am I right?")
     #expect(SpokenNumbers.normalize("at six am") == "at 6 AM")
 }
 
 @Test func ordinaryNumbersAreNotMadeIntoTimesOrGluedTogether() {
-    #expect(SpokenNumbers.normalize("I paid about two fifty for it") == "I paid about two 50 for it")
+    #expect(SpokenNumbers.normalize("I paid about two fifty for it") == "I paid about two fifty for it")
     #expect(SpokenNumbers.normalize("take one five minute break") == "take one five minute break")
     #expect(SpokenNumbers.normalize("the nineteen eighties") == "the nineteen eighties")
     #expect(SpokenNumbers.normalize("Tenten is a character") == "Tenten is a character")
@@ -93,4 +93,24 @@ import Testing
 @Test func aHugeGluedTokenStaysBounded() {
     let glued = String(repeating: "five", count: 5000)
     #expect(SpokenNumbers.normalize(glued) == glued)
+}
+
+@Test func aLeadingZeroIsNeverDropped() {
+    #expect(SpokenNumbers.normalize("zero one") == "zero one")
+    #expect(SpokenNumbers.normalize("flight zero one") == "flight zero one")
+    #expect(SpokenNumbers.normalize("zero twenty") == "zero twenty")
+    #expect(SpokenNumbers.normalize("the code is zero five") == "the code is zero five")
+}
+
+@Test func ambiguousSmallPlusBigNumbersKeepTheirWords() {
+    #expect(SpokenNumbers.normalize("the meeting is three thirty") == "the meeting is three thirty")
+    #expect(SpokenNumbers.normalize("it costs seven fifty") == "it costs seven fifty")
+    #expect(SpokenNumbers.normalize("nine ninety nine") == "nine ninety nine")
+}
+
+@Test func tabsAtLineEdgesAreNotDoubled() {
+    let once = SpokenNumbers.normalize("\tone two three four")
+    #expect(once == "\t1234")
+    #expect(SpokenNumbers.normalize(once) == once)
+    #expect(SpokenNumbers.normalize("five six seven\t") == "567\t")
 }
