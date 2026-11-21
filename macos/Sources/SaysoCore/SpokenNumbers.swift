@@ -4,8 +4,7 @@ import Foundation
 /// ("zero one nine two" -> "0192"), phone shapes, clock times ("three thirty pm" -> "3:30 PM"),
 /// percent and years. Deterministic, no model, English only.
 ///
-/// Rules a reader should know: a lone number below ten stays a word ("I have two cats") unless it sits
-/// next to another number; hour and minute without am or pm only become a time after a word such as
+/// Rules a reader should know: a lone number below ten stays a word ("I have two cats"); hour and minute without am or pm only become a time after a word such as
 /// "at" or "before"; the speech engine sometimes glues number words together ("threethirty"), so
 /// glued tokens made only of number words are split first.
 public enum SpokenNumbers {
@@ -20,7 +19,8 @@ public enum SpokenNumbers {
     private static let scales: [String: Int] = ["hundred": 100, "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000]
     private static let vocabulary: [String] = (Array(units.keys) + Array(tens.keys) + Array(scales.keys))
         .sorted { $0.count > $1.count }
-    private static let timeLeaders: Set<String> = ["at", "by", "before", "after", "around", "until", "till", "since", "from", "about"]
+    private static let timeLeaders: Set<String> = ["at", "by", "before", "until", "till", "from"]
+    private static let decadeWords: Set<String> = ["twenties", "thirties", "forties", "fifties", "sixties", "seventies", "eighties", "nineties", "hundreds", "thousands", "millions"]
 
     private struct Token {
         var lead = ""
@@ -38,6 +38,8 @@ public enum SpokenNumbers {
     private static func normalizeLine(_ line: String) -> String {
         let tokens = line.split(separator: " ", omittingEmptySubsequences: true).flatMap { split(token(String($0))) }
         guard tokens.contains(where: { isNumberWord($0.lower) || $0.lower == "oh" }) else { return line }
+        let leading = line.prefix { $0 == " " || $0 == "\t" }
+        let trailing = String(line.reversed().prefix { $0 == " " || $0 == "\t" }.reversed())
         var out: [String] = []
         var i = 0
         while i < tokens.count {
@@ -48,14 +50,24 @@ public enum SpokenNumbers {
             }
             if isNumberWord(tokens[i].lower) {
                 let run = parseRun(tokens, at: i)
-                out.append(contentsOf: run.pieces)
+                guard run.consumed > 0 else {
+                    out.append(tokens[i].text)
+                    i += 1
+                    continue
+                }
+                let after = i + run.consumed < tokens.count ? tokens[i + run.consumed].lower : ""
+                if decadeWords.contains(after) {
+                    out.append(contentsOf: tokens[i..<(i + run.consumed)].map { $0.text })
+                } else {
+                    out.append(contentsOf: run.pieces)
+                }
                 i += run.consumed
                 continue
             }
             out.append(tokens[i].text)
             i += 1
         }
-        return out.joined(separator: " ")
+        return leading + out.joined(separator: " ") + trailing
     }
 
     // MARK: tokens
@@ -73,7 +85,7 @@ public enum SpokenNumbers {
     /// A token made only of two or more number words ("fivezero") becomes those words; anything else is kept.
     private static func split(_ token: Token) -> [Token] {
         let lower = token.lower
-        guard lower.count > 4, !isNumberWord(lower), lower.allSatisfy({ $0.isLetter }),
+        guard lower.count > 4, lower.count <= 64, token.core.first?.isLowercase == true, !isNumberWord(lower), lower.allSatisfy({ $0.isLetter }),
               let parts = segment(lower[...]), parts.count > 1 else { return [token] }
         var result = parts.map { Token(core: $0) }
         result[0].lead = token.lead
@@ -110,8 +122,12 @@ public enum SpokenNumbers {
                 minute = teen; j += 1
             }
         }
-        let meridiem = meridiemEnd(tokens, at: j)
-        guard minute == nil ? meridiem != nil : (meridiem != nil || previous.map(timeLeaders.contains) == true) else { return nil }
+        let afterSentenceBreak = minute != nil && !tokens[j - 1].trail.isEmpty
+        let meridiem = afterSentenceBreak ? nil : meridiemEnd(tokens, at: j)
+        let leader = previous.map(timeLeaders.contains) == true
+        // A bare "am" is also a verb ("which one am I"), so without a minute it needs a word like "at" before the hour.
+        let plainAm = meridiem != nil && j < tokens.count && tokens[j].lower == "am"
+        guard minute == nil ? (meridiem != nil && (!plainAm || leader)) : (meridiem != nil || leader) else { return nil }
         var text = minute.map { "\(hour):" + String(format: "%02d", $0) } ?? "\(hour)"
         var end = j
         var trail = tokens[j - 1].trail
@@ -131,7 +147,7 @@ public enum SpokenNumbers {
         case "am", "pm":
             return (word.uppercased(), index + 1, tokens[index].trail)
         case "a.m", "p.m":
-            return (word.hasPrefix("a") ? "AM" : "PM", index + 1, tokens[index].trail == "." ? "" : tokens[index].trail)
+            return (word.hasPrefix("a") ? "AM" : "PM", index + 1, String(tokens[index].trail.drop(while: { $0 == "." })))
         case "a", "p":
             guard index + 1 < tokens.count, tokens[index].trail.isEmpty, tokens[index + 1].lower == "m" else { return nil }
             return (word.uppercased() + "M", index + 2, tokens[index + 1].trail)
@@ -150,8 +166,8 @@ public enum SpokenNumbers {
     private static func parseRun(_ tokens: [Token], at start: Int) -> (pieces: [String], consumed: Int) {
         var groups: [(group: Group, first: Int, last: Int)] = []
         var i = start
-        while i < tokens.count, isNumberWord(tokens[i].lower) {
-            if let digitEnd = digitRunEnd(tokens, at: i), digitEnd - i >= 2 {
+        while i < tokens.count, isNumberWord(tokens[i].lower), i == start || tokens[i].lead.isEmpty {
+            if let digitEnd = digitRunEnd(tokens, at: i), digitEnd - i >= 3 {
                 let digits = tokens[i..<digitEnd].map { String(units[$0.lower]!) }.joined()
                 groups.append((.digits(digits), i, digitEnd))
                 i = digitEnd
@@ -190,7 +206,6 @@ public enum SpokenNumbers {
             }
             k += 1
         }
-        let convertAll = values.count > 1
         var pieces: [String] = []
         var index = 0
         while index < values.count {
@@ -200,7 +215,7 @@ public enum SpokenNumbers {
             var consumedTail = 0
             switch group {
             case .cardinal(let value, let words):
-                if value < 10, words == 1, !convertAll {
+                if value < 10, words == 1 {
                     pieces.append(contentsOf: tokens[spans[index].0..<spans[index].1].map { $0.text })
                     index += 1
                     continue
@@ -236,7 +251,7 @@ public enum SpokenNumbers {
     /// or is followed by a scale word ("five hundred").
     private static func digitRunEnd(_ tokens: [Token], at i: Int) -> Int? {
         var j = i
-        while j < tokens.count, let v = units[tokens[j].lower], v <= 9 {
+        while j < tokens.count, let v = units[tokens[j].lower], v <= 9, j == i || tokens[j].lead.isEmpty {
             j += 1
             if tokens[j - 1].trail != "" { break }
         }
@@ -254,6 +269,7 @@ public enum SpokenNumbers {
         var j = i
         while j < tokens.count {
             let word = tokens[j].lower
+            if j > i, !tokens[j].lead.isEmpty { break }
             if let v = units[word] {
                 let low = current % 100
                 let afterTens = low >= 20 && low % 10 == 0 && v >= 1 && v <= 9
@@ -270,7 +286,7 @@ public enum SpokenNumbers {
                 total += current * scale
                 current = 0
                 lastScale = scale
-            } else if word == "and", j > i, j + 1 < tokens.count, tokens[j - 1].trail.isEmpty,
+            } else if word == "and", j > i, j + 1 < tokens.count, tokens[j - 1].trail.isEmpty, tokens[j].trail.isEmpty, tokens[j + 1].lead.isEmpty,
                       units[tokens[j + 1].lower] != nil || tens[tokens[j + 1].lower] != nil,
                       current >= 100 || total > 0, current % 100 == 0 {
                 j += 1

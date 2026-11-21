@@ -1647,14 +1647,15 @@ final class SaysoAppModel: ObservableObject {
         language: DictationLanguage,
         settings currentSettings: SaysoSettings
     ) async -> String {
-        let text = currentSettings.formatSpokenNumbers ? SpokenNumbers.normalize(text) : text
+        let formatsNumbers = currentSettings.formatSpokenNumbers && (language == .english || language == .automatic)
+        let text = formatsNumbers ? SpokenNumbers.normalize(text) : text
         guard currentSettings.cleanupEnabled else { return text }
         let formatted = TranscriptCleanup.smartFormat(
             text,
             capitalizesFirstLetter: true,
             capitalizesSentences: currentSettings.cleanupPreset != .minimal,
             addsTerminalPunctuation: currentSettings.cleanupPreset != .developer,
-            formatsNumbers: currentSettings.formatSpokenNumbers
+            formatsNumbers: formatsNumbers
         )
 
         var base = formatted
@@ -1707,7 +1708,7 @@ final class SaysoAppModel: ObservableObject {
                     capitalizesFirstLetter: true,
                     capitalizesSentences: currentSettings.cleanupPreset != .minimal,
                     addsTerminalPunctuation: currentSettings.cleanupPreset != .developer,
-                    formatsNumbers: currentSettings.formatSpokenNumbers
+                    formatsNumbers: formatsNumbers
                 )
                 cleaned = currentSettings.dictationProfile.postProcess(cleaned)
                 cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)

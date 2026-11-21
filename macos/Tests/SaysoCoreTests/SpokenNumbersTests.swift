@@ -27,7 +27,7 @@ import Testing
 }
 
 @Test func glueredTokensFromTheEngineAreSplit() {
-    #expect(SpokenNumbers.normalize("fivefifty five") == "5 55")
+    #expect(SpokenNumbers.normalize("fivefifty five") == "five 55")
     #expect(SpokenNumbers.normalize("call fivefivefive zeroonenine two") == "call 555-0192")
     #expect(SpokenNumbers.normalize("threethirty pm") == "3:30 PM")
 }
@@ -57,4 +57,40 @@ import Testing
 @Test func smartFormatAppliesNumbersOnlyWhenAsked() {
     #expect(TranscriptCleanup.smartFormat("call me at three thirty pm") == "Call me at 3:30 PM.")
     #expect(TranscriptCleanup.smartFormat("call me at three thirty pm", formatsNumbers: false) == "Call me at three thirty pm.")
+}
+
+@Test func bareScaleWordsDoNotHangAndAreLeftAlone() {
+    for text in ["a hundred people", "a thousand thanks", "about a million times", "I made $2 million",
+                 "one hundred hundred", "five thousand thousand"] {
+        _ = SpokenNumbers.normalize(text)
+    }
+    #expect(SpokenNumbers.normalize("a hundred people") == "a hundred people")
+    #expect(SpokenNumbers.normalize("it was a thousand thanks") == "it was a thousand thanks")
+}
+
+@Test func theVerbAmIsNotAMeridiem() {
+    #expect(SpokenNumbers.normalize("Which one am I supposed to pick") == "Which one am I supposed to pick")
+    #expect(SpokenNumbers.normalize("No one am I afraid of") == "No one am I afraid of")
+    #expect(SpokenNumbers.normalize("I'll be there at five thirty. Am I late?") == "I'll be there at 5:30. Am I late?")
+    #expect(SpokenNumbers.normalize("It was five fifteen, am I right?") == "It was five 15, am I right?")
+    #expect(SpokenNumbers.normalize("at six am") == "at 6 AM")
+}
+
+@Test func ordinaryNumbersAreNotMadeIntoTimesOrGluedTogether() {
+    #expect(SpokenNumbers.normalize("I paid about two fifty for it") == "I paid about two 50 for it")
+    #expect(SpokenNumbers.normalize("take one five minute break") == "take one five minute break")
+    #expect(SpokenNumbers.normalize("the nineteen eighties") == "the nineteen eighties")
+    #expect(SpokenNumbers.normalize("Tenten is a character") == "Tenten is a character")
+}
+
+@Test func spacingAndPunctuationAroundNumbersIsKept() {
+    #expect(SpokenNumbers.normalize(" five five five ") == " 555 ")
+    #expect(SpokenNumbers.normalize("twenty \"five\" times") == "20 \"five\" times")
+    #expect(SpokenNumbers.normalize("one hundred and, five") == "100 and, five")
+    #expect(SpokenNumbers.normalize("at five a.m., then") == "at 5 AM, then")
+}
+
+@Test func aHugeGluedTokenStaysBounded() {
+    let glued = String(repeating: "five", count: 5000)
+    #expect(SpokenNumbers.normalize(glued) == glued)
 }
