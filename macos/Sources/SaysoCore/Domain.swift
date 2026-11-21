@@ -372,6 +372,13 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         Self.normalizedBaseURL(byokCleanupBaseURL)
     }
 
+    /// Picks the cloud transcription provider. Consent was given for one provider, so a different one clears it.
+    public mutating func selectCloudProvider(_ id: String) {
+        guard id != selectedCloudProviderId else { return }
+        selectedCloudProviderId = id
+        byokConsentGranted = false
+    }
+
     public func hasConsent(for route: ProviderRoute) -> Bool {
         switch route {
         case .local:
