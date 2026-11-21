@@ -15,15 +15,15 @@ import Testing
 
 private struct Boom: Error {}
 
-@Test func aFailingPrimaryFallsBackInsteadOfLosingTheRecording() async throws {
-    let text = try await LocalBatchEngine.run(primary: { throw Boom() }, fallback: { "fallback text" })
-    #expect(text == "fallback text")
-    let ok = try await LocalBatchEngine.run(primary: { "primary text" }, fallback: { "fallback text" })
+@Test func aFailingAttemptReturnsNilSoTheNextEngineRuns() async throws {
+    let failed: String? = try await LocalBatchEngine.attempt { throw Boom() }
+    #expect(failed == nil)
+    let ok = try await LocalBatchEngine.attempt { "primary text" }
     #expect(ok == "primary text")
 }
 
-@Test func cancellationIsNotSwallowedByTheFallback() async {
+@Test func cancellationIsNotSwallowedByTheAttempt() async {
     await #expect(throws: CancellationError.self) {
-        try await LocalBatchEngine.run(primary: { throw CancellationError() }, fallback: { "fallback text" })
+        let _: String? = try await LocalBatchEngine.attempt { throw CancellationError() }
     }
 }

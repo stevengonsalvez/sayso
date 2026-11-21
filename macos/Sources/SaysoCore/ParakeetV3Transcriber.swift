@@ -1,6 +1,7 @@
 import CoreML
 import FluidAudio
 import Foundation
+import OSLog
 
 /// Which on-device engine transcribes a finished recording.
 public enum LocalBatchEngine: Equatable, Sendable {
@@ -18,17 +19,17 @@ public enum LocalBatchEngine: Equatable, Sendable {
         route == .local && language == .english && parakeetV3Installed ? .parakeetV3 : .realtimeEOU
     }
 
-    /// Runs `primary`; if it fails for any reason other than cancellation the recording is not lost, `fallback` runs.
-    public static func run<T: Sendable>(
-        primary: @Sendable () async throws -> T,
-        fallback: @Sendable () async throws -> T
-    ) async throws -> T {
+    /// Runs `body`; a failure other than cancellation is logged and returns nil so the caller carries on down the
+    /// existing engine chain instead of losing the recording.
+    public static func attempt<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T? {
         do {
-            return try await primary()
+            return try await body()
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            return try await fallback()
+            Logger(subsystem: "ai.sayso.notch", category: "ParakeetV3")
+                .error("Parakeet v3 failed, using the next engine: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 }
