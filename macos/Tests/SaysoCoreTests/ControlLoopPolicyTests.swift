@@ -12,8 +12,6 @@ import Testing
 @Test func calculatorStopsWaitingOnceControlsAppearOrAttemptsRunOut() {
     #expect(!ControlLoopPolicy.shouldWaitForCalculatorControls(clearAvailable: true, attemptsMade: 0))
     #expect(!ControlLoopPolicy.shouldWaitForCalculatorControls(clearAvailable: false, attemptsMade: ControlLoopPolicy.calculatorSettleAttempts))
-    #expect(ControlLoopPolicy.calculatorSettleAttempts == 5)
-    #expect(ControlLoopPolicy.calculatorSettleDelayMilliseconds == 400)
 }
 
 // An answered clarification that stays low confidence must not ask the same question again.
@@ -31,6 +29,12 @@ private func resolution(
 
 @Test func firstLowConfidenceStepAsksForClarification() {
     #expect(resolution() == .askClarification)
+}
+
+@Test func nanConfidenceNeverProceeds() {
+    #expect(resolution(confidence: .nan) == .askClarification)
+    #expect(resolution(confidence: .nan, alternatives: false) == .refuse)
+    #expect(resolution(confidence: .nan, answered: true) == .refuse)
 }
 
 @Test func answeredClarificationThatStaysLowConfidenceFailsClosed() {

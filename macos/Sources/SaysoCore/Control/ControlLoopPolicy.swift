@@ -26,7 +26,8 @@ public enum ControlLoopPolicy {
         isTryNow: Bool,
         hasAlternatives: Bool
     ) -> LowConfidenceResolution {
-        guard confidence < ControlPolicy.minimumConfidence else { return .proceed }
+        // Only a confidence at or above the minimum proceeds: NaN fails this comparison too, so it asks or refuses.
+        if confidence >= ControlPolicy.minimumConfidence { return .proceed }
         guard hasAlternatives else { return .refuse }
         return hasAnsweredClarification && !isTryNow ? .refuse : .askClarification
     }
