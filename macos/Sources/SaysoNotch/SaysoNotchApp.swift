@@ -1647,12 +1647,14 @@ final class SaysoAppModel: ObservableObject {
         language: DictationLanguage,
         settings currentSettings: SaysoSettings
     ) async -> String {
+        let text = currentSettings.formatSpokenNumbers ? SpokenNumbers.normalize(text) : text
         guard currentSettings.cleanupEnabled else { return text }
         let formatted = TranscriptCleanup.smartFormat(
             text,
             capitalizesFirstLetter: true,
             capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-            addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
+            addsTerminalPunctuation: currentSettings.cleanupPreset != .developer,
+            formatsNumbers: currentSettings.formatSpokenNumbers
         )
 
         var base = formatted
@@ -1704,7 +1706,8 @@ final class SaysoAppModel: ObservableObject {
                     provided,
                     capitalizesFirstLetter: true,
                     capitalizesSentences: currentSettings.cleanupPreset != .minimal,
-                    addsTerminalPunctuation: currentSettings.cleanupPreset != .developer
+                    addsTerminalPunctuation: currentSettings.cleanupPreset != .developer,
+                    formatsNumbers: currentSettings.formatSpokenNumbers
                 )
                 cleaned = currentSettings.dictationProfile.postProcess(cleaned)
                 cleaned = LexiconCorrections.apply(cleaned, replacements: currentSettings.lexicon)
@@ -7020,6 +7023,12 @@ private struct AICleanupWorkspace: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                SaysoSwitchCard(
+                    title: "Numbers and times as digits",
+                    subtitle: "Writes spoken numbers, phone numbers, percentages, years and times as digits, for example three thirty pm becomes 3:30 PM. Works with or without text cleanup",
+                    isOn: $model.settings.formatSpokenNumbers
+                )
+
                 SaysoSwitchCard(
                     title: "Enable text cleanup",
                     subtitle: "Polishes grammar, punctuation, and formatting using rules, local SLM, or cloud models",
