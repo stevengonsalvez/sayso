@@ -101,7 +101,7 @@ struct ModelCatalogParityTests {
     @Test("SaysoSettings roundtrips new cloud provider and local SLM fields")
     func settingsRoundtripWithCloudAndSlmFields() throws {
         var settings = SaysoSettings()
-        settings.selectedCloudProviderId = "groq"
+        settings.selectCloudProvider("groq")
         settings.selectedCloudModelId = "whisper-large-v3-turbo"
         settings.selectedCloudCleanupProviderId = "anthropic"
         settings.selectedCloudCleanupModelId = "claude-3-5-haiku-20241022"

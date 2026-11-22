@@ -44,10 +44,12 @@ public enum TranscriptCleanup {
         _ text: String,
         capitalizesFirstLetter: Bool = true,
         capitalizesSentences: Bool = true,
-        addsTerminalPunctuation: Bool = true
+        addsTerminalPunctuation: Bool = true,
+        formatsNumbers: Bool = true
     ) -> String {
         var cleaned = processLocally(text, capitalizesFirstLetter: capitalizesFirstLetter)
         guard !cleaned.isEmpty else { return cleaned }
+        if formatsNumbers { cleaned = SpokenNumbers.normalize(cleaned) }
 
         if capitalizesSentences {
             let sentencePattern = #"(?<=\.\s)([a-z])|(?<=\?\s)([a-z])|(?<=\!\s)([a-z])|(?<=\n)([a-z])"#
