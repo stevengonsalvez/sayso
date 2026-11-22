@@ -321,6 +321,8 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var byokTranslationModel = "gpt-4.1-mini"
     public var byokRewriteModel = "gpt-4.1-mini"
     public var cleanupEnabled = false
+    /// Turns spoken numbers and times into digits ('three thirty pm' to '3:30 PM'); independent of text cleanup.
+    public var formatSpokenNumbers = true
     public var cloudCleanupEnabled = false
     public var byokCleanupBaseURL = "https://api.groq.com/openai/v1"
     public var byokCleanupModel = "gpt-4.1-mini"
@@ -349,7 +351,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
     public var pronunciations: [SaysoPronunciationEntry] = PronunciationDefaults.standard
 
     // Multi-provider and model selections
-    public var selectedCloudProviderId = "groq"
+    public private(set) var selectedCloudProviderId = "groq"
     public var selectedCloudModelId = "distil-whisper-large-v3-en"
     public var selectedCloudCleanupProviderId = "groq"
     public var selectedCloudCleanupModelId = "llama-3.1-8b-instant"
@@ -370,6 +372,13 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
 
     public var normalizedBYOKCleanupBaseURL: URL? {
         Self.normalizedBaseURL(byokCleanupBaseURL)
+    }
+
+    /// Picks the cloud transcription provider. Consent was given for one provider, so a different one clears it.
+    public mutating func selectCloudProvider(_ id: String) {
+        guard id != selectedCloudProviderId else { return }
+        selectedCloudProviderId = id
+        byokConsentGranted = false
     }
 
     public func hasConsent(for route: ProviderRoute) -> Bool {
@@ -394,7 +403,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         case mode, overlayPresentation, language, route, transcriptionExecutionMode, translationEnabled, outputLanguage, speechLanguage, speechVoiceIdentifier, speechRate
         case autoInsert, livePartialInsertion, restoreClipboardAfterPaste, handsFree, handsFreeContinuous, handsFreeSilenceSeconds, handsFreeMaximumDurationSeconds, handsFreeMaximumSessionDurationSeconds, hotKeyActivation, hotKeyHoldThresholdSeconds, preferredAudioInputUID, saveSessionAudio, soundCues, onboardingCompleted
         case cloudConsentGranted, byokConsentGranted, voiceEditCloudConsent, desktopControlEnabled, clipboardModuleEnabled, fileShelfEnabled, nowPlayingEnabled, systemStatsEnabled, calculatorEnabled, colorPickerEnabled, fileToolsEnabled, privacyGuardEnabled, snippetsEnabled, batteryHealthEnabled
-        case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
+        case byokBaseURL, byokTranscriptionModel, byokTranslationModel, byokRewriteModel, cleanupEnabled, formatSpokenNumbers, cloudCleanupEnabled, byokCleanupBaseURL, byokCleanupModel
         case lexicon, legacyLexiconMigrated, autoCorrectionsEnabled, autoCorrectionsPromotionThreshold
         case dictationProfile, dictationProfileOverrides
         case hints, autoLanguageRouting, transliterateIndicToLatin, silenceTimeoutSeconds, maxRecordingSeconds, audioDuckingEnabled
@@ -473,6 +482,7 @@ public struct SaysoSettings: Codable, Equatable, Sendable {
         byokTranslationModel = decoded(String.self, .byokTranslationModel, fallback: byokTranslationModel)
         byokRewriteModel = decoded(String.self, .byokRewriteModel, fallback: byokRewriteModel)
         cleanupEnabled = decoded(Bool.self, .cleanupEnabled, fallback: cleanupEnabled)
+        formatSpokenNumbers = decoded(Bool.self, .formatSpokenNumbers, fallback: formatSpokenNumbers)
         cloudCleanupEnabled = decoded(Bool.self, .cloudCleanupEnabled, fallback: cloudCleanupEnabled)
         byokCleanupBaseURL = decoded(String.self, .byokCleanupBaseURL, fallback: byokCleanupBaseURL)
         byokCleanupModel = decoded(String.self, .byokCleanupModel, fallback: byokCleanupModel)

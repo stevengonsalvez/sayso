@@ -804,14 +804,14 @@ public final class LiveTranscriber: NSObject, ObservableObject {
             if let streamingClient, let streamingRoute {
                 self.cloudStreamingClient = streamingClient
                 streamingClient.start(
-                    onTranscript: { [weak self] text, _ in
+                    onTranscript: { @Sendable [weak self] text, _ in
                         Task { @MainActor [weak self] in
                             guard self?.cloudTranscriptionRunID == runID, self?.phase == .listening else { return }
                             self?.partialText = text
                             self?.onPartial?(text)
                         }
                     },
-                    onError: { [weak self] _ in
+                    onError: { @Sendable [weak self] _ in
                         Task { @MainActor [weak self] in
                             guard self?.cloudTranscriptionRunID == runID else { return }
                         }
@@ -838,7 +838,7 @@ public final class LiveTranscriber: NSObject, ObservableObject {
                     req.shouldReportPartialResults = true
                     req.taskHint = .dictation
                     previewRequest = req
-                    cloudPreviewTask = recognizer.recognitionTask(with: req) { [weak self] result, _ in
+                    cloudPreviewTask = recognizer.recognitionTask(with: req) { @Sendable [weak self] result, _ in
                         if let text = result?.bestTranscription.formattedString {
                             Task { @MainActor [weak self] in
                                 guard self?.cloudTranscriptionRunID == runID, self?.phase == .listening else { return }
@@ -1480,6 +1480,12 @@ public enum FileTranscriber {
             throw SaysoError.unavailable("On-device recognition is unavailable for \(language.displayName)")
         }
         let localModel = FluidAudioLocalModelManager()
+        if LocalBatchEngine.choose(route: route, language: language, parakeetV3Installed: ParakeetV3Transcriber.isInstalled) == .parakeetV3,
+           let text = try await LocalBatchEngine.attempt({ @Sendable in
+               try await ParakeetV3Transcriber.shared.transcribe(fileURL: fileURL)
+           }) {
+            return Transcript(text: text, language: language, route: route, isFinal: true)
+        }
         if prefersFluidAudio(language: language, route: route, localModelReady: localModel.isInstalled(for: language)) {
             return try await transcribeWithFluidAudio(fileURL: fileURL, language: language, route: route, model: localModel)
         }
